@@ -1,0 +1,198 @@
+:root {
+  --vj-bg: rgba(0, 0, 0, 0.86);
+  --vj-fg: #f2f2f2;
+  --vj-dim: #8a8a8a;
+  --vj-line: rgba(255, 255, 255, 0.16);
+  --vj-mono: ui-monospace, 'SF Mono', Menlo, 'Roboto Mono', monospace;
+}
+
+#ui {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  font-family: var(--vj-mono);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#ui button {
+  pointer-events: auto;
+  font-family: var(--vj-mono);
+  -webkit-tap-highlight-color: transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* Menu handle — a small square calibration tab */
+.vj-handle {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  width: 50px;
+  height: 50px;
+  border-radius: 2px;
+  border: 1px solid var(--vj-line);
+  background: var(--vj-bg);
+  color: var(--vj-fg);
+  font-size: 20px;
+  line-height: 1;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Bottom control panel */
+.vj-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 18px calc(18px + env(safe-area-inset-bottom));
+  background: var(--vj-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid var(--vj-line);
+  pointer-events: auto;
+  transition: transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 0.28s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.vj-panel.hidden {
+  transform: translateY(105%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vj-section { display: flex; flex-direction: column; gap: 8px; }
+.vj-section.vj-disabled { opacity: 0.4; pointer-events: none; }
+.vj-section-title {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: var(--vj-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.vj-scenegrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+}
+.vj-cell {
+  height: 50px;
+  border-radius: 2px;
+  border: 1px solid var(--vj-line);
+  background: transparent;
+  color: var(--vj-fg);
+  font-size: 11px;
+  font-weight: 500;
+}
+.vj-cell.active {
+  border-color: var(--vj-fg);
+  background: var(--vj-fg);
+  color: #000;
+}
+
+.vj-palettes { display: flex; flex-wrap: wrap; gap: 6px; }
+.vj-swatch {
+  width: 46px;
+  height: 32px;
+  border-radius: 2px;
+  border: 1px solid var(--vj-line);
+  padding: 0;
+}
+
+.vj-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.vj-modes { gap: 6px; }
+
+.vj-btn, .vj-toggle {
+  min-height: 46px;
+  padding: 0 16px;
+  border-radius: 2px;
+  border: 1px solid var(--vj-line);
+  background: transparent;
+  color: var(--vj-fg);
+  font-size: 11px;
+  font-weight: 500;
+}
+.vj-btn.small { min-height: 38px; padding: 0 12px; }
+.vj-btn.active, .vj-toggle.on {
+  border-color: var(--vj-fg);
+  background: var(--vj-fg);
+  color: #000;
+}
+
+.vj-sliders { display: flex; flex-direction: column; gap: 12px; }
+.vj-slider { display: flex; align-items: center; gap: 14px; }
+.vj-slider-label {
+  flex: 0 0 100px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--vj-dim);
+  text-transform: uppercase;
+}
+.vj-slider input[type='range'] {
+  flex: 1;
+  height: 30px;
+  accent-color: var(--vj-fg);
+}
+
+/* Start overlay — stark calibration screen */
+#start {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: #000;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.6s ease;
+  text-align: center;
+  padding: 24px;
+  font-family: var(--vj-mono);
+}
+#start::before {
+  content: '';
+  position: absolute;
+  inset: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+}
+#start.gone { opacity: 0; pointer-events: none; }
+#start .title {
+  font-size: clamp(60px, 18vw, 150px);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #fff;
+  line-height: 1;
+  text-indent: 0.18em;
+}
+#start .tap {
+  font-size: 12px;
+  letter-spacing: 0.34em;
+  color: #fff;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  padding: 14px 26px;
+  animation: vj-blink 2s steps(1) infinite;
+}
+#start .hint {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #6a6a6a;
+  max-width: 460px;
+  line-height: 1.9;
+  text-transform: uppercase;
+}
+@keyframes vj-blink {
+  0%, 60% { opacity: 1; }
+  61%, 100% { opacity: 0.35; }
+}

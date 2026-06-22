@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="VJ" />
+  <title>VJ — Mic Visuals</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./src/ui/ui.css" />
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      overscroll-behavior: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    #stage {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      touch-action: manipulation;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div id="ui"></div>
+  <div id="start">
+    <div class="title">VJ</div>
+    <div class="tap">タップして開始 / TAP TO START</div>
+    <div class="hint" id="start-hint">
+      マイクへのアクセスを許可してください。周囲の音・音楽・声に反応して映像が動きます。<br />
+      ヘッドフォン無しでスピーカーから音楽を流すと、ビートに反応します。
+    </div>
+  </div>
+  <script>
+    // Surface module-load / runtime failures (otherwise a blank screen).
+    (function () {
+      var msg = 'エラーが発生しました。リロードしてください / ERROR — RELOAD';
+      function show() { var h = document.getElementById('start-hint'); if (h) h.textContent = msg; }
+      window.addEventListener('error', function (e) {
+        if (!e.filename || /\.js(\?|$)/.test(e.filename)) show();
+      });
+      window.addEventListener('unhandledrejection', show);
+    })();
+  </script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

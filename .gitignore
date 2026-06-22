@@ -1,0 +1,5 @@
+# ローカルのツール設定・OSのゴミは公開リポジトリに含めない
+.claude/
+.DS_Store
+*.log
+node_modules/
