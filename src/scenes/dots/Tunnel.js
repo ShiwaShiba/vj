@@ -10,6 +10,7 @@ export class Tunnel extends Scene {
     this.modes = [{ name: 'Spiral' }, { name: 'Rings' }];
     this.defineParam('rings', 26, 12, 44, 1, 'Rings');
     this.defineParam('dots', 28, 10, 60, 1, 'Dots/Ring');
+    this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
     this.t = 0; this.level = 0; this.bass = 0; this.beat = 0;
   }
   update(dt, audio, palette, clock) {
@@ -18,7 +19,7 @@ export class Tunnel extends Scene {
   }
   draw(ctx, alpha) {
     const cx = this.w / 2, cy = this.h / 2;
-    const maxR = Math.hypot(this.w, this.h) * 0.55;
+    const maxR = Math.hypot(this.w, this.h) * 0.55 * this.p('range');
     const q = this.clock.quality;
     const rings = Math.max(6, Math.round(this.p('rings') * q));
     const dots = Math.max(4, Math.round(this.p('dots') * q));

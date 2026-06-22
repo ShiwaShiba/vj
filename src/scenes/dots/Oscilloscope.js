@@ -10,6 +10,7 @@ export class Oscilloscope extends Scene {
     this.modes = [{ name: 'Line' }, { name: 'Circle' }, { name: 'XY' }];
     this.defineParam('thickness', 3, 1, 8, 0.5, 'Thickness');
     this.defineParam('gain', 1, 0.3, 3, 0.1, 'Gain');
+    this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
   }
   update(dt, audio, palette, clock) {
     this.wave = audio.waveform;
@@ -21,6 +22,7 @@ export class Oscilloscope extends Scene {
     if (!wave || !wave.length) return;
     const mode = this.modeIndex;
     const gain = this.p('gain');
+    const range = this.p('range');
     ctx.lineWidth = this.p('thickness') + this.level * 3;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -33,13 +35,13 @@ export class Oscilloscope extends Scene {
       const cy = this.h / 2;
       for (let i = 0, k = 0; i < wave.length; i += step, k++) {
         const x = (i / (wave.length - 1)) * this.w;
-        const y = cy + ((wave[i] - 128) / 128) * this.h * 0.4 * gain;
+        const y = cy + ((wave[i] - 128) / 128) * this.h * 0.4 * gain * range;
         if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
     } else if (mode === 1) {
       const cx = this.w / 2, cy = this.h / 2;
-      const r0 = Math.min(this.w, this.h) * 0.25;
+      const r0 = Math.min(this.w, this.h) * 0.25 * range;
       ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
       ctx.beginPath();
       let first = true;
@@ -55,7 +57,7 @@ export class Oscilloscope extends Scene {
       ctx.stroke();
     } else {
       const cx = this.w / 2, cy = this.h / 2;
-      const s = Math.min(this.w, this.h) * 0.42 * gain;
+      const s = Math.min(this.w, this.h) * 0.42 * gain * range;
       const lag = 8 * step;
       ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
       ctx.beginPath();

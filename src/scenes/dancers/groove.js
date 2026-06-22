@@ -34,9 +34,19 @@ export function groove(beatsF, bounceImpulse, beatHold, weightAmp, out) {
   const w2 = Math.sin(ph * TWO_PI + Math.PI);        // opposite phase
   const wE = Math.sin(frac(beatsF - 0.125) * TWO_PI); // forearm, lagged 1/8 beat
   const s2 = Math.sin(beatsF * Math.PI * 0.5);        // slow drift
-  o.wrR = 0.05 * w;  o.wrL = 0.05 * w2;               // hands flick against each other
+  // Wrists: a per-beat flick (w) + a slower half-rate wave so the hands keep
+  // articulating without buzzing. L/R counter-phased; peak ~0.16 rad stays well
+  // under the pose wrist range so it styles a hold, never buries it.
+  const wWave = Math.sin(frac(beatsF / 2) * TWO_PI + Math.PI * 0.5);
+  o.wrR = 0.10 * w  + 0.06 * wWave;
+  o.wrL = 0.10 * w2 - 0.06 * wWave;
   o.elR = 0.04 * wE; o.elL = -0.04 * wE;              // a hair of forearm breathing
   o.headYaw = 0.05 * s2;                              // gaze isn't frozen
   o.kneeFreeBob = 0.06 * Math.abs(Math.sin(frac(beatsF / 2) * TWO_PI)); // free-leg only (sign-gated in rig)
+
+  // --- spine undulation (low-amp, beat-synced): the torso sways/breathes against
+  // the hip weight-shift so the upper body is never a rigid plank through a hold.
+  o.lateralBend = 0.05 * Math.sin(frac(beatsF / 2) * TWO_PI + Math.PI * 0.66);
+  o.lean = 0.035 * Math.sin(frac(beatsF) * TWO_PI) + 0.02;
   return o;
 }

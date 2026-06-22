@@ -11,6 +11,7 @@ export class Lissajous extends Scene {
     this.defineParam('count', 280, 80, 700, 10, 'Dots');
     this.defineParam('a', 3, 1, 9, 1, 'Freq A');
     this.defineParam('b', 4, 1, 9, 1, 'Freq B');
+    this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
     this.t = 0; this.level = 0; this.mid = 0; this.treble = 0; this.beat = 0;
   }
   update(dt, audio, palette, clock) {
@@ -21,7 +22,7 @@ export class Lissajous extends Scene {
   draw(ctx, alpha) {
     const n = Math.max(40, Math.round(this.p('count') * this.clock.quality));
     const cx = this.w / 2, cy = this.h / 2;
-    const R = Math.min(this.w, this.h) * 0.42 * (0.7 + this.level * 0.5);
+    const R = Math.min(this.w, this.h) * 0.42 * (0.7 + this.level * 0.5) * this.p('range');
     const a = this.p('a') + (this.modeIndex ? this.mid * 2 : 0);
     const b = this.p('b');
     const delta = this.t * 0.4;

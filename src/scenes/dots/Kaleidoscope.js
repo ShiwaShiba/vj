@@ -10,6 +10,7 @@ export class Kaleidoscope extends Scene {
     this.modes = [{ name: '6-fold' }, { name: '8-fold' }, { name: '12-fold' }];
     this.segCounts = [6, 8, 12];
     this.defineParam('blobs', 12, 4, 26, 1, 'Shapes');
+    this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
     this.t = 0; this.level = 0; this.bass = 0; this.treble = 0; this.beat = 0;
   }
   update(dt, audio, palette, clock) {
@@ -21,7 +22,7 @@ export class Kaleidoscope extends Scene {
     const cx = this.w / 2, cy = this.h / 2;
     const seg = this.segCounts[this.modeIndex];
     const step = TWO_PI / seg;
-    const reach = Math.min(this.w, this.h) * 0.5;
+    const reach = Math.min(this.w, this.h) * 0.5 * this.p('range');
     const nb = Math.max(3, Math.round(this.p('blobs') * this.clock.quality));
     ctx.globalCompositeOperation = 'lighter';
     for (let s = 0; s < seg; s++) {
