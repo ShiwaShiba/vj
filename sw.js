@@ -1,6 +1,6 @@
 // Cache-first service worker for offline use. Bump CACHE_VERSION on deploy to
 // invalidate. All paths are relative so it works under a GitHub Pages subpath.
-const CACHE_VERSION = 'vj-v2';
+const CACHE_VERSION = 'vj-v3';
 
 const ASSETS = [
   './',
