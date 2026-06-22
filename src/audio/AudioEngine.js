@@ -57,7 +57,7 @@ export class AudioEngine {
     await resumePromise.catch(() => {});
 
     this.stream = stream;
-    this.source = this.ctx.createMediaStreamAudioSource(stream);
+    this.source = this.ctx.createMediaStreamSource(stream);
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = CONFIG.FFT_SIZE;
     this.analyser.smoothingTimeConstant = 0; // we do our own smoothing
