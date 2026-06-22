@@ -57,7 +57,21 @@ export class ControlPanel {
       sw.addEventListener('click', () => this.ctx.palette.set(i));
       pal.appendChild(sw);
     });
-    this.panel.appendChild(this._section('COLOR', pal));
+    // Live palette adjustments (minimal-techno safe: no hue wheel).
+    const pm = this.ctx.palette;
+    const colorBox = document.createElement('div');
+    colorBox.appendChild(pal);
+    const adj = document.createElement('div');
+    adj.className = 'vj-sliders';
+    adj.appendChild(createSlider('Brightness', { value: pm.brightness, min: 0.5, max: 1.5, step: 0.02 }, (v) => pm.setBrightness(v)));
+    adj.appendChild(createSlider('Contrast', { value: pm.contrast, min: 0.5, max: 2, step: 0.02 }, (v) => pm.setContrast(v)));
+    adj.appendChild(createSlider('Accent', { value: pm.accentStrength, min: 0, max: 1, step: 0.05 }, (v) => pm.setAccentStrength(v)));
+    colorBox.appendChild(adj);
+    const cr = document.createElement('div');
+    cr.className = 'vj-row';
+    cr.appendChild(createToggle('INVERT', pm.invert, (v) => pm.setInvert(v)).el);
+    colorBox.appendChild(cr);
+    this.panel.appendChild(this._section('COLOR', colorBox));
 
     // Per-scene controls (rebuilt on scene change)
     this.sceneControls = document.createElement('div');
@@ -120,6 +134,20 @@ export class ControlPanel {
         row.appendChild(b);
       });
       c.appendChild(row);
+    }
+
+    // Optional camera-view button group (e.g. Dancers: FRONT / 3-4 / SIDE / TOP).
+    if (scene.views && scene.setView) {
+      const vrow = document.createElement('div');
+      vrow.className = 'vj-row vj-modes';
+      scene.views.forEach((v, i) => {
+        const b = document.createElement('button');
+        b.className = 'vj-btn small' + (i === scene.viewIndex ? ' active' : '');
+        b.textContent = v.name;
+        b.addEventListener('click', () => { scene.setView(i); this._rebuildSceneControls(); });
+        vrow.appendChild(b);
+      });
+      c.appendChild(vrow);
     }
 
     const sliders = document.createElement('div');

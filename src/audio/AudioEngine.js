@@ -72,6 +72,13 @@ export class AudioEngine {
     this.binHz = this.ctx.sampleRate / CONFIG.FFT_SIZE;
 
     this.state.ready = true;
+    // Recover a context that gets suspended later (tab switch, OS audio focus).
+    if (!this._visBound) {
+      this._visBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && this.ctx) this.ctx.resume().catch(() => {});
+      });
+    }
     return true;
   }
 
@@ -104,6 +111,10 @@ export class AudioEngine {
   update(nowMs) {
     const s = this.state;
     if (!s.ready) return;
+    // Autoplay policy can leave the AudioContext suspended even after the start
+    // gesture; re-resume so the analyser actually receives samples (otherwise
+    // levels read zero and nothing reacts despite the mic being connected).
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
     this.analyser.getByteFrequencyData(this.freq);
     this.analyser.getByteTimeDomainData(this.time);
 

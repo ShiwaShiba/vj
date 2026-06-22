@@ -1,6 +1,6 @@
 // Cache-first service worker for offline use. Bump CACHE_VERSION on deploy to
 // invalidate. All paths are relative so it works under a GitHub Pages subpath.
-const CACHE_VERSION = 'vj-v3';
+const CACHE_VERSION = 'vj-v4';
 
 const ASSETS = [
   './',
@@ -38,6 +38,12 @@ const ASSETS = [
   './src/scenes/dancers/DancersScene.js',
   './src/scenes/dancers/DancerRig.js',
   './src/scenes/dancers/moves.js',
+  './src/scenes/dancers/Choreographer.js',
+  './src/scenes/dancers/spring.js',
+  './src/scenes/dancers/poses.js',
+  './src/scenes/dancers/groove.js',
+  './src/scenes/dancers/couplings.js',
+  './src/scenes/dancers/audioMap.js',
   './src/ui/ui.css',
   './src/ui/ControlPanel.js',
   './src/ui/SceneGrid.js',

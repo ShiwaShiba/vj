@@ -1,121 +1,142 @@
 import { Scene } from '../Scene.js';
-import { CONFIG } from '../../config.js';
 import { DancerRig } from './DancerRig.js';
-import { MOVES } from './moves.js';
-import { wrap01, TWO_PI } from '../../lib/math.js';
+import { MODES, MODE_FAVORED } from './moves.js';
+import { AudioMapper } from './audioMap.js';
 
-// The headline scene: N pictogram dancers, beat-synced, with per-dancer phase
-// offsets that ripple a "wave" across the row. Modes select the dance move;
-// mode 0 is Auto (cycles moves every few bars). Big bass hits spray confetti.
+// Fixed camera presets (button-cycled): how the whole crowd is viewed. yaw about
+// the vertical axis, pitch about the horizontal (overhead).
+const VIEWS = [
+  { name: 'FRONT', yaw: 0.0, pitch: 0.06 },
+  { name: '3/4', yaw: 0.62, pitch: 0.10 },
+  { name: 'SIDE', yaw: 1.35, pitch: 0.05 },
+  { name: 'TOP', yaw: 0.28, pitch: 0.55 },
+];
+
+// The headline scene: Kraftwerk-style mannequin(s) dancing by POSE-TO-POSE
+// choreography (Layer A: per-dancer Choreographer snaps a spring bank to held
+// poses on the beat grid, with follow-through) + a continuous GROOVE layer
+// (Layer B). Audio only sets gains / fires events / biases phrase choice.
 export class DancersScene extends Scene {
   constructor() {
     super('dancers', 'Dancers');
-    this.trail = 0.9; // a whisper of motion blur, still crisp
-    this.modes = [{ name: 'Auto' }, ...MOVES.map((m) => ({ name: m.name }))];
-    this.defineParam('count', CONFIG.DANCER_COUNT, 3, CONFIG.DANCER_MAX, 1, 'Dancers');
-    this.defineParam('spread', 1, 0, 2.5, 0.1, 'Wave');
+    this.trail = 0.84;
+    this.modes = MODES.map((m) => ({ name: m.name }));
+    // Camera viewpoint as a button group (parallel to modes).
+    this.views = VIEWS.map((v) => ({ name: v.name }));
+    this.viewIndex = 0;
+    this._camYaw = VIEWS[0].yaw;
+    this._camPitch = VIEWS[0].pitch;
+    this.defineParam('count', 1, 1, 100, 1, 'Dancers');
+    this.defineParam('size', 0.4, 0.2, 1, 0.05, 'Size');
+    this.defineParam('spread', 1, 0, 2.5, 0.1, 'Spread');
     this.rigs = [];
-    this._autoIdx = 0;
-    this._autoBeat = 0;
-    // confetti pool
-    this.cmax = 240;
-    this.cx = new Float32Array(this.cmax);
-    this.cy = new Float32Array(this.cmax);
-    this.cvx = new Float32Array(this.cmax);
-    this.cvy = new Float32Array(this.cmax);
-    this.cl = new Float32Array(this.cmax);
-    this.cs = new Float32Array(this.cmax);
-    this.cc = 0;
+    this._builtFor = '';
+    this._audioMap = new AudioMapper();
   }
 
   init(ctx, w, h) { super.init(ctx, w, h); this._build(); }
   onResize(w, h) { super.onResize(w, h); this._build(); }
 
+  setView(i) { this.viewIndex = ((i % VIEWS.length) + VIEWS.length) % VIEWS.length; }
+
+  _key() { return Math.round(this.p('count')) + ':' + this.p('size').toFixed(2); }
+
   _build() {
     const count = Math.round(this.p('count'));
-    const gap = this.w / (count + 1);
-    const groundY = this.h * 0.82;
-    const H = Math.min(this.h * 0.6, gap * 1.9);
+    const size = this.p('size');
     this.rigs = [];
-    for (let i = 0; i < count; i++) {
-      const rig = new DancerRig(gap * (i + 1), groundY, H);
-      rig.setMove(this._currentMove());
-      rig.mix = 1;
+
+    if (count === 1) {
+      const H = Math.min(this.h * 0.62, this.w * 0.95) * size;
+      const rig = new DancerRig(this.w * 0.5, this.h * 0.5 + H * 0.5, H, 1);
+      rig._alpha = 1;
       this.rigs.push(rig);
+      this._builtFor = this._key();
+      return;
     }
-  }
 
-  _currentMove() {
-    return this.modeIndex === 0 ? MOVES[this._autoIdx] : MOVES[this.modeIndex - 1];
-  }
+    // Depth-staggered grid: rows recede upward, smaller and dimmer toward the back
+    // (Bauhaus/Kraftwerk orderly crowd). Built back-to-front so near figures paint
+    // over far ones.
+    const rows = Math.max(1, Math.min(7, Math.round(Math.sqrt(count / 2.2))));
+    const perRow = Math.ceil(count / rows);
+    // Assign counts per row (front rows full, last row takes the remainder).
+    const rowCounts = [];
+    let left = count;
+    for (let r = 0; r < rows; r++) { const n = Math.min(perRow, left); rowCounts.push(n); left -= n; }
 
-  setMode(i) {
-    super.setMode(i);
-    const mv = this._currentMove();
-    this.rigs.forEach((r) => r.setMove(mv));
-  }
-
-  _spawnConfetti(n, x, y) {
-    for (let k = 0; k < n; k++) {
-      const i = this.cc; this.cc = (this.cc + 1) % this.cmax;
-      const a = Math.random() * TWO_PI;
-      const sp = 120 + Math.random() * 320;
-      this.cx[i] = x; this.cy[i] = y;
-      this.cvx[i] = Math.cos(a) * sp;
-      this.cvy[i] = Math.sin(a) * sp - 120;
-      this.cl[i] = 1; this.cs[i] = Math.random();
+    let seed = 1;
+    for (let r = rows - 1; r >= 0; r--) {       // back (r large) first
+      const t = rows > 1 ? r / (rows - 1) : 0;   // 0 front .. 1 back
+      const depth = 1 - 0.52 * t;                // size/alpha falloff
+      const n = rowCounts[r];
+      const groundY = this.h * (0.86 - 0.46 * t);
+      const cellW = this.w / (n + 1);
+      const H = Math.min(this.h * 0.36, cellW * 1.7) * size * depth;
+      const stagger = (r % 2 ? 0.22 : -0.22) * cellW;
+      for (let c = 0; c < n; c++) {
+        const x = cellW * (c + 1) + stagger;
+        const rig = new DancerRig(x, groundY, H, seed++);
+        rig._alpha = 0.45 + 0.55 * depth;        // back rows dimmer
+        this.rigs.push(rig);
+      }
     }
+    this._builtFor = this._key();
   }
 
   update(dt, audio, palette, clock) {
-    const count = Math.round(this.p('count'));
-    if (count !== this.rigs.length) this._build();
+    if (this._key() !== this._builtFor) this._build();
 
-    // Auto-cycle moves.
-    if (this.modeIndex === 0 && clock.beats - this._autoBeat >= 8) {
-      this._autoBeat = clock.beats;
-      this._autoIdx = (this._autoIdx + 1) % MOVES.length;
-      const mv = MOVES[this._autoIdx];
-      this.rigs.forEach((r) => r.setMove(mv));
+    // Ease the camera toward the selected viewpoint so switches glide.
+    const view = VIEWS[this.viewIndex];
+    this._camYaw += (view.yaw - this._camYaw) * Math.min(1, dt * 6);
+    this._camPitch += (view.pitch - this._camPitch) * Math.min(1, dt * 6);
+
+    // CONTINUOUS beat counter (clock.beats is an integer; beatPhase is the sub-beat).
+    const beatsF = clock.beats + clock.beatPhase;
+    const gains = this._audioMap.update(dt, audio, clock.beatJustWrapped);
+
+    const bpm = audio.bpm || 120;
+    const band = bpm < 90 ? 'slow' : bpm > 140 ? 'fast' : 'mid';
+    const bpmScale = band === 'fast' ? 1.3 : 1.0;
+
+    const mode = MODES[this.modeIndex] || MODES[0];
+    let modeFavored = MODE_FAVORED[mode.name] || null;
+    let poseAmp = gains.poseAmp * (mode.scale || 1);
+
+    // Quiet / mic-off: a deliberate low-amplitude living groove on the internal clock.
+    if (!audio.ready && gains.energy < 0.06) {
+      modeFavored = ['IDLE'];
+      poseAmp = Math.max(poseAmp, 0.35);
     }
 
-    const energy = 0.7 + audio.level * 0.7 + audio.beatHold * 0.5;
     const spread = this.p('spread');
     for (let i = 0; i < this.rigs.length; i++) {
-      const ph = wrap01(clock.beatPhase + i * 0.1 * spread);
-      this.rigs[i].update(dt, ph, energy, audio.beatHold);
-    }
-
-    // Confetti on strong bass beats.
-    if (audio.beat && audio.bass > 0.45) {
-      const r = this.rigs[Math.floor(Math.random() * this.rigs.length)] || { x: this.w / 2, groundY: this.h / 2 };
-      this._spawnConfetti(Math.round(18 + audio.bass * 40), r.x, r.groundY - this.h * 0.35);
-    }
-    const drag = Math.pow(0.9, dt * 60);
-    for (let i = 0; i < this.cmax; i++) {
-      if (this.cl[i] <= 0) continue;
-      this.cx[i] += this.cvx[i] * dt;
-      this.cy[i] += this.cvy[i] * dt;
-      this.cvy[i] += 520 * dt;
-      this.cvx[i] *= drag;
-      this.cl[i] -= dt * 0.8;
+      // Per-dancer phase offset (floor keeps neighbours desynced even at spread=0)
+      // + a tiny seeded amplitude jitter so a crowd never moves in lock-step.
+      const offset = i * 0.2 * spread + i * 0.07;
+      const jit = 0.92 + ((i * 2654435761) >>> 0) % 1000 / 1000 * 0.16;
+      this.rigs[i].update(dt, {
+        dt,
+        beatsF: beatsF + offset,
+        beatHold: audio.beatHold,
+        poseAmp: poseAmp * jit,
+        weightAmp: gains.weightAmp,
+        bounceImpulse: gains.bounceImpulse,
+        band,
+        bpmScale,
+        drop: gains.drop,
+        modeFavored,
+        micro: gains.micro,
+      });
     }
   }
 
   draw(ctx, alpha) {
-    // One flat colour for every dancer — stark pictogram silhouettes.
     const color = this.palette.fgCss();
-    for (let i = 0; i < this.rigs.length; i++) this.rigs[i].draw(ctx, color);
-
-    // Monochrome square "shatter" on big hits (data, not glitter).
-    ctx.fillStyle = color;
-    for (let i = 0; i < this.cmax; i++) {
-      const lf = this.cl[i];
-      if (lf <= 0) continue;
-      const s = 2 + this.cs[i] * 3;
-      ctx.globalAlpha = Math.min(1, lf);
-      ctx.fillRect(this.cx[i] - s / 2, this.cy[i] - s / 2, s, s);
+    const cy = this._camYaw, cp = this._camPitch;
+    for (let i = 0; i < this.rigs.length; i++) {
+      this.rigs[i].draw(ctx, color, cy, cp, this.rigs[i]._alpha || 1);
     }
-    ctx.globalAlpha = 1;
   }
 }

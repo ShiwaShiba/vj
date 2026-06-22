@@ -1,156 +1,214 @@
-import { TWO_PI, lerp } from '../../lib/math.js';
+import { TWO_PI } from '../../lib/math.js';
+import { Choreographer } from './Choreographer.js';
+import { groove } from './groove.js';
+import { applyCouplings } from './couplings.js';
 
-// Body proportions as a fraction of total height H.
+// Kraftwerk-style mannequin with a real articulated rig: a flexible multi-node
+// SPINE, SCAPULA (shoulders that lift/protract), and HIP joints (thighs swing
+// from the socket, pelvis rolls with the weight shift). Drawn as thin rods +
+// ball-joints, an outlined trapezoid torso, a round head. Proportions are a
+// fraction of total height H.
 const PROP = {
-  spine: 0.30,
-  neck: 0.05,
-  head: 0.10, // radius
-  shoulderHalf: 0.11,
-  hipHalf: 0.075,
-  upperArm: 0.17,
-  foreArm: 0.16,
-  thigh: 0.22,
-  shin: 0.22,
-  limbThick: 0.07,
+  pelvisHalf: 0.085,
+  waist: 0.07,
+  torsoH: 0.26,      // split across two spine segments
+  shoulderHalf: 0.115,
+  waistHalf: 0.06,
+  neck: 0.10,
+  head: 0.072,
+  upperArm: 0.16, foreArm: 0.14, hand: 0.05,
+  thigh: 0.21, shin: 0.19, foot: 0.07,
+  rod: 0.020,
+  joint: 0.028,
 };
-const LEG_REACH = PROP.thigh + PROP.shin; // straight-leg hip height above ground
+const LEG_REACH = PROP.thigh + PROP.shin;
+const FOCAL = 4.5;
+const lerp = (a, b, t) => a + (b - a) * t;
 
-// A single procedurally-animated pictogram. Joint angles are sines of the
-// beat phase; forward kinematics gives world points; drawn as a filled
-// silhouette (thick round-capped strokes = chunky limbs).
 export class DancerRig {
-  constructor(x, groundY, H) {
-    this.x = x;
-    this.groundY = groundY;
-    this.H = H;
-    this.move = null;
-    this.prevMove = null;
-    this.mix = 1; // 0..1 crossfade from prevMove -> move
-    this.mixSpeed = 2; // ~0.5s transition
-  }
-
-  setMove(move) {
-    if (this.move === move) return;
-    this.prevMove = this.move || move;
-    this.move = move;
-    this.mix = 0;
-  }
-
-  update(dt, phase, energy, beatHold) {
-    this.phase = phase;
-    this.energy = energy;
-    this.beatHold = beatHold;
-    if (this.mix < 1) this.mix = Math.min(1, this.mix + dt * this.mixSpeed);
-  }
-
-  _angles(move, phase, energy) {
-    const tp = phase * TWO_PI;
-    const q = move.quantize;
-    const osc = (o, extraPhase = 0) => {
-      let v = Math.sin(o.w * tp + o.p + extraPhase);
-      if (q) v = Math.round(v * q) / q;
-      return o.b + o.A * energy * v;
+  constructor(x, groundY, H, seed = 1) {
+    this.x = x; this.groundY = groundY; this.H = H; this.seed = seed;
+    this.L = {
+      sink: 0, swayX: 0, pelYaw: 0, lean: 0, lateralBend: 0, shYaw: 0, raise: 0.28,
+      armR: 0, armL: 0, elR: 0.5, elL: 0.5, wrR: 0, wrL: 0,
+      hipR: 0, hipL: 0, kneeR: 0.2, kneeL: 0.2, head: 0, headYaw: 0,
     };
-    const alt = move.alt ? Math.PI : 0;
-    return {
-      bob: move.bounce * Math.abs(Math.sin(Math.PI * phase)),
-      sway: move.sway * Math.sin(TWO_PI * phase),
-      spine: osc(move.spine),
-      head: osc(move.head),
-      armA: osc(move.arm),
-      armB: osc(move.arm, alt),
-      elbowA: osc(move.elbow),
-      elbowB: osc(move.elbow, alt),
-      legA: osc(move.leg),
-      legB: osc(move.leg, alt),
-      kneeA: osc(move.knee),
-      kneeB: osc(move.knee, alt),
-    };
+    this.choreo = new Choreographer(seed);
+    this._g = {};            // reused groove output
+    this._wSign = -1;        // weighted side (pre-groove), with hysteresis
   }
 
-  _blend(a, b, t) {
-    const o = {};
-    for (const k in a) o[k] = lerp(a[k], b[k], t);
-    return o;
-  }
+  // ctrl = { dt, beatsF, beatHold, poseAmp, weightAmp, bounceImpulse, band,
+  //          bpmScale, drop, modeFavored, micro }
+  update(dt, ctrl) {
+    // Layer A — advance the pose clock and step the springs.
+    this.choreo.update(ctrl);
+    const s = this.choreo.bank.read();
 
-  _pose() {
-    let a = this._angles(this.move, this.phase, this.energy);
-    if (this.mix < 1 && this.prevMove) {
-      const pa = this._angles(this.prevMove, this.phase, this.energy);
-      a = this._blend(pa, a, this.mix);
+    // Pick the weighted side from the PRE-groove (pose/spring) swayX, with a
+    // hysteresis band so the groove oscillation can't flip the legs mid-hold.
+    if (s.swayX < -0.15) this._wSign = -1;
+    else if (s.swayX > 0.15) this._wSign = 1;
+
+    // Layer B — groove added on top.
+    const g = groove(ctrl.beatsF, ctrl.bounceImpulse, ctrl.beatHold, ctrl.weightAmp, this._g);
+
+    const L = this.L;
+    for (const k in s) L[k] = s[k];
+    L.sink += g.sink;
+    L.swayX += g.swayX;
+    L.pelYaw += g.pelYaw;
+    L.shYaw += g.shYaw;
+    L.head += g.head;
+    // Micro articulation: distal joints keep styling through a held pose.
+    L.wrR += g.wrR; L.wrL += g.wrL;
+    L.elR += g.elR; L.elL += g.elL;
+    L.headYaw += g.headYaw;
+    if (this._wSign < 0) L.kneeR += g.kneeFreeBob; else L.kneeL += g.kneeFreeBob; // free leg only
+
+    // Tiny treble micro-accents (already gated/clamped upstream).
+    const micro = ctrl.micro || 0;
+    if (micro) {
+      L.head += micro;
+      L.headYaw += micro * 0.5;
+      L.wrR += micro;
+      L.wrL -= micro;
     }
-    const H = this.H;
-    const add = (p, ang, len) => [p[0] + Math.sin(ang) * len, p[1] + Math.cos(ang) * len];
-    const hip = [0, 0];
-    const up = Math.PI + a.spine;
-    const chest = add(hip, up, PROP.spine * H);
-    const neckDir = up + a.head;
-    const headBase = add(chest, neckDir, PROP.neck * H);
-    const headC = add(headBase, neckDir, PROP.head * H);
-    const shA = [chest[0] + PROP.shoulderHalf * H, chest[1]];
-    const shB = [chest[0] - PROP.shoulderHalf * H, chest[1]];
-    const elA = add(shA, a.armA, PROP.upperArm * H);
-    const haA = add(elA, a.armA + a.elbowA, PROP.foreArm * H);
-    const elB = add(shB, -a.armB, PROP.upperArm * H);
-    const haB = add(elB, -(a.armB + a.elbowB), PROP.foreArm * H);
-    const hiA = [hip[0] + PROP.hipHalf * H, hip[1]];
-    const hiB = [hip[0] - PROP.hipHalf * H, hip[1]];
-    const knA = add(hiA, a.legA, PROP.thigh * H);
-    const ftA = add(knA, a.legA + a.kneeA, PROP.shin * H);
-    const knB = add(hiB, -a.legB, PROP.thigh * H);
-    const ftB = add(knB, -(a.legB + a.kneeB), PROP.shin * H);
-    return { a, hip, chest, headBase, headC, shA, shB, elA, haA, elB, haB, hiA, hiB, knA, ftA, knB, ftB };
+
+    // Couplings (knee bounce dip on the free leg). Scapula stays in draw().
+    applyCouplings(L, this._wSign, ctrl.bounceImpulse);
   }
 
-  // Flat single-colour silhouette — like signage / a pictogram. `color` is a
-  // CSS string (computed once per frame by the scene).
-  draw(ctx, color) {
-    const P = this._pose();
-    const H = this.H;
-    const hx = this.x + P.a.sway * H;
-    const hy = this.groundY - LEG_REACH * H - P.a.bob * H;
-    // squash & stretch around the hip
-    const sq = (this.move.squash || 0) * Math.abs(Math.sin(Math.PI * this.phase));
-    const pop = this.beatHold * 0.12;
-    const sy = 1 - sq + pop;
-    const sx = 1 + sq * 0.6 - pop * 0.6;
+  draw(ctx, color, camYaw = 0, camPitch = 0, alpha = 1) {
+    const H = this.H, L = this.L;
+    const A = (p, ang, dep, len) => {
+      const cd = Math.cos(dep);
+      return [p[0] + Math.sin(ang) * cd * len, p[1] + Math.cos(ang) * cd * len, p[2] + Math.sin(dep) * len];
+    };
+
+    // --- SPINE: flexible chain. lateralBend curves it sideways (azimuth / screen-x),
+    // lean folds it FORWARD into depth (dep) — the two are orthogonal and stack into
+    // a real C/S curve. Clamped so extreme poses can't over-shorten or flip a segment.
+    const cl = (v) => (v < -0.9 ? -0.9 : v > 0.9 ? 0.9 : v);
+    const root = [0, 0, 0];
+    const s1 = A(root, Math.PI + cl(L.lateralBend * 0.3), cl(L.lean * 0.5), PROP.waist * H);
+    const s2 = A(s1, Math.PI + cl(L.lateralBend * 0.65), cl(L.lean * 0.9), PROP.torsoH * 0.5 * H);
+    const chestC = A(s2, Math.PI + cl(L.lateralBend), cl(L.lean * 1.15), PROP.torsoH * 0.5 * H);
+    const neckTop = A(chestC, Math.PI + cl(L.lateralBend), cl(L.lean * 1.15), PROP.neck * H);
+    const headC = A(neckTop, Math.PI + cl(L.lateralBend) + L.headYaw, cl(L.lean * 1.15) + L.head, PROP.head * H);
+
+    // --- SCAPULA: shoulders lift (shrug) + protract (forward) with the arm ---
+    const liftR = (L.raise * 0.10 + Math.max(0, L.armR) * 0.10) * H;
+    const liftL = (L.raise * 0.10 + Math.max(0, L.armL) * 0.10) * H;
+    const shR = [chestC[0] + PROP.shoulderHalf * H, chestC[1] - liftR, chestC[2] + L.armR * 0.10 * H];
+    const shL = [chestC[0] - PROP.shoulderHalf * H, chestC[1] - liftL, chestC[2] + L.armL * 0.10 * H];
+    const wsR = [s1[0] + PROP.waistHalf * H, s1[1], s1[2]];
+    const wsL = [s1[0] - PROP.waistHalf * H, s1[1], s1[2]];
+
+    const elR = A(shR, L.raise, L.armR, PROP.upperArm * H);
+    const wrR = A(elR, L.raise + L.elR, L.armR, PROP.foreArm * H);
+    const haR = A(wrR, L.raise + L.elR + L.wrR, L.armR, PROP.hand * H);
+    const elL = A(shL, -L.raise, L.armL, PROP.upperArm * H);
+    const wrL = A(elL, -(L.raise + L.elL), L.armL, PROP.foreArm * H);
+    const haL = A(wrL, -(L.raise + L.elL + L.wrL), L.armL, PROP.hand * H);
+
+    // --- PELVIS + LEGS: pelvis rolls with weight; thighs swing from the hip ---
+    const roll = L.swayX * 0.6;
+    const hipR = [PROP.pelvisHalf * H, roll * H, 0];
+    const hipL = [-PROP.pelvisHalf * H, -roll * H, 0];
+    const knR = A(hipR, 0.08, L.hipR, PROP.thigh * H);
+    const anR = A(knR, 0.08, L.hipR - L.kneeR, PROP.shin * H);
+    const ftR = A(anR, 0.08, L.hipR - L.kneeR + 0.95, PROP.foot * H);
+    const knL = A(hipL, -0.08, L.hipL, PROP.thigh * H);
+    const anL = A(knL, -0.08, L.hipL - L.kneeL, PROP.shin * H);
+    const ftL = A(anL, -0.08, L.hipL - L.kneeL + 0.95, PROP.foot * H);
+
+    // --- Twist winds up the spine: pelvis (pelYaw) -> chest (shYaw) ---
+    const yaw = (p, ang) => { const c = Math.cos(ang), s = Math.sin(ang); return [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c]; };
+    const yU = L.shYaw, yLp = L.pelYaw;
+    const ys1 = lerp(yLp, yU, 0.34), ys2 = lerp(yLp, yU, 0.67);
+    const F = FOCAL * H;
+    // Global CAMERA: yaw about the vertical axis + pitch about the horizontal,
+    // applied to every point before perspective so the whole figure is seen from
+    // the chosen viewpoint (front / 3-4 / side / overhead).
+    const ccy = Math.cos(camYaw), scy = Math.sin(camYaw);
+    const ccp = Math.cos(camPitch), scp = Math.sin(camPitch);
+    const cam = (p) => {
+      const x = p[0] * ccy - p[2] * scy;
+      const z = p[0] * scy + p[2] * ccy;
+      const y = p[1] * ccp - z * scp;
+      const z2 = p[1] * scp + z * ccp;
+      return [x, y, z2];
+    };
+    const pr = (p) => { const q = cam(p); const f = F / (F - q[2]); return [q[0] * f, q[1] * f, f]; };
+    const P = (p, a) => pr(yaw(p, a));
+
+    const Proot = pr(root);
+    const Ps1 = P(s1, ys1), Ps2 = P(s2, ys2), PchestC = P(chestC, yU), PneckTop = P(neckTop, yU), PheadC = P(headC, yU);
+    const PshR = P(shR, yU), PshL = P(shL, yU), PwsR = P(wsR, ys1), PwsL = P(wsL, ys1);
+    const PelR = P(elR, yU), PwrR = P(wrR, yU), PhaR = P(haR, yU);
+    const PelL = P(elL, yU), PwrL = P(wrL, yU), PhaL = P(haL, yU);
+    const PhipR = P(hipR, yLp), PhipL = P(hipL, yLp);
+    const PknR = P(knR, yLp), PanR = P(anR, yLp), PftR = P(ftR, yLp);
+    const PknL = P(knL, yLp), PanL = P(anL, yLp), PftL = P(ftL, yLp);
+
+    // Feet stay planted (no horizontal figure translation) so they never skate;
+    // the weight shift reads from pelvis ROLL (below), the contrapposto knee split,
+    // the lateral spine bend and the shoulder/pelvis counter-rotation. A small
+    // sway-driven drift keeps it alive without sliding the whole body off its feet.
+    const hx = this.x + L.swayX * H * 0.12;
+    const hy = this.groundY - LEG_REACH * H + L.sink * H;
 
     ctx.save();
     ctx.translate(hx, hy);
-    ctx.scale(sx, sy);
+    if (alpha !== 1) ctx.globalAlpha = alpha;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
-    ctx.lineWidth = PROP.limbThick * H;
+    const rod = PROP.rod * H;
+    const jr = PROP.joint * H;
 
-    // All one flat colour — overlaps merge into a clean silhouette.
-    this._chain(ctx, [P.shB, P.elB, P.haB]);
-    this._chain(ctx, [P.hiB, P.knB, P.ftB]);
-    this._chain(ctx, [P.shA, P.elA, P.haA]);
-    this._chain(ctx, [P.hiA, P.knA, P.ftA]);
-    this._chain(ctx, [P.chest, P.headBase]);
+    // Legs.
+    this._rod(ctx, PhipR, PknR, rod); this._rod(ctx, PknR, PanR, rod); this._rod(ctx, PanR, PftR, rod * 1.4);
+    this._rod(ctx, PhipL, PknL, rod); this._rod(ctx, PknL, PanL, rod); this._rod(ctx, PanL, PftL, rod * 1.4);
+    // Pelvis bar (separate part).
+    this._rod(ctx, PhipL, PhipR, rod * 1.5);
+    // Spine chain (root -> s1 -> s2 -> chest), curved & twisting.
+    this._rod(ctx, Proot, Ps1, rod); this._rod(ctx, Ps1, Ps2, rod); this._rod(ctx, Ps2, PchestC, rod);
+    // Arms.
+    this._rod(ctx, PshR, PelR, rod); this._rod(ctx, PelR, PwrR, rod);
+    this._rod(ctx, PshL, PelL, rod); this._rod(ctx, PelL, PwrL, rod);
+    this._rod(ctx, PchestC, PneckTop, rod);
+
+    // Torso trapezoid (shoulders -> waist).
+    ctx.lineWidth = rod;
+    ctx.beginPath();
+    ctx.moveTo(PshL[0], PshL[1]); ctx.lineTo(PshR[0], PshR[1]);
+    ctx.lineTo(PwsR[0], PwsR[1]); ctx.lineTo(PwsL[0], PwsL[1]);
+    ctx.closePath(); ctx.stroke();
+
+    for (const j of [PshR, PshL, PelR, PelL, PwrR, PwrL, PhipR, PhipL, PknR, PknL, PanR, PanL, Ps1, PneckTop]) this._joint(ctx, j, jr);
+    this._joint(ctx, PhaR, jr * 1.3); this._joint(ctx, PhaL, jr * 1.3);
 
     ctx.beginPath();
-    ctx.moveTo(P.shA[0], P.shA[1]);
-    ctx.lineTo(P.shB[0], P.shB[1]);
-    ctx.lineTo(P.hiB[0], P.hiB[1]);
-    ctx.lineTo(P.hiA[0], P.hiA[1]);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(P.headC[0], P.headC[1], PROP.head * H, 0, TWO_PI);
+    ctx.arc(PheadC[0], PheadC[1], PROP.head * H * PheadC[2], 0, TWO_PI);
     ctx.fill();
 
     ctx.restore();
   }
 
-  _chain(ctx, pts) {
+  _rod(ctx, a, b, w) {
+    ctx.lineWidth = w * (a[2] + b[2]) * 0.5;
     ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0], b[1]);
     ctx.stroke();
+  }
+
+  _joint(ctx, p, r) {
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], r * p[2], 0, TWO_PI);
+    ctx.fill();
   }
 }
