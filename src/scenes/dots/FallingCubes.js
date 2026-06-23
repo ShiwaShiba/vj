@@ -361,10 +361,12 @@ export class FallingCubes extends Scene {
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
 
-    // floor grid (Mound only) — the primary depth anchor; drawn behind cubes
-    if (this.viewIndex === 0 && this.p('floor') >= 0.5) {
-      this._drawFloor(ctx, A, ccy, scy, ccp, scp, F, cx, cy);
-    }
+    // floor grid (Mound only). Split into a FAR half (drawn now, behind the
+    // pile) and a NEAR half (drawn after the cubes) so the grid correctly
+    // passes IN FRONT of the pile's base — the cubes then read as resting ON it
+    // instead of the grid bleeding through them at every height.
+    const moundFloor = this.viewIndex === 0 && this.p('floor') >= 0.5;
+    if (moundFloor) this._drawFloor(ctx, A, ccy, scy, ccp, scp, F, cx, cy, false);
 
     const mode = this.modeIndex;
     const wantFaces = mode !== 1;
@@ -432,7 +434,11 @@ export class FallingCubes extends Scene {
       }
     }
 
-    if (mode === 1) { this._drawWire(ctx, A, beatHold); return; }
+    if (mode === 1) {
+      this._drawWire(ctx, A, beatHold);
+      if (moundFloor) this._drawFloor(ctx, A, ccy, scy, ccp, scp, F, cx, cy, true);
+      return;
+    }
 
     // sort faces far -> near (ascending camera-z; camera sits at +F)
     const order = this._fOrder; order.length = fc;
@@ -478,6 +484,9 @@ export class FallingCubes extends Scene {
         ctx.stroke();
       }
     }
+    // near half of the floor — drawn OVER the front cubes so the grid reads as
+    // passing in front of the pile's base (correct ground contact).
+    if (moundFloor) this._drawFloor(ctx, A, ccy, scy, ccp, scp, F, cx, cy, true);
     ctx.globalAlpha = A;
   }
 
@@ -507,28 +516,57 @@ export class FallingCubes extends Scene {
     ctx.globalAlpha = A;
   }
 
-  _drawFloor(ctx, A, ccy, scy, ccp, scp, F, cx, cy) {
-    const H = this._H, gR = this._R, y = this._floorY, n = 6, step = gR / n;
-    ctx.strokeStyle = rgbCss(lerpRgb(this.palette.bg, this.palette.fg, 0.28, this._tmpRgb));
-    ctx.lineWidth = 0.6;
+  // Floor grid for Mound. Drawn in two passes split at the pile-base center:
+  //   near=false -> only the half farther than the center (behind the pile)
+  //   near=true  -> only the half nearer than the center (in front of the pile)
+  // The grid is clipped to a disc that fades out past the pile footprint (no
+  // square "floating mat" apron) and brightened where the cubes actually rest.
+  _drawFloor(ctx, A, ccy, scy, ccp, scp, F, cx, cy, near) {
+    const y = this._floorY, R = this._R;
+    const discR = R * 0.94;        // circular extent — apron melts into black
+    const contactR = R * 0.6;      // pile footprint: brightest, the contact zone
+    const n = 6, step = R / n;
+    const Z2c = y * scp;           // camera-z of the pile-base center = split plane
+    ctx.strokeStyle = rgbCss(lerpRgb(this.palette.bg, this.palette.fg, 0.36, this._tmpRgb));
+    ctx.lineWidth = 0.7;
+    const p0 = [0, 0, 0], p1 = [0, 0, 0];
     const proj = (wx, wz, out) => {
       const X = wx * ccy - wz * scy;
       const Z = wx * scy + wz * ccy;
       const Y = y * ccp - Z * scp;
       const Z2 = y * scp + Z * ccp;
       const f = F / (F - Z2);
-      out[0] = cx + X * f; out[1] = cy + Y * f; out[2] = clamp(f, 0.4, 1.3);
-      return out;
+      out[0] = cx + X * f; out[1] = cy + Y * f; out[2] = f;
     };
-    const p1 = [0, 0, 0], p2 = [0, 0, 0];
+    // Draw the portion of segment (x0,z0)->(x1,z1) that lies on the requested
+    // side of the split plane, with a radial fade + contact boost.
+    const seg = (x0, z0, x1, z1) => {
+      const za = Z2c + (x0 * scy + z0 * ccy) * ccp;
+      const zb = Z2c + (x1 * scy + z1 * ccy) * ccp;
+      const da = za - Z2c, db = zb - Z2c;       // >0 => nearer than the center
+      const aIn = near ? da >= 0 : da < 0;
+      const bIn = near ? db >= 0 : db < 0;
+      if (!aIn && !bIn) return;
+      let ta = 0, tb = 1;
+      if (aIn !== bIn) { const tc = da / (da - db); if (aIn) tb = tc; else ta = tc; }
+      const sx0 = x0 + (x1 - x0) * ta, sz0 = z0 + (z1 - z0) * ta;
+      const sx1 = x0 + (x1 - x0) * tb, sz1 = z0 + (z1 - z0) * tb;
+      const rad = Math.hypot((sx0 + sx1) * 0.5, (sz0 + sz1) * 0.5);
+      if (rad > discR) return;
+      const rf = 1 - smoothstep(contactR, discR, rad);   // fade out past footprint
+      if (rf <= 0.002) return;
+      const boost = lerp(1.5, 1.0, smoothstep(0, contactR, rad)); // anchor contact
+      proj(sx0, sz0, p0); proj(sx1, sz1, p1);
+      const depth = clamp((p0[2] + p1[2]) * 0.5, 0.5, 1.3);
+      ctx.globalAlpha = clamp(0.42 * A * rf * boost * depth, 0, 1);
+      ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+    };
     for (let g = -n; g <= n; g++) {
       const c = g * step;
-      proj(c, -gR, p1); proj(c, gR, p2);
-      ctx.globalAlpha = 0.5 * A * ((p1[2] + p2[2]) * 0.5);
-      ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
-      proj(-gR, c, p1); proj(gR, c, p2);
-      ctx.globalAlpha = 0.5 * A * ((p1[2] + p2[2]) * 0.5);
-      ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+      if (Math.abs(c) > discR) continue;
+      const half = Math.sqrt(discR * discR - c * c);   // clip lines to the disc
+      seg(c, -half, c, half);   // lines parallel to z
+      seg(-half, c, half, c);   // lines parallel to x
     }
     ctx.globalAlpha = A;
   }
