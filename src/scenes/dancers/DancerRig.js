@@ -77,6 +77,11 @@ export class DancerRig {
 
     const L = this.L;
     for (const k in s) L[k] = s[k];
+    // Genre stance floor: open the thighs to the genre's base plié width (Krump
+    // stomp / House footwork wide; Vogue / Popping narrow). Added on top of the
+    // pose's own stance, clamped so it can't fan the legs past a crouch.
+    const sb = ctrl.stanceBias || 0;
+    if (sb) { const st = L.stance + sb; L.stance = st > 0.6 ? 0.6 : st; }
     L.sink += g.sink;
     L.swayX += g.swayX;
     L.pelYaw += g.pelYaw;

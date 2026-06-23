@@ -39,10 +39,14 @@ export class Choreographer {
       this._retarget(ctrl);
     }
 
-    // Advance across any step boundaries crossed since last frame.
+    // Advance across any step boundaries crossed since last frame. The genre's
+    // stepBeatsMul stretches/compresses how long each pose is held (Flex sustains,
+    // House snaps fast) without touching the groove pulse, which still rides the
+    // real beat counter.
+    const sbm = ctrl.stepBeatsMul || 1;
     let guard = 0;
-    while (beatsF - this._stepStart >= this._curStep().beats && guard++ < 16) {
-      this._stepStart += this._curStep().beats;
+    while (beatsF - this._stepStart >= this._curStep().beats * sbm && guard++ < 16) {
+      this._stepStart += this._curStep().beats * sbm;
       this._idx++;
       if (this._idx >= this._phrase.length) {
         this._pickPhrase(ctrl);
@@ -51,7 +55,7 @@ export class Choreographer {
       this._retarget(ctrl);
     }
 
-    this.bank.setBpmScale(ctrl.bpmScale);
+    this.bank.setStyle(ctrl.bpmScale, ctrl.stiffMul, ctrl.zetaMul, ctrl.lagMul, ctrl.snapMul);
     this.bank.step(ctrl.dt);
   }
 

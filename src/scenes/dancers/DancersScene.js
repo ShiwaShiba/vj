@@ -1,6 +1,6 @@
 import { Scene } from '../Scene.js';
 import { DancerRig } from './DancerRig.js';
-import { MODES, MODE_FAVORED } from './moves.js';
+import { MODES, MODE_FAVORED, MODE_STYLE } from './moves.js';
 import { AudioMapper } from './audioMap.js';
 
 // Fixed camera presets (button-cycled): how the whole crowd is viewed. yaw about
@@ -48,7 +48,7 @@ export class DancersScene extends Scene {
 
     if (count === 1) {
       const H = Math.min(this.h * 0.62, this.w * 0.95) * size;
-      const rig = new DancerRig(this.w * 0.5, this.h * 0.5 + H * 0.5, H, 1);
+      const rig = new DancerRig(this.w * 0.5, this.h * 0.43 + H * 0.5, H, 1);
       rig._alpha = 1;
       this.rigs.push(rig);
       this._builtFor = this._key();
@@ -70,7 +70,7 @@ export class DancersScene extends Scene {
       const t = rows > 1 ? r / (rows - 1) : 0;   // 0 front .. 1 back
       const depth = 1 - 0.52 * t;                // size/alpha falloff
       const n = rowCounts[r];
-      const groundY = this.h * (0.86 - 0.46 * t);
+      const groundY = this.h * (0.80 - 0.46 * t);
       const cellW = this.w / (n + 1);
       const H = Math.min(this.h * 0.36, cellW * 1.7) * size * depth;
       const stagger = (r % 2 ? 0.22 : -0.22) * cellW;
@@ -101,14 +101,20 @@ export class DancersScene extends Scene {
     const bpmScale = band === 'fast' ? 1.3 : 1.0;
 
     const mode = MODES[this.modeIndex] || MODES[0];
+    const style = MODE_STYLE[mode.name] || MODE_STYLE.Auto;
     let modeFavored = MODE_FAVORED[mode.name] || null;
-    let poseAmp = gains.poseAmp * (mode.scale || 1);
+    let poseAmp = gains.poseAmp * style.scale;
 
     // Quiet / mic-off: a deliberate low-amplitude living groove on the internal clock.
     if (!audio.ready && gains.energy < 0.06) {
       modeFavored = ['IDLE'];
       poseAmp = Math.max(poseAmp, 0.35);
     }
+
+    // The genre's gross-groove energy scales the audio-driven sway + bounce (and
+    // with it the coupled knee dip): Krump/House move big, Minimal/Popping small.
+    const weightAmp = gains.weightAmp * style.grooveMul;
+    const bounceImpulse = gains.bounceImpulse * style.grooveMul;
 
     const spread = this.p('spread');
     for (let i = 0; i < this.rigs.length; i++) {
@@ -121,13 +127,20 @@ export class DancersScene extends Scene {
         beatsF: beatsF + offset,
         beatHold: audio.beatHold,
         poseAmp: poseAmp * jit,
-        weightAmp: gains.weightAmp,
-        bounceImpulse: gains.bounceImpulse,
+        weightAmp,
+        bounceImpulse,
         band,
         bpmScale,
         drop: gains.drop,
         modeFavored,
         micro: gains.micro,
+        // genre motion DNA (see MODE_STYLE)
+        stepBeatsMul: style.stepBeatsMul,
+        stiffMul: style.stiffMul,
+        zetaMul: style.zetaMul,
+        lagMul: style.lagMul,
+        snapMul: style.snapMul,
+        stanceBias: style.stanceBias,
       });
     }
   }

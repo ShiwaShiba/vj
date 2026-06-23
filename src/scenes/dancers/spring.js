@@ -47,29 +47,50 @@ const SPRING_DEFS = {
 const ANTIC_FRAC = 0.3;
 const ANTIC_EPS = 0.02;
 
+// Limb / expressive DOFs that take the per-genre zeta & lag multipliers (rigid vs
+// whippy, locked vs unfurling). The structural DOFs (sink, swayX, pelYaw, stance,
+// hips, headYaw) are LEFT at their base damping so the weight-shift and the
+// sink/plié never overshoot and wobble — only the limbs change feel by genre.
+const STYLE_ZETA_DOFS = new Set([
+  'armR', 'armL', 'elR', 'elL', 'wrR', 'wrL', 'raise', 'shYaw', 'lean', 'lateralBend', 'head', 'kneeR', 'kneeL',
+]);
+const clampZeta = (z) => (z < 0.42 ? 0.42 : z > 1.4 ? 1.4 : z);
+
 export class SpringBank {
   constructor(initial = {}) {
     this.dofs = {};
     for (const name in SPRING_DEFS) {
       const [stiff, zeta, lag] = SPRING_DEFS[name];
       const x = initial[name] != null ? initial[name] : 0;
-      this.dofs[name] = { x, v: 0, target: x, stiff0: stiff, stiff, zeta, lag, pend: x, pendT: 0, pendSnap: false };
+      this.dofs[name] = { x, v: 0, target: x, stiff0: stiff, stiff, zeta0: zeta, zeta, lag0: lag, lag, pend: x, pendT: 0, pendSnap: false };
     }
     this._out = {};
-    this._scale = 1;
+    this._snapFrac = ANTIC_FRAC;
+    // Cached style inputs so we only recompute the per-DOF stiff/zeta/lag when the
+    // tempo band or the selected genre actually changes (every frame otherwise).
+    this._sBpm = 1; this._sStiff = 1; this._sZeta = 1; this._sLag = 1; this._sSnap = 1;
   }
 
-  setBpmScale(mul) {
-    if (mul === this._scale) return;
-    this._scale = mul;
-    for (const name in this.dofs) this.dofs[name].stiff = this.dofs[name].stiff0 * mul;
+  // Apply tempo (bpmScale) + the genre's MOTION DNA multipliers. stiffMul scales
+  // every DOF (overall crispness); zetaMul/lagMul reshape only the limb DOFs
+  // (rigid robot ↔ boneless whip); snapMul sizes the percussive anticipation hit.
+  setStyle(bpmScale = 1, stiffMul = 1, zetaMul = 1, lagMul = 1, snapMul = 1) {
+    if (bpmScale === this._sBpm && stiffMul === this._sStiff && zetaMul === this._sZeta && lagMul === this._sLag && snapMul === this._sSnap) return;
+    this._sBpm = bpmScale; this._sStiff = stiffMul; this._sZeta = zetaMul; this._sLag = lagMul; this._sSnap = snapMul;
+    for (const name in this.dofs) {
+      const d = this.dofs[name];
+      d.stiff = d.stiff0 * bpmScale * stiffMul;
+      if (STYLE_ZETA_DOFS.has(name)) { d.zeta = clampZeta(d.zeta0 * zetaMul); d.lag = d.lag0 * lagMul; }
+      else { d.zeta = d.zeta0; d.lag = d.lag0; }
+    }
+    this._snapFrac = ANTIC_FRAC * snapMul;
   }
 
   // Apply a target now: inject the anticipation kick (snap DOFs) then set target.
   _apply(d, t, snap) {
     if (snap) {
       const delta = t - d.x;
-      if (Math.abs(delta) > ANTIC_EPS) d.v += -Math.sign(delta) * ANTIC_FRAC * Math.sqrt(d.stiff) * Math.abs(delta);
+      if (Math.abs(delta) > ANTIC_EPS) d.v += -Math.sign(delta) * this._snapFrac * Math.sqrt(d.stiff) * Math.abs(delta);
     }
     d.target = t;
   }
