@@ -24,7 +24,7 @@ export function groove(beatsF, bounceImpulse, beatHold, weightAmp, out) {
   o.swayX = weightAmp * weight;
   o.pelYaw = 0.18 * weight;
   o.shYaw = -0.22 * weight;
-  o.sink = -bounceImpulse * 0.12 + breath;
+  o.sink = -bounceImpulse * 0.10 + breath; // global vertical translate (0.12->0.10: gentler whole-figure bob)
   o.head = beatHold * 0.1 + Math.sin(frac(beatsF) * TWO_PI) * 0.04;
   o.weight = weight;
 

@@ -7,7 +7,9 @@ export class AudioMapper {
   constructor() {
     this.energy = 0;
     this.lastE = 0;
-    this.bounceImpulse = 0;
+    this.bounceImpulse = 0;   // RENDERED bounce (smoothed follower)
+    this._bounceTarget = 0;   // impulse kick target (decays per beat)
+    this._bounceVel = 0;      // follower velocity (critically damped)
     this.drop = 0;
     this._out = {};
   }
@@ -20,12 +22,26 @@ export class AudioMapper {
     this.energy += (tgtE - this.energy) * (tgtE > this.energy ? 0.25 : 0.025);
     const e = this.energy;
 
-    // Bounce impulse: a punchy dip on every beat, decaying cleanly per beat.
+    // Bounce: a punchy dip on every beat. The kick lands on a decaying TARGET;
+    // the RENDERED bounceImpulse is a critically-damped follower of that target, so
+    // it rises as a smooth hop (zero-velocity start) instead of stepping up in a
+    // single frame. The old `+= power` made the figure's vertical translate jump
+    // ~12-31px in one frame on every beat = the jerky, nausea-inducing pop.
     if (audio.beat || beatTick) {
       const power = audio.beat ? 0.9 + audio.bass * 0.7 : 0.5;
-      this.bounceImpulse = Math.min(1.5, this.bounceImpulse + power);
+      this._bounceTarget = Math.min(1.5, this._bounceTarget + power);
     }
-    this.bounceImpulse *= Math.exp(-dt / 0.16);
+    this._bounceTarget *= Math.exp(-dt / 0.16);
+    const cdt = dt < 1 / 30 ? dt : 1 / 30;     // bound stall-frame impulses
+    const W = 24;                              // rad/s: ~70ms rise, settles within the beat
+    const sub = Math.max(1, Math.ceil(cdt * 120));
+    const h = cdt / sub;
+    for (let i = 0; i < sub; i++) {
+      const a = W * W * (this._bounceTarget - this.bounceImpulse) - 2 * W * this._bounceVel;
+      this._bounceVel += a * h;
+      this.bounceImpulse += this._bounceVel * h;
+    }
+    if (this.bounceImpulse < 0) { this.bounceImpulse = 0; this._bounceVel = 0; }
 
     // Drop: a sharp energy jump with low-end present.
     const dE = e - this.lastE;

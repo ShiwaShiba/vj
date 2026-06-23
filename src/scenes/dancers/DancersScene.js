@@ -19,7 +19,7 @@ const VIEWS = [
 export class DancersScene extends Scene {
   constructor() {
     super('dancers', 'Dancers');
-    this.trail = 0.84;
+    this.trail = 0.8;   // bg clear amount; driven by the 'trail' param (1 - persistence)
     this.modes = MODES.map((m) => ({ name: m.name }));
     // Camera viewpoint as a button group (parallel to modes).
     this.views = VIEWS.map((v) => ({ name: v.name }));
@@ -29,6 +29,10 @@ export class DancersScene extends Scene {
     this.defineParam('count', 1, 1, 100, 1, 'Dancers');
     this.defineParam('size', 0.4, 0.2, 1, 0.05, 'Size');
     this.defineParam('spread', 1, 0, 2.5, 0.1, 'Spread');
+    // Motion afterimage (persistence): 0 = crisp clear, higher = longer trails.
+    // Drives this.trail (= 1 - persistence) each frame. Free perf-wise — it only
+    // changes the per-frame background fill alpha, no extra drawing.
+    this.defineParam('trail', 0.2, 0, 0.55, 0.05, 'Trail');
     this.rigs = [];
     this._builtFor = '';
     this._audioMap = new AudioMapper();
@@ -86,6 +90,7 @@ export class DancersScene extends Scene {
 
   update(dt, audio, palette, clock) {
     if (this._key() !== this._builtFor) this._build();
+    this.trail = 1 - this.p('trail');   // afterimage amount (live slider)
 
     // Ease the camera toward the selected viewpoint so switches glide.
     const view = VIEWS[this.viewIndex];
