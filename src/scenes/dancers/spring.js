@@ -25,16 +25,22 @@ const SPRING_DEFS = {
   raise:       [180, 0.85, 0.015],
   armR:        [300, 0.6, 0.03],
   armL:        [300, 0.6, 0.03],
-  elR:         [230, 0.65, 0.06],
-  elL:         [230, 0.65, 0.06],
-  wrR:         [190, 0.7, 0.10],
-  wrL:         [190, 0.7, 0.10],
-  hipR:        [150, 0.9, 0.02],
-  hipL:        [150, 0.9, 0.02],
-  kneeR:       [190, 0.8, 0.05],
-  kneeL:       [190, 0.8, 0.05],
+  // Elbow/wrist/knee ZETA lowered (more overshoot = whip/follow-through) and lag
+  // raised (distal joints trail proximal further). The on-beat SNAP punch is the
+  // anticipation backswing in _apply (stiffness-scaled, ZETA-independent), so it
+  // survives — we keep the hit, gain the supple settle. lag gradient
+  // shoulder .03 -> elbow .085 -> wrist .12 is the overlapping-action chain.
+  elR:         [230, 0.52, 0.085],
+  elL:         [230, 0.52, 0.085],
+  wrR:         [190, 0.58, 0.12],
+  wrL:         [190, 0.58, 0.12],
+  hipR:        [150, 0.85, 0.03],
+  hipL:        [150, 0.85, 0.03],
+  kneeR:       [190, 0.62, 0.075],
+  kneeL:       [190, 0.62, 0.075],
   head:        [140, 0.85, 0.06],
   headYaw:     [140, 0.85, 0.06],
+  stance:      [150, 0.9, 0.02],
 };
 
 // Backswing as a constant FRACTION of the move, independent of stiffness.

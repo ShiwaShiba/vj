@@ -37,16 +37,25 @@ const SPINE = {
   neckLatK: -0.18, neckLeanK: 0.5,
 };
 
+// Elbow flex -> forearm/hand DEPTH fold. The forearm used to share the upper
+// arm's depth (armR), so a bent elbow only swung in-plane and read flat from the
+// front. EL_CURL converts elbow flex (beyond the ~0.15 straight value) into a
+// forward depth offset so a fold comes toward the camera = a real 3D bend in
+// front/3-4 views. Side view stays correct because the global camera rotates the
+// +z contribution into screen-x. Tunable per rig via `this.elCurl`.
+const EL_CURL = 0.55;
+
 export class DancerRig {
   constructor(x, groundY, H, seed = 1) {
     this.x = x; this.groundY = groundY; this.H = H; this.seed = seed;
     this.L = {
       sink: 0, swayX: 0, pelYaw: 0, lean: 0, lateralBend: 0, shYaw: 0, raise: 0.28,
       armR: 0, armL: 0, elR: 0.5, elL: 0.5, wrR: 0, wrL: 0,
-      hipR: 0, hipL: 0, kneeR: 0.2, kneeL: 0.2, head: 0, headYaw: 0,
+      hipR: 0, hipL: 0, kneeR: 0.2, kneeL: 0.2, head: 0, headYaw: 0, stance: 0,
     };
     this.choreo = new Choreographer(seed);
     this.spine = SPINE;      // spine bend weights (tunable per rig)
+    this.elCurl = EL_CURL;   // elbow depth-fold strength (tunable per rig)
     this._g = {};            // reused groove output
     this._wSign = -1;        // weighted side (pre-groove), with hysteresis
   }
@@ -129,22 +138,34 @@ export class DancerRig {
     const wsR = [s1[0] + PROP.waistHalf * H, s1[1], s1[2]];
     const wsL = [s1[0] - PROP.waistHalf * H, s1[1], s1[2]];
 
+    // Elbow flex folds the forearm + hand FORWARD in depth so a bent elbow reads
+    // as a real 3D fold (front/3-4), not a flat in-plane swing. cd() keeps an
+    // over-folded elbow from flipping past the upper arm.
+    const cd2 = (v) => (v < -1.4 ? -1.4 : v > 1.4 ? 1.4 : v);
+    const curlR = Math.max(0, L.elR - 0.15) * this.elCurl;
+    const curlL = Math.max(0, L.elL - 0.15) * this.elCurl;
+    const fdR = cd2(L.armR + curlR), fdL = cd2(L.armL + curlL);
     const elR = A(shR, L.raise, L.armR, PROP.upperArm * H);
-    const wrR = A(elR, L.raise + L.elR, L.armR, PROP.foreArm * H);
-    const haR = A(wrR, L.raise + L.elR + L.wrR, L.armR, PROP.hand * H);
+    const wrR = A(elR, L.raise + L.elR, fdR, PROP.foreArm * H);
+    const haR = A(wrR, L.raise + L.elR + L.wrR, fdR, PROP.hand * H);
     const elL = A(shL, -L.raise, L.armL, PROP.upperArm * H);
-    const wrL = A(elL, -(L.raise + L.elL), L.armL, PROP.foreArm * H);
-    const haL = A(wrL, -(L.raise + L.elL + L.wrL), L.armL, PROP.hand * H);
+    const wrL = A(elL, -(L.raise + L.elL), fdL, PROP.foreArm * H);
+    const haL = A(wrL, -(L.raise + L.elL + L.wrL), fdL, PROP.hand * H);
 
     // --- PELVIS + LEGS: pelvis rolls with weight; thighs swing from the hip ---
     const roll = L.swayX * 0.6;
     const hipR = [PROP.pelvisHalf * H, roll * H, 0];
     const hipL = [-PROP.pelvisHalf * H, -roll * H, 0];
-    const knR = A(hipR, 0.08, L.hipR, PROP.thigh * H);
-    const anR = A(knR, 0.08, L.hipR - L.kneeR, PROP.shin * H);
+    // `stance` opens the thighs outward (plié / second position); the splay decays
+    // down the chain so the shin returns toward vertical and the foot stays
+    // planted-forward = a turned-out crouch, not a fanned-out leg. At stance=0 the
+    // azimuths fall back to the original fixed 0.08 (identical to before).
+    const splayR = 0.08 + L.stance, splayL = -0.08 - L.stance;
+    const knR = A(hipR, splayR, L.hipR, PROP.thigh * H);
+    const anR = A(knR, 0.08 + L.stance * 0.5, L.hipR - L.kneeR, PROP.shin * H);
     const ftR = A(anR, 0.08, L.hipR - L.kneeR + 0.95, PROP.foot * H);
-    const knL = A(hipL, -0.08, L.hipL, PROP.thigh * H);
-    const anL = A(knL, -0.08, L.hipL - L.kneeL, PROP.shin * H);
+    const knL = A(hipL, splayL, L.hipL, PROP.thigh * H);
+    const anL = A(knL, -(0.08 + L.stance * 0.5), L.hipL - L.kneeL, PROP.shin * H);
     const ftL = A(anL, -0.08, L.hipL - L.kneeL + 0.95, PROP.foot * H);
 
     // --- Twist winds up the spine: pelvis (pelYaw) -> chest (shYaw) ---

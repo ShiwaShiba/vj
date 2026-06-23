@@ -18,6 +18,7 @@ export const REST = {
   sink: 0, swayX: 0, pelYaw: 0, lean: 0, lateralBend: 0, shYaw: 0, raise: 0.28,
   armR: 0, armL: 0, elR: 0.5, elL: 0.5, wrR: 0, wrL: 0,
   hipR: 0, hipL: 0, kneeR: 0.2, kneeL: 0.2, head: 0, headYaw: 0,
+  stance: 0, // outward thigh splay (plié / second position); 0 = original narrow stance
 };
 
 // DOFs that get an anticipation backswing on a snap step (the "hit" limbs).
@@ -87,6 +88,32 @@ export const POSES = {
   WHIP_LOW_R: { swayX: -0.36, pelYaw: 0.24, shYaw: -0.4, lateralBend: 0.2, raise: 0.34, armR: -0.1, elR: 0.28, wrR: -0.42, armL: 0.3, elL: 0.9, wrL: 0.44, kneeL: 0.15, kneeR: 0.5, hipR: 0.18, hipL: -0.04, head: -0.08, headYaw: -0.24 },
 
   SPIRAL_REACH_R: { swayX: -0.34, pelYaw: 0.34, shYaw: -0.52, lateralBend: 0.1, raise: 0.58, armR: 1, elR: 0.34, wrR: -0.4, armL: -0.3, elL: 0.82, wrL: 0.28, kneeL: 0.16, kneeR: 0.5, hipR: 0.22, hipL: -0.04, lean: 0.08, head: 0.04, headYaw: -0.28 },
+
+  // --- Flexibility / "supple" vocabulary (exploit stance splay + elbow depth-curl) ---
+  // Deep symmetric plié: knees open wide, hips sink, elbows fold in toward camera.
+  DEEP_PLIE: { sink: 0.42, stance: 0.5, kneeR: 0.66, kneeL: 0.66, hipR: 0.12, hipL: 0.12, raise: 0.3, armR: -0.1, armL: 0.1, elR: 0.95, elL: 0.95, wrR: 0.3, wrL: -0.3, lean: 0.1, head: -0.06 },
+  // Coil: one knee deep, torso spiraled hard, near arm fully folded (depth-curl shows the fold).
+  COIL_R: { swayX: 0.4, sink: 0.2, stance: 0.22, pelYaw: -0.34, shYaw: 0.46, lateralBend: -0.2, raise: 0.4, armR: 0.2, elR: 1.0, wrR: -0.34, armL: 0.3, elL: 0.34, wrL: 0.3, kneeR: 0.16, kneeL: 0.7, hipL: 0.3, hipR: -0.1, lean: 0.06, head: 0.04, headYaw: 0.2 },
+  // Both elbows folded, coiled to unfurl on the next snap step.
+  FOLD_THROUGH_R: { swayX: -0.3, raise: 0.55, armR: 0.45, elR: 0.92, wrR: 0.4, armL: 0.25, elL: 0.55, wrL: -0.3, stance: 0.16, kneeR: 0.5, kneeL: 0.18, hipR: 0.18, hipL: -0.05, head: 0.06, headYaw: -0.16 },
+  // Contortion freeze: extreme lateral C + fold + side-lean = a bone-bending illusion.
+  CONTORT_R: { swayX: -0.4, lateralBend: 0.5, lean: 0.2, pelYaw: 0.3, shYaw: -0.55, raise: 0.5, armR: 0.7, elR: 0.95, wrR: 0.5, armL: -0.3, elL: 0.9, wrL: -0.5, stance: 0.3, kneeR: 0.6, kneeL: 0.3, hipR: 0.2, hipL: 0.05, head: -0.12, headYaw: -0.3 },
+
+  // --- VOGUE: hand-performance frames + dramatic back-bend "dip" illusion ---
+  VOGUE_FRAME_R: { swayX: -0.4, pelYaw: 0.3, shYaw: -0.4, lateralBend: 0.2, raise: 0.62, armR: 0.5, elR: 0.95, wrR: 0.5, armL: 0.5, elL: 0.95, wrL: -0.5, stance: 0.18, hipR: 0.18, hipL: -0.05, kneeR: 0.5, kneeL: 0.16, head: 0.06, headYaw: -0.18 },
+  VOGUE_DIP_R: { lean: -0.34, sink: 0.3, stance: 0.42, swayX: 0.28, pelYaw: -0.2, shYaw: 0.3, raise: 0.7, armR: 0.9, elR: 0.3, wrR: 0.4, armL: 0.8, elL: 0.34, wrL: -0.4, kneeR: 0.6, kneeL: 0.5, hipR: 0.1, hipL: 0.1, head: 0.22 },
+
+  // --- POPPING: arm-wave keyframes + rigid robot freeze ---
+  WAVE_A_R: { raise: 0.7, armR: 0.9, elR: 0.18, wrR: 0.5, armL: 0.2, elL: 0.9, wrL: -0.4, stance: 0.1, kneeR: 0.3, kneeL: 0.3, head: 0.04 },
+  WAVE_B_R: { raise: 0.5, armR: 0.4, elR: 0.92, wrR: -0.4, armL: 0.6, elL: 0.4, wrL: 0.5, stance: 0.1, kneeR: 0.3, kneeL: 0.3, head: -0.02 },
+  ROBOT_FREEZE_R: { raise: 0.55, armR: 0.85, elR: 0.16, wrR: -0.3, armL: -0.05, elL: 0.95, wrL: 0.34, stance: 0.06, kneeR: 0.2, kneeL: 0.2, head: 0 },
+
+  // --- HOUSE: the "jack" torso pulse (footwork reuses STEP / HOUSE_LOFT) ---
+  JACK_R: { swayX: 0.3, lean: 0.16, raise: 0.3, armR: 0.2, elR: 0.7, wrR: 0.2, armL: -0.2, elL: 0.7, wrL: -0.2, stance: 0.2, kneeR: 0.2, kneeL: 0.5, hipL: 0.3, hipR: -0.08, head: -0.04, headYaw: 0.12 },
+
+  // --- KRUMP: hard arm swing (wide stomp stance) + chest pop (lean reversal) ---
+  KRUMP_HIT_R: { swayX: 0.34, shYaw: 0.4, pelYaw: -0.3, raise: 0.5, armR: 0.9, elR: 0.2, wrR: -0.4, armL: -0.2, elL: 0.9, wrL: 0.4, stance: 0.4, kneeR: 0.16, kneeL: 0.6, hipL: 0.3, hipR: -0.05, lean: 0.14, head: 0.06, headYaw: 0.1 },
+  CHEST_POP: { lean: -0.22, raise: 0.4, armR: -0.2, elR: 0.85, armL: -0.2, elL: 0.85, wrR: -0.4, wrL: 0.4, stance: 0.5, kneeR: 0.55, kneeL: 0.55, sink: 0.18, head: -0.06 },
 };
 
 // L/R twins (the alternation is the dance). Authored one side; mirror() flips the other.
@@ -105,6 +132,17 @@ POSES.HOUSE_LOFT_L = mirror(POSES.HOUSE_LOFT_R);
 POSES.ATTITUDE_BACK_L = mirror(POSES.ATTITUDE_BACK_R);
 POSES.WHIP_LOW_L = mirror(POSES.WHIP_LOW_R);
 POSES.SPIRAL_REACH_L = mirror(POSES.SPIRAL_REACH_R);
+// New flexibility + genre signatures (DEEP_PLIE / CHEST_POP are symmetric — no twin).
+POSES.COIL_L = mirror(POSES.COIL_R);
+POSES.FOLD_THROUGH_L = mirror(POSES.FOLD_THROUGH_R);
+POSES.CONTORT_L = mirror(POSES.CONTORT_R);
+POSES.VOGUE_FRAME_L = mirror(POSES.VOGUE_FRAME_R);
+POSES.VOGUE_DIP_L = mirror(POSES.VOGUE_DIP_R);
+POSES.WAVE_A_L = mirror(POSES.WAVE_A_R);
+POSES.WAVE_B_L = mirror(POSES.WAVE_B_R);
+POSES.ROBOT_FREEZE_L = mirror(POSES.ROBOT_FREEZE_R);
+POSES.JACK_L = mirror(POSES.JACK_R);
+POSES.KRUMP_HIT_L = mirror(POSES.KRUMP_HIT_R);
 
 // Phrases: snappy 1-beat hits (more frequent than before so joints move often),
 // always L/R balanced. `snap` triggers anticipation. DROP/IDLE are special
@@ -157,6 +195,64 @@ export const PHRASES = {
     { p: 'PORT_DE_BRAS_R', beats: 1, hold: 0.4, snap: true }, { p: 'ATTITUDE_BACK_R', beats: 1, hold: 0.35, snap: true },
     { p: 'WEIGHT_R', beats: 1, hold: 0.3 }, { p: 'PORT_DE_BRAS_L', beats: 1, hold: 0.4, snap: true },
     { p: 'ATTITUDE_BACK_L', beats: 1, hold: 0.35, snap: true }, { p: 'WEIGHT_L', beats: 1, hold: 0.3 },
+  ],
+
+  // --- Genre-exclusive phrases (one signature per dance style). Short holds +
+  // snap = the inhuman precision; the depth-curl + low-ZETA springs make the
+  // folds whip. Genres reuse existing poses where they overlap. ---
+  VOGUE_HANDS: [
+    { p: 'VOGUE_FRAME_R', beats: 1, hold: 0.3, snap: true }, { p: 'VOGUE_FRAME_L', beats: 1, hold: 0.3, snap: true },
+    { p: 'WEIGHT_R', beats: 1, hold: 0.3 }, { p: 'VOGUE_FRAME_R', beats: 1, hold: 0.3, snap: true },
+    { p: 'VOGUE_FRAME_L', beats: 1, hold: 0.3, snap: true }, { p: 'WEIGHT_L', beats: 1, hold: 0.3 },
+  ],
+  VOGUE_DIP: [
+    { p: 'VOGUE_FRAME_R', beats: 1, hold: 0.3, snap: true }, { p: 'VOGUE_DIP_R', beats: 2, hold: 0.55, snap: true },
+    { p: 'WEIGHT_L', beats: 1, hold: 0.4 }, { p: 'VOGUE_FRAME_L', beats: 1, hold: 0.3, snap: true },
+    { p: 'VOGUE_DIP_L', beats: 2, hold: 0.55, snap: true }, { p: 'WEIGHT_R', beats: 1, hold: 0.4 },
+  ],
+  WAVE: [
+    { p: 'WAVE_A_R', beats: 1, hold: 0.2, snap: true }, { p: 'WAVE_B_R', beats: 1, hold: 0.2, snap: true },
+    { p: 'WAVE_A_L', beats: 1, hold: 0.2, snap: true }, { p: 'WAVE_B_L', beats: 1, hold: 0.2, snap: true },
+  ],
+  ROBOT_FREEZE: [
+    { p: 'ROBOT_FREEZE_R', beats: 1, hold: 0.5, snap: true }, { p: 'WEIGHT_L', beats: 1, hold: 0.3 },
+    { p: 'ROBOT_FREEZE_L', beats: 1, hold: 0.5, snap: true }, { p: 'WEIGHT_R', beats: 1, hold: 0.3 },
+  ],
+  ISO_BOX: [
+    { p: 'TUT_BOX_R', beats: 1, hold: 0.3, snap: true }, { p: 'SCARECROW_T', beats: 1, hold: 0.25, snap: true },
+    { p: 'TUT_BOX_L', beats: 1, hold: 0.3, snap: true }, { p: 'ROBOT_FREEZE_R', beats: 1, hold: 0.3, snap: true },
+  ],
+  WAACK_WHIP: [
+    { p: 'WAACK_FRAME_R', beats: 1, hold: 0.2, snap: true }, { p: 'WHIP_LOW_R', beats: 1, hold: 0.2, snap: true },
+    { p: 'WAACK_FRAME_L', beats: 1, hold: 0.2, snap: true }, { p: 'WHIP_LOW_L', beats: 1, hold: 0.2, snap: true },
+  ],
+  WAACK_SPIN: [
+    { p: 'TURN_R', beats: 1, hold: 0.25, snap: true }, { p: 'SPIRAL_REACH_R', beats: 1, hold: 0.25, snap: true },
+    { p: 'TURN_L', beats: 1, hold: 0.25, snap: true }, { p: 'SPIRAL_REACH_L', beats: 1, hold: 0.25, snap: true },
+  ],
+  HOUSE_FOOT: [
+    { p: 'STEP_R', beats: 1, hold: 0.2, snap: true }, { p: 'HOUSE_LOFT_R', beats: 1, hold: 0.25, snap: true },
+    { p: 'STEP_L', beats: 1, hold: 0.2, snap: true }, { p: 'HOUSE_LOFT_L', beats: 1, hold: 0.25, snap: true },
+  ],
+  JACK: [
+    { p: 'JACK_R', beats: 1, hold: 0.2, snap: true }, { p: 'STEP_R', beats: 1, hold: 0.2, snap: true },
+    { p: 'JACK_L', beats: 1, hold: 0.2, snap: true }, { p: 'STEP_L', beats: 1, hold: 0.2, snap: true },
+  ],
+  KRUMP_HIT: [
+    { p: 'KRUMP_HIT_R', beats: 1, hold: 0.2, snap: true }, { p: 'CHEST_POP', beats: 1, hold: 0.25, snap: true },
+    { p: 'KRUMP_HIT_L', beats: 1, hold: 0.2, snap: true }, { p: 'CHEST_POP', beats: 1, hold: 0.25, snap: true },
+  ],
+  CHEST_POP_PH: [
+    { p: 'CHEST_POP', beats: 1, hold: 0.25, snap: true }, { p: 'WEIGHT_R', beats: 1, hold: 0.3 },
+    { p: 'CHEST_POP', beats: 1, hold: 0.25, snap: true }, { p: 'WEIGHT_L', beats: 1, hold: 0.3 },
+  ],
+  COIL_PH: [
+    { p: 'COIL_R', beats: 1, hold: 0.3, snap: true }, { p: 'FOLD_THROUGH_R', beats: 1, hold: 0.25, snap: true },
+    { p: 'COIL_L', beats: 1, hold: 0.3, snap: true }, { p: 'FOLD_THROUGH_L', beats: 1, hold: 0.25, snap: true },
+  ],
+  CONTORT: [
+    { p: 'CONTORT_R', beats: 2, hold: 0.5, snap: true }, { p: 'DEEP_PLIE', beats: 1, hold: 0.4, snap: true },
+    { p: 'CONTORT_L', beats: 2, hold: 0.5, snap: true }, { p: 'DEEP_PLIE', beats: 1, hold: 0.4, snap: true },
   ],
   DROP: [
     { p: 'CONTRACT', beats: 1, hold: 0.5 }, { p: 'RELEASE_UP', beats: 1, hold: 0.3, snap: true },

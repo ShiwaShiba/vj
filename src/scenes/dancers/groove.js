@@ -40,9 +40,9 @@ export function groove(beatsF, bounceImpulse, beatHold, weightAmp, out) {
   const wWave = Math.sin(frac(beatsF / 2) * TWO_PI + Math.PI * 0.5);
   o.wrR = 0.10 * w  + 0.06 * wWave;
   o.wrL = 0.10 * w2 - 0.06 * wWave;
-  o.elR = 0.04 * wE; o.elL = -0.04 * wE;              // a hair of forearm breathing
+  o.elR = 0.06 * wE; o.elL = -0.06 * wE;              // forearm breathing (folds keep articulating)
   o.headYaw = 0.05 * s2;                              // gaze isn't frozen
-  o.kneeFreeBob = 0.06 * Math.abs(Math.sin(frac(beatsF / 2) * TWO_PI)); // free-leg only (sign-gated in rig)
+  o.kneeFreeBob = 0.10 * Math.abs(Math.sin(frac(beatsF / 2) * TWO_PI)); // free-leg only (sign-gated in rig)
 
   // --- spine undulation (low-amp, beat-synced): the torso sways/breathes against
   // the hip weight-shift so the upper body is never a rigid plank through a hold.
