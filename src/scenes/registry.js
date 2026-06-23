@@ -3,6 +3,7 @@ import { SineGrid } from './dots/SineGrid.js';
 import { FlowField } from './dots/FlowField.js';
 import { ParticleField } from './dots/ParticleField.js';
 import { Tunnel } from './dots/Tunnel.js';
+import { FallingCubes } from './dots/FallingCubes.js';
 import { Kaleidoscope } from './dots/Kaleidoscope.js';
 import { Lissajous } from './dots/Lissajous.js';
 import { Moire } from './dots/Moire.js';
@@ -20,6 +21,7 @@ export function createScenes() {
     new FlowField(),
     new ParticleField(),
     new Tunnel(),
+    new FallingCubes(),
     new Kaleidoscope(),
     new Lissajous(),
     new Moire(),
