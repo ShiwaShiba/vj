@@ -1,5 +1,5 @@
 import { Scene } from '../Scene.js';
-import { clamp, lerp, smoothstep, rgbCss, lerpRgb, TWO_PI } from '../../lib/math.js';
+import { clamp, lerp, smoothstep, map, rgbCss, lerpRgb, TWO_PI } from '../../lib/math.js';
 import { SimplexNoise } from '../../lib/noise.js';
 
 // GROUND PLAN — a precise FLAT (true top-down) blueprint of the Kunitachi (国立)
@@ -66,6 +66,19 @@ const PH_ENERGIZE = 0, PH_RISE = 1, PH_HOLD = 2, PH_SINK = 3;
 const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 3;
 const SINK_RATE = 0.26;                  // teardown speed (audio-independent, can't stall)
 
+// 3D box faces + monochrome shading (reused from the 3D checkpoint / FallingCubes).
+const NTONE = 16, FACES = 5;             // grayscale buckets; faces per block (top + 4 walls)
+const LX = -0.4, LY = -0.7, LZ = 0.55, LL = Math.hypot(LX, LY, LZ);
+const LNX = LX / LL, LNY = LY / LL, LNZ = LZ / LL; // world light dir (up = -y, so roofs read bright)
+// box verts in (x,y,z); base = ground (y=0), top = y=-h. floor face skipped.
+const BOX_F = [
+  { idx: [3, 2, 6, 7], n: [0, -1, 0] }, // top (up)
+  { idx: [0, 1, 2, 3], n: [0, 0, -1] }, // north wall
+  { idx: [4, 5, 6, 7], n: [0, 0, 1] },  // south wall
+  { idx: [0, 3, 7, 4], n: [-1, 0, 0] }, // west wall
+  { idx: [1, 2, 6, 5], n: [1, 0, 0] },  // east wall
+];
+
 export class GroundPlan extends Scene {
   constructor() {
     super('groundplan', 'Ground Plan');
@@ -77,6 +90,15 @@ export class GroundPlan extends Scene {
     this.defineParam('avenueWidth', 3.0, 1.5, 5.0, 0.1, '大学通り Width');
     this.defineParam('spark', 1, 0, 1, 1, 'Spark');
     this.defineParam('trail', 0.85, 0.3, 1.0, 0.05, 'Trail');
+    this.defineParam('light', 0.6, 0, 1, 0.05, 'Light');
+
+    // independent switchable axes (rendered as labelled button rows by ControlPanel)
+    this.modeGroups = [
+      { key: 'scope', label: '範囲', options: ['District', 'City', 'Landmark'], index: 0 },
+      { key: 'cam', label: 'カメラ', options: ['Tilt', 'Live', 'Plan'], index: 1 },
+      { key: 'height', label: '高さ', options: ['Vary', 'Even', 'Pulse'], index: 0 },
+      { key: 'style', label: 'スタイル', options: ['Hybrid', 'Wire', 'Solid'], index: 0 },
+    ];
 
     this.t = 0;
     this._front = 0;     // 0..1 energization progress (monotonic; holds at 1)
@@ -97,6 +119,18 @@ export class GroundPlan extends Scene {
 
     this._phase = PH_ENERGIZE; this._rise = 0; this._riseView = 0;
     this._secStart = 0; this._holdN = 0;
+
+    // 3D projection / face scratch (allocation-free hot loop)
+    this._pvx = new Float32Array(MAX_BLOCKS * 8);
+    this._pvy = new Float32Array(MAX_BLOCKS * 8);
+    this._pvf = new Float32Array(MAX_BLOCKS * 8);
+    this._fSlot = new Int32Array(MAX_BLOCKS * FACES);
+    this._fIdx = new Uint8Array(MAX_BLOCKS * FACES);
+    this._fCz = new Float32Array(MAX_BLOCKS * FACES);
+    this._fBucket = new Uint8Array(MAX_BLOCKS * FACES);
+    this._fOrder = [];
+    this._toneCss = new Array(NTONE);
+    this._tmpRgb = [0, 0, 0];
   }
 
   init(ctx, w, h) {
@@ -357,6 +391,75 @@ export class GroundPlan extends Scene {
       }
     }
 
+    // --- buildings: extrude the footprints the rise wavefront has reached ---
+    const front3d = 1.15 * smoothstep(0, 1, this._riseView);
+    if (front3d > 0.001) {
+      const S = this._S;
+      const style = this.mg('style');
+      const wantFaces = style !== 1;        // Wire = stroke only, no fills
+      const lightP = this.p('light');
+      const hScale = H * 0.105;
+      const bg = this.palette.bg, fg = this.palette.fg, tmp = this._tmpRgb;
+      for (let i = 0; i < NTONE; i++) this._toneCss[i] = rgbCss(lerpRgb(bg, fg, i / (NTONE - 1), tmp));
+      const ccy = b.ccy, scy = b.scy, ccp = b.ccp, scp = b.scp, F = b.F;
+      let bi = 0, fc = 0;
+      for (let k = 0; k < this._blocks.length && bi < MAX_BLOCKS; k++) {
+        const blk = this._blocks[k];
+        const local = smoothstep(blk.key, blk.key + 0.14, front3d);
+        if (local <= 0.001) continue;
+        const h = blk.hNorm * hScale * local;
+        if (h < 0.5) continue;
+        const x0 = blk.uMin * S, x1 = blk.uMax * S;
+        const z0 = (blk.vMin - 0.5) * S, z1 = (blk.vMax - 0.5) * S;
+        const top = -h, slot = bi * 8;
+        this._pv(slot + 0, x0, 0, z0, b); this._pv(slot + 1, x1, 0, z0, b);
+        this._pv(slot + 2, x1, top, z0, b); this._pv(slot + 3, x0, top, z0, b);
+        this._pv(slot + 4, x0, 0, z1, b); this._pv(slot + 5, x1, 0, z1, b);
+        this._pv(slot + 6, x1, top, z1, b); this._pv(slot + 7, x0, top, z1, b);
+        const Zc = (x0 + x1) * 0.5 * scy + (z0 + z1) * 0.5 * ccy;
+        const blockCz = (top * 0.5) * scp + Zc * ccp;
+        if (blockCz >= F * 0.92) continue;   // behind / too close to the camera
+        for (let f = 0; f < FACES; f++) {
+          const n = BOX_F[f].n;
+          const camNz = n[1] * scp + (n[0] * scy + n[2] * ccy) * ccp;
+          if (camNz <= 0) continue;          // backface cull
+          this._fSlot[fc] = bi; this._fIdx[fc] = f; this._fCz[fc] = blockCz;
+          if (wantFaces) {
+            const ndl = Math.max(0, n[0] * LNX + n[1] * LNY + n[2] * LNZ);
+            let shadeT = 0.34 + 0.6 * ndl * (0.5 + 0.5 * lightP);
+            const depthCue = clamp(map(blockCz, -0.5 * H, 0.5 * H, 0.7, 1.0), 0.68, 1.0);
+            shadeT = clamp(shadeT * depthCue + (blk.kind === K_LAND ? 0.04 : 0) + (f === 0 ? 0.06 : 0), 0, 1);
+            this._fBucket[fc] = Math.round(shadeT * (NTONE - 1));
+          }
+          fc++;
+        }
+        bi++;
+      }
+      if (!wantFaces) {
+        this._strokeFaces(ctx, A, fc, this.palette.fgCss());
+      } else {
+        const order = this._fOrder; order.length = fc;
+        for (let i = 0; i < fc; i++) order[i] = i;
+        order.sort((p, qq) => (this._fCz[p] - this._fCz[qq]) || (p - qq)); // far -> near
+        const pvx = this._pvx, pvy = this._pvy;
+        ctx.globalAlpha = A;
+        let lastB = -1;
+        for (let oi = 0; oi < fc; oi++) {
+          const rec = order[oi], bk = this._fBucket[rec];
+          if (bk !== lastB) { ctx.fillStyle = this._toneCss[bk]; lastB = bk; }
+          const sIdx = this._fSlot[rec] * 8, id = BOX_F[this._fIdx[rec]].idx;
+          ctx.beginPath();
+          ctx.moveTo(pvx[sIdx + id[0]], pvy[sIdx + id[0]]);
+          ctx.lineTo(pvx[sIdx + id[1]], pvy[sIdx + id[1]]);
+          ctx.lineTo(pvx[sIdx + id[2]], pvy[sIdx + id[2]]);
+          ctx.lineTo(pvx[sIdx + id[3]], pvy[sIdx + id[3]]);
+          ctx.closePath(); ctx.fill();
+        }
+        if (style === 0 && q > 0.6) this._strokeFaces(ctx, 0.5 * A, fc, this.palette.fgCss()); // Hybrid edges
+      }
+      ctx.globalAlpha = A;
+    }
+
     this._drawMarks(ctx, A, R, b, base);
     ctx.globalAlpha = A;
   }
@@ -431,5 +534,37 @@ export class GroundPlan extends Scene {
     this._g(u1, v1, b, p); ctx.lineTo(p[0], p[1]);
     this._g(u0, v1, b, p); ctx.lineTo(p[0], p[1]);
     ctx.closePath(); ctx.stroke();
+  }
+
+  // project a box vertex (wx, wy, wz) into the vertex buffers at index vi
+  _pv(vi, wx, wy, wz, b) {
+    const X = wx * b.ccy - wz * b.scy;
+    const Z = wx * b.scy + wz * b.ccy;
+    const Y = wy * b.ccp - Z * b.scp;
+    const Z2 = wy * b.scp + Z * b.ccp;
+    const f = b.F / (b.F - Z2);
+    this._pvx[vi] = b.cx + X * f; this._pvy[vi] = b.cy + Y * f; this._pvf[vi] = f;
+  }
+
+  // stroke the visible box-face outlines (wireframe / hybrid edges), far -> near
+  _strokeFaces(ctx, A, fc, css) {
+    const order = this._fOrder; order.length = fc;
+    for (let i = 0; i < fc; i++) order[i] = i;
+    order.sort((p, q) => (this._fCz[p] - this._fCz[q]) || (p - q));
+    ctx.strokeStyle = css || this.palette.fgCss();
+    const pvx = this._pvx, pvy = this._pvy, pvf = this._pvf;
+    for (let oi = 0; oi < fc; oi++) {
+      const rec = order[oi], s = this._fSlot[rec] * 8, id = BOX_F[this._fIdx[rec]].idx;
+      const fw = (pvf[s + id[0]] + pvf[s + id[2]]) * 0.5;
+      ctx.globalAlpha = clamp(A * clamp(fw, 0.6, 1.3), 0, 1);
+      ctx.lineWidth = Math.max(0.6, 1.0 * fw);
+      ctx.beginPath();
+      ctx.moveTo(pvx[s + id[0]], pvy[s + id[0]]);
+      ctx.lineTo(pvx[s + id[1]], pvy[s + id[1]]);
+      ctx.lineTo(pvx[s + id[2]], pvy[s + id[2]]);
+      ctx.lineTo(pvx[s + id[3]], pvy[s + id[3]]);
+      ctx.closePath(); ctx.stroke();
+    }
+    ctx.globalAlpha = A;
   }
 }
