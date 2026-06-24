@@ -94,11 +94,13 @@ const BOX_F = [
 ];
 
 // LIVE camera vantages (pitch from vertical, yaw kick) walked during HOLD.
+// Constrained so every HOLD cut keeps the railway near-horizontal (yaw∈[-0.05,0.18]) at a
+// consistent shallow aerial (pitch∈[0.44,0.56]) — the reference's calm framing, with parallax.
 const LIVE_VANTAGES = [
-  { pitch: 0.58, yaw: -0.10 }, // frontal three-quarter — the establishing shot
-  { pitch: 0.50, yaw: 0.40 },  // low, swung west — long raking read
-  { pitch: 0.82, yaw: 1.05 },  // near-overhead, strong yaw
-  { pitch: 0.70, yaw: -0.45 }, // east, fairly high
+  { pitch: 0.50, yaw: 0.08 },  // establishing — railway near-flat, gentle down-right
+  { pitch: 0.44, yaw: 0.16 },  // shallower, a touch more east-side rake
+  { pitch: 0.56, yaw: -0.04 }, // slightly higher, railway almost dead-flat
+  { pitch: 0.48, yaw: 0.12 },  // back toward establishing
 ];
 
 export class GroundPlan extends Scene {
@@ -113,6 +115,9 @@ export class GroundPlan extends Scene {
     this.defineParam('spark', 1, 0, 1, 1, 'Spark');
     this.defineParam('trail', 0.85, 0.3, 1.0, 0.05, 'Trail');
     this.defineParam('light', 0.6, 0, 1, 0.05, 'Light');
+    // Reference-framing pose (live-tunable): shallow aerial + near-horizontal railway.
+    this.defineParam('pitchTilt', 0.46, 0.30, 0.90, 0.01, 'Aerial Pitch');
+    this.defineParam('yawTilt', 0.10, -0.20, 0.50, 0.01, 'Aerial Yaw');
 
     // independent switchable axes (rendered as labelled button rows by ControlPanel)
     this.modeGroups = [
@@ -427,7 +432,7 @@ export class GroundPlan extends Scene {
       const tilt = smoothstep(0.0, 1.0, this._riseView);
       let pitchTgt, yawTgt;
       if (this.mg('cam') === 2) { pitchTgt = lerp(Math.PI / 2, 1.28, tilt); yawTgt = lerp(0.0, 0.12, tilt); }
-      else { pitchTgt = lerp(Math.PI / 2, 0.62, tilt); yawTgt = lerp(0.0, 0.45, tilt); }
+      else { pitchTgt = lerp(Math.PI / 2, this.p('pitchTilt'), tilt); yawTgt = lerp(0.0, this.p('yawTilt'), tilt); }
       if (P.camPitch != null) pitchTgt = P.camPitch;
       if (P.camYaw != null) yawTgt = P.camYaw;
       this._camPitch = -pitchTgt; this._camYaw = yawTgt;
@@ -489,9 +494,9 @@ export class GroundPlan extends Scene {
     if (cam === 2) {                          // Plan: stay near top-down (low relief)
       pitchTgt = lerp(Math.PI / 2, 1.28, tilt);
       yawTgt = lerp(0.0, 0.12, tilt);
-    } else {                                  // Tilt / Live base
-      pitchTgt = lerp(Math.PI / 2, 0.62, tilt);
-      yawTgt = lerp(0.0, 0.45, tilt);
+    } else {                                  // Tilt / Live base: shallow aerial, railway ~horizontal
+      pitchTgt = lerp(Math.PI / 2, this.p('pitchTilt'), tilt);
+      yawTgt = lerp(0.0, this.p('yawTilt'), tilt);
     }
     if (cam === 1 && this._phase === PH_HOLD) { // Live: walk vantages during hold
       this._xfade = Math.min(1, this._xfade + dt * (clock.bpm / 60) / (BAR * 2));
