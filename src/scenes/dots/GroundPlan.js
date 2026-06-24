@@ -1,5 +1,6 @@
 import { Scene } from '../Scene.js';
 import { clamp, lerp, smoothstep, rgbCss, lerpRgb, TWO_PI } from '../../lib/math.js';
+import { SimplexNoise } from '../../lib/noise.js';
 
 // GROUND PLAN — a precise FLAT (true top-down) blueprint of the Kunitachi (国立)
 // university town. The line work emanates from the station like current through a
@@ -53,6 +54,12 @@ const SH_R_Y = SH_R / TAN_A;       // ≈0.493
 // kinds: 0 inside-grid, 1 avenue, 2 spine, 3 boundary, 4 railway, 5 outside-grid
 const K_GRID = 0, K_AVE = 1, K_SPINE = 2, K_BOUND = 3, K_RAIL = 4, K_GOUT = 5;
 
+// Building footprints (3D phase). Blocks use a COARSER grid than the streets so
+// they read as city blocks, independent of the street-density slider.
+const MAX_BLOCKS = 240;
+const BDV = 0.095, BDH = 0.085;          // building-block grid spacing (plan units)
+const K_INSIDE = 0, K_OUTSIDE = 1, K_LAND = 2; // block kinds: inside district / outside / landmark
+
 export class GroundPlan extends Scene {
   constructor() {
     super('groundplan', 'Ground Plan');
@@ -73,6 +80,9 @@ export class GroundPlan extends Scene {
     this._reach = 1;     // plan distance from apex to the farthest screen corner
 
     this._H = 0; this._S = 0; this._cx = 0; this._topY = 0;
+
+    this.noise = new SimplexNoise(19); // stable per-block height variation
+    this._blocks = null;               // building footprints (built with the grid)
   }
 
   init(ctx, w, h) {
@@ -144,6 +154,42 @@ export class GroundPlan extends Scene {
     this._gridK = k;
 
     this._seg = seg;
+    this._buildBlocks();
+  }
+
+  // Building footprints derived from the frozen flat geometry: the station tower +
+  // two 一橋 super-blocks (landmarks, never culled), then a coarse block grid split
+  // into inside-district / outside blocks. Capped at MAX_BLOCKS (nearest kept).
+  _buildBlocks() {
+    const blocks = [];
+    const reach = this._reach || 1.4;
+    const distKey = (u, v) => clamp(Math.hypot(u, v) / reach, 0, 1);
+    const inPent = (u, v) => v >= 0 && v <= SOUTH && u > this._xLb(v) && u < this._xRb(v);
+    const inCamp = (u, v) => this._campus.some((c) => u > c[0] && u < c[2] && v > c[1] && v < c[3]);
+
+    blocks.push({ uMin: -0.05, uMax: 0.05, vMin: -0.06, vMax: 0.04, hNorm: 1.4, key: 0.02, kind: K_LAND }); // 駅舎タワー
+    for (const c of this._campus) {
+      blocks.push({ uMin: c[0], uMax: c[2], vMin: c[1], vMax: c[3], hNorm: 0.5,
+        key: distKey((c[0] + c[2]) / 2, (c[1] + c[3]) / 2), kind: K_LAND }); // 一橋 西/東
+    }
+
+    const inset = Math.min(BDV, BDH) * 0.18;
+    for (let v = 0.08; v < EXT_S - BDH; v += BDH) {
+      for (let u = -EXT_X + BDV; u < EXT_X; u += BDV) {
+        const cu = u + BDV / 2, cv = v + BDH / 2;
+        if (Math.abs(cu) < CL) continue;              // spine corridor kept clear
+        if (inCamp(cu, cv)) continue;                 // campuses are explicit landmarks
+        const inside = inPent(cu, cv);
+        const n = this.noise.noise2D(cu * 3.1, cv * 3.1) * 0.5 + 0.5; // 0..1 stable
+        const spineBoost = 1 + 0.5 * smoothstep(0.5, 0.0, Math.abs(cu)); // taller near 大学通り
+        const hNorm = (inside ? 0.35 + 0.6 * n : 0.18 + 0.25 * n) * spineBoost;
+        blocks.push({ uMin: u + inset, uMax: u + BDV - inset, vMin: v + inset, vMax: v + BDH - inset,
+          hNorm, key: distKey(cu, cv), kind: inside ? K_INSIDE : K_OUTSIDE });
+      }
+    }
+    const land = blocks.filter((b) => b.kind === K_LAND);
+    const rest = blocks.filter((b) => b.kind !== K_LAND).sort((a, b) => a.key - b.key);
+    this._blocks = land.concat(rest).slice(0, MAX_BLOCKS);
   }
 
   // Full-frame orthogonal grid: BRIGHT (K_GRID) inside the pentagon, DIM (K_GOUT)
