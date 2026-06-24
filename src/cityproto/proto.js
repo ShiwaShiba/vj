@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.module.js';
 import { buildTerrain, buildTerrainGrid } from './terrain.js';
+import { buildBuildings } from './buildings.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
@@ -13,6 +14,7 @@ camera.lookAt(0.4, 0, 1.4);
 
 scene.add(buildTerrain());
 scene.add(buildTerrainGrid());
+scene.add(buildBuildings());
 
 function resize() {
   const w = innerWidth, h = innerHeight;
