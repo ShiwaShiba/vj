@@ -63,7 +63,7 @@ const CUBE_FILL_OUT = 0.62;               // outside: fuller so the fabric reads
 const OUT_SPARSE = 0.32;                  // District scope: fraction of outside cells that rise
 const JIT_POS = 0.09;                     // per-cell position jitter — breaks the CG-perfect grid
 const NORTH_V = -0.18;                    // dense voxel carpet reaches this far N of the apex (3D only)
-const K_INSIDE = 0, K_OUTSIDE = 1, K_LAND = 2; // block kinds: inside district / outside / landmark
+const K_INSIDE = 0, K_OUTSIDE = 1, K_LAND = 2, K_GREEN = 3; // inside / outside / campus landmark / open-green
 const FOCAL = 4.5;                       // camera focal length in units of H (weak perspective)
 
 // Phase loop: ENERGIZE (flat circuit) -> RISE (city extrudes) -> HOLD -> SINK -> RISE…
@@ -251,6 +251,15 @@ export class GroundPlan extends Scene {
     ];
     this._campus = CAMP;
 
+    // "05 GREEN / OPEN": large open/green plots [u0,v0,u1,v1] — flat outlined dark plates
+    // with the voxel carpet punched out (the reference's big lower-right park + open grounds).
+    // Kept inside the district envelope so no plate lands under an avenue/boundary line.
+    this._green = [
+      [0.18, 0.64, 0.48, 0.95],   // SE open ground (the reference's dominant lower-right plate)
+      [-0.34, 0.60, -0.10, 0.80], // open forecourt/grounds south of 一橋 西
+      [-0.66, 0.78, -0.40, 1.00], // 城山/谷保方面 の大きな緑地 (mid-lower west)
+    ];
+
     const k = this.p('density');
     this._genGrid(add, DV_BASE / k, DH_BASE / k, CAMP);
     this._gridK = k;
@@ -321,11 +330,16 @@ export class GroundPlan extends Scene {
     const distKey = (u, v) => clamp(Math.hypot(u, v) / reach, 0, 1);
     const inPent = (u, v) => v >= 0 && v <= SOUTH && u > this._xLb(v) && u < this._xRb(v);
     const inCamp = (u, v) => this._campus.some((c) => u > c[0] && u < c[2] && v > c[1] && v < c[3]);
+    const inGreen = (u, v) => this._green.some((g) => u > g[0] && u < g[2] && v > g[1] && v < g[3]);
 
     // (the station itself is the旧駅舎, drawn as a custom gabled landmark in _drawStation)
     for (const c of this._campus) {
       blocks.push({ uMin: c[0], uMax: c[2], vMin: c[1], vMax: c[3], hNorm: 0.5,
         key: distKey((c[0] + c[2]) / 2, (c[1] + c[3]) / 2), kind: K_LAND }); // 一橋 西/東
+    }
+    for (const g of this._green) {                                            // open/green plates
+      blocks.push({ uMin: g[0], uMax: g[2], vMin: g[1], vMax: g[3], hNorm: 0,
+        key: distKey((g[0] + g[2]) / 2, (g[1] + g[3]) / 2), kind: K_GREEN });
     }
 
     const inset = Math.min(bdv, bdh) * 0.18;
@@ -334,6 +348,7 @@ export class GroundPlan extends Scene {
         const cu = u + bdv / 2, cv = v + bdh / 2;
         if (Math.abs(cu) < CL) continue;              // spine corridor kept clear
         if (inCamp(cu, cv)) continue;                 // campuses are explicit landmarks
+        if (inGreen(cu, cv)) continue;                // open/green zones: genuine holes in the carpet
         if (cv < 0.08) {                              // the new northern band: keep the hero + tracks clear
           if (Math.abs(cu) < 0.16 && cv > -0.10) continue; // 旧駅舎 footprint (incl. west wing) — no voxel overlap
           if (Math.abs(cv + 0.053) < 0.025) continue;      // 中央線 rail corridor
@@ -360,11 +375,11 @@ export class GroundPlan extends Scene {
           hNorm, key: distKey(ox, oy), kind: inside ? K_INSIDE : K_OUTSIDE, rnd });
       }
     }
-    const land = blocks.filter((b) => b.kind === K_LAND);
-    const rest = blocks.filter((b) => b.kind !== K_LAND).sort((a, b) => a.key - b.key);
+    const land = blocks.filter((b) => b.kind === K_LAND || b.kind === K_GREEN); // few + large → always kept
+    const rest = blocks.filter((b) => b.kind !== K_LAND && b.kind !== K_GREEN).sort((a, b) => a.key - b.key);
     this._blocks = land.concat(rest).slice(0, MAX_BLOCKS);
-    this._keyMax = 0.001;                          // farthest kept block — anchors the SINK collapse wave
-    for (const b of this._blocks) if (b.kind !== K_LAND && b.key > this._keyMax) this._keyMax = b.key;
+    this._keyMax = 0.001;                          // farthest kept cube — anchors the SINK collapse wave
+    for (const b of this._blocks) if (b.kind !== K_LAND && b.kind !== K_GREEN && b.key > this._keyMax) this._keyMax = b.key;
   }
 
   // Full-frame orthogonal grid: BRIGHT (K_GRID) inside the pentagon, DIM (K_GOUT)
@@ -590,7 +605,7 @@ export class GroundPlan extends Scene {
       let bi = 0, fc = 0;
       for (let k = 0; k < this._blocks.length && bi < cap; k++) {
         const blk = this._blocks[k];
-        if (blk.kind === K_LAND) continue;                   // 一橋 campuses drawn as open plates (_drawCampus)
+        if (blk.kind === K_LAND || blk.kind === K_GREEN) continue; // campuses + green drawn as open plates
         if (scope === 2 && blk.kind !== K_LAND) continue;    // Landmark: only landmarks rise
         if (scope === 0 && blk.kind === K_OUTSIDE && blk.rnd > OUT_SPARSE) continue; // District: sparse outside
         const local = smoothstep(blk.key, blk.key + 0.10, front3d);
@@ -663,8 +678,8 @@ export class GroundPlan extends Scene {
   }
 
   // ===== reference "scanner UI" HUD (screen-space; never touches the map raster) =====
-  // Layer 05 activity for the HUD; Phase 4 (open/green zones) overrides this getter.
-  greenActivity() { return 0; }
+  // Layer 05 (GREEN/OPEN) activity for the HUD: the open plates rise with the city.
+  greenActivity() { return clamp(smoothstep(0.05, 0.6, this._riseView), 0, 1); }
 
   // Derive 5 cosmetic meters (KICK/SNARE/HI-HAT/BASS/PAD) from the existing bass/mid/treble
   // + beat signals. HUD-only — no new DSP. Alpha smoothings tuned for ~60fps; fine cosmetically.
@@ -1022,12 +1037,13 @@ export class GroundPlan extends Scene {
     const SX = this._cSX || (this._cSX = []), SY = this._cSY || (this._cSY = []);
     for (let k = 0; k < this._blocks.length; k++) {
       const blk = this._blocks[k];
-      if (blk.kind !== K_LAND) continue;
+      if (blk.kind !== K_LAND && blk.kind !== K_GREEN) continue;
+      const isGreen = blk.kind === K_GREEN;
       const local = smoothstep(blk.key, blk.key + 0.14, front3d);
       if (local <= 0.001) continue;
       const stand = this._phase === PH_SINK
         ? clamp(1 - smoothstep(this._keyMax - blk.key, this._keyMax - blk.key + SINK_W, this._sinkFront), 0, 1) : 1; // far→near collapse
-      const h = H * 0.008 * local * stand;          // low plate — well below the cube field
+      const h = H * (isGreen ? 0.004 : 0.008) * local * stand; // green = flatter/darker than campus
       if (h < 0.3) continue;                          // fully collapsed during the SINK wave
       const x0 = blk.uMin * S, x1 = blk.uMax * S;
       const z0 = (blk.vMin - 0.5) * S, z1 = (blk.vMax - 0.5) * S;
@@ -1045,8 +1061,8 @@ export class GroundPlan extends Scene {
         let bucket = 0;
         if (wantFaces) {
           const ndl = Math.max(0, n[0] * LNX + n[1] * LNY + n[2] * LNZ);
-          let shadeT = 0.26 + 0.32 * ndl * (0.5 + 0.5 * lightP); // mid-gray, capped (not a bright tower)
-          shadeT = clamp(shadeT + (f === 0 ? 0.05 : 0), 0, 0.55);
+          let shadeT = (isGreen ? 0.16 : 0.26) + (isGreen ? 0.22 : 0.32) * ndl * (0.5 + 0.5 * lightP); // green darker
+          shadeT = clamp(shadeT + (f === 0 ? 0.05 : 0), 0, isGreen ? 0.40 : 0.55);
           bucket = Math.round(shadeT * (NTONE - 1));
         }
         recs.push({ id, cz, bucket });
