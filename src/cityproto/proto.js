@@ -2,6 +2,7 @@ import * as THREE from '../vendor/three.module.js';
 import { buildTerrain, buildTerrainGrid } from './terrain.js';
 import { buildBuildings } from './buildings.js';
 import { buildAvenues } from './avenues.js';
+import { makeOverlay } from './overlay.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
@@ -26,7 +27,9 @@ function resize() {
 }
 addEventListener('resize', resize); resize();
 
-function loop() { renderer.render(scene, camera); requestAnimationFrame(loop); }
+const drawOverlay = makeOverlay(document.getElementById('ov'));
+
+function loop() { renderer.render(scene, camera); drawOverlay(); requestAnimationFrame(loop); }
 loop();
 
 window.__proto = { THREE, scene, camera, renderer };
