@@ -1,462 +1,310 @@
 import { Scene } from '../Scene.js';
-import { clamp, lerp, smoothstep, map, rgbCss, lerpRgb } from '../../lib/math.js';
-import { SimplexNoise } from '../../lib/noise.js';
+import { clamp, lerp, smoothstep, rgbCss, lerpRgb, TWO_PI } from '../../lib/math.js';
 
-// GROUND PLAN — the historical Kunitachi (国立) university-town district map that
-// RISES from a flat blueprint into a 3D city, gradually, driven by mic energy.
-// Canvas-2D, monochrome. Reuses the codebase's proven machinery:
-//   - weak-perspective yaw/pitch projection + bg->fg tone-bucket shading +
-//     backface cull + far->near face sort + far/near floor split  (FallingCubes)
-//   - section walker on the continuous beat clock with resync guard     (Tunnel)
-// A single build accumulator `b` (0..1) is the master clock: streets plot in,
-// the camera tilts from top-down to 3/4, blocks extrude near->far, the city
-// breathes + auto-varies, then re-sinks to the plan and rebuilds — a designed
-// loop. Faces NEVER sample a palette ramp (cssAt) so no accent hue can bleed
-// onto a roof; the only saturated mark is the single Ikeda-red station node.
+// GROUND PLAN — a precise FLAT (true top-down) blueprint of the Kunitachi (国立)
+// university town. The line work emanates from the station like current through a
+// circuit: a wavefront radius grows OUTWARD from the apex with mic energy and holds
+// once the whole board is lit. Faithful to the supplied maps + aerial:
+//   - 中央線 railway: double E-W line through the station (the apex's north side)
+//   - 大学通り: thickest spine, due south (0°), pierces past the district to the south
+//   - 富士見通り: ~52° west of the spine — the wider, longer radial
+//   - 旭通り:     ~46° east of the spine — tighter + much shorter (length ratio ≈1.7)
+//   - an orthogonal street grid that fills the WHOLE frame: BRIGHT inside the
+//     home-plate district, DIM outside it, with a bold pentagon boundary between
+//   - the station footprint + rotary at the apex (the energizing "source")
+//   - the two 一橋大学 super-blocks hugging 大学通り (open, the grid routes around)
+// Monochrome (Ikeda / Kraftwerk); the only saturated marks are the energizing tip
+// sparks and the single station node. 3D extrusion is intentionally deferred — this
+// pass is ALL about the flat map. The 3D version is preserved in git history.
 
-const BAR = 4;
-const SEC_BEATS = BAR * 8;        // vantage change cadence in LIVE (Tunnel cadence)
-const FOCAL = 4.5;                // focal length in units of H (DancerRig / FallingCubes)
-const NTONE = 16;                 // grayscale buckets (cache-friendly fillStyle)
-const MAX_BLOCKS = 220;           // hard ceiling, independent of the density slider
-const FACES = 5;                  // faces tested per block (top + 4 walls; floor skipped)
+const DEG = Math.PI / 180;
+const STALL = 0.05;          // idle creep so silence still eventually completes the build
 
-const STALL = 0.02;               // idle creep so silence still eventually completes
-const SINK_RATE = 0.26;           // teardown speed (audio-independent so it can't stall)
-const LIVE_SECTIONS = 3;          // vantages held in LIVE before a re-sink
+// Plan space: apex (station rotary) at the origin, +y = south, equal scale on both
+// axes so a 45° road is drawn at a true 45°. The pentagon bottom sits at y = SOUTH.
+const SOUTH = 1.0;
+const SPINE = 0.025;         // half-width of the 大学通り corridor kept clear of grid
+const CL = SPINE + 0.02;     // grid clearance from the spine (narrow margin each side)
+const AVE_MX = 0.026;        // grid clearance from the avenues (keeps the diagonals clean)
 
-// Light fixed in WORLD space (shading stays stable while the camera tilts).
-// up = -y, so a top face (normal 0,-1,0) faces the light => roofs read bright.
-const LX = -0.4, LY = -0.7, LZ = 0.55;
-const LL = Math.hypot(LX, LY, LZ);
-const LNX = LX / LL, LNY = LY / LL, LNZ = LZ / LL;
+// Outer-mesh extent (plan units) — generously past the frame; off-frame lines are
+// skipped at draw time, so this just guarantees the visible frame is fully filled.
+const EXT_X = 1.9, EXT_N = -0.30, EXT_S = 1.85;
+const MAX_SEG = 1500;        // hard ceiling on segment count (perf backstop)
 
-// Box vertices, in (u, y, v) order. base = ground (down, +y), top = base - h (up).
-//   0:(uMin,base,vMin) 1:(uMax,base,vMin) 2:(uMax,top,vMin) 3:(uMin,top,vMin)
-//   4:(uMin,base,vMax) 5:(uMax,base,vMax) 6:(uMax,top,vMax) 7:(uMin,top,vMax)
-const BOX_F = [
-  { idx: [3, 2, 6, 7], n: [0, -1, 0] }, // top (up)
-  { idx: [0, 1, 2, 3], n: [0, 0, -1] }, // north wall
-  { idx: [4, 5, 6, 7], n: [0, 0, 1] },  // south wall
-  { idx: [0, 3, 7, 4], n: [-1, 0, 0] }, // west wall
-  { idx: [1, 2, 6, 5], n: [1, 0, 0] },  // east wall
-];
+// Base spacings; the Grid slider scales these (finer at high values, coarser at low).
+const DV_BASE = 0.041;       // N-S column spacing at slider = 1
+const DH_BASE = 0.036;       // E-W row spacing   at slider = 1
 
-// LIVE camera vantages: pitch magnitude (rad), yaw kick, height emphasis.
-const LIVE_VANTAGES = [
-  { pitch: 0.55, yaw: 0.0, emph: 1.0 },
-  { pitch: 0.72, yaw: 0.5, emph: 1.18 },
-  { pitch: 0.46, yaw: -0.45, emph: 0.9 },
-  { pitch: 0.62, yaw: 0.28, emph: 1.28 },
-];
+// Avenue angles from the spine (south axis). The aerial shows the fan opening WIDER
+// than a crisp 45° — 富士見 at 45° read too acute — so both open up, 富士見 the wider.
+const A_FUJIMI = 52 * DEG;   // 富士見通り, west — the wider, longer radial
+const A_ASAHI = 46 * DEG;   // 旭通り, east — a touch tighter (the "ambiguous" one)
+const TAN_F = Math.tan(A_FUJIMI); // ≈1.280
+const TAN_A = Math.tan(A_ASAHI);  // ≈1.036
+
+// Pentagon shoulders. The WEST side (富士見) runs much LONGER than the EAST (旭) —
+// the real district extends far further to the west (length ratio ≈1.7, kept).
+const SH_L = 0.945;                // left shoulder px — the long, wide side
+const SH_L_Y = SH_L / TAN_F;       // ≈0.738
+const SH_R = 0.511;                // right shoulder px — the short side
+const SH_R_Y = SH_R / TAN_A;       // ≈0.493
+
+// kinds: 0 inside-grid, 1 avenue, 2 spine, 3 boundary, 4 railway, 5 outside-grid
+const K_GRID = 0, K_AVE = 1, K_SPINE = 2, K_BOUND = 3, K_RAIL = 4, K_GOUT = 5;
 
 export class GroundPlan extends Scene {
   constructor() {
     super('groundplan', 'Ground Plan');
-    this.trail = 0.35;
-    this.modes = [{ name: 'Hybrid' }, { name: 'Wireframe' }, { name: 'Solid' }];
-    this.views = [{ name: 'Axon' }, { name: 'Plan-Lock' }];
-    this.viewIndex = 0;
+    this.trail = 0.85;
 
-    this.defineParam('buildSpeed', 0.12, 0.04, 0.4, 0.02, 'Build Speed');
-    this.defineParam('density', 0.85, 0.4, 1.0, 0.05, 'Density');
-    this.defineParam('light', 0.6, 0, 1, 0.05, 'Light');
-    this.defineParam('trail', 0.35, 0.1, 1.0, 0.05, 'Trail');
-    this.defineParam('autoVary', 0.6, 0, 1, 0.05, 'Auto Vary');
-    this.defineParam('camYaw', 0.45, 0, 6.28, 0.02, 'Cam Yaw');
-    this.defineParam('accent', 1, 0, 1, 1, 'Accent Flash');
+    this.defineParam('buildSpeed', 0.14, 0.04, 0.5, 0.02, 'Build Speed');
+    this.defineParam('density', 1.2, 0.4, 2.0, 0.05, 'Grid (fine↔coarse)');
+    this.defineParam('avenueWidth', 3.0, 1.5, 5.0, 0.1, '大学通り Width');
+    this.defineParam('spark', 1, 0, 1, 1, 'Spark');
+    this.defineParam('trail', 0.85, 0.3, 1.0, 0.05, 'Trail');
 
     this.t = 0;
-    this.noise = new SimplexNoise(19);
+    this._front = 0;     // 0..1 energization progress (monotonic; holds at 1)
+    this._energy = 0;    // slow level follower (for surge detection)
 
-    // build accumulator + smoothed render copy
-    this._b = 0; this._bView = 0; this._sinking = false;
-    this._energy = 0;
-    this._hAudio = 1; this._emph = 1;
+    this._seg = null;    // plan segments (rebuilt when the Grid slider changes)
+    this._gridK = -1;    // grid-spacing value the current segments were built at
+    this._reach = 1;     // plan distance from apex to the farthest screen corner
 
-    // camera (pitch stored NEGATIVE: -1.45 top-down .. -0.55 three-quarter)
-    this._camYaw = 0.45; this._camPitch = -1.45;
-
-    // LIVE walker
-    this._inLive = false; this._secStart = 0;
-    this._vFrom = 0; this._vTo = 0; this._xfade = 1; this._liveSection = 0;
-
-    // beat-flash accent block
-    this._accentUntil = -1; this._accentSlot = -1;
-
-    // data (built once; plan coords are size-independent)
-    this._seg = null; this._blocks = null; this._accentBlock = -1;
-
-    // projection / draw scratch (allocation-free hot loop)
-    this._pvx = new Float32Array(MAX_BLOCKS * 8);
-    this._pvy = new Float32Array(MAX_BLOCKS * 8);
-    this._pvf = new Float32Array(MAX_BLOCKS * 8);
-    this._front = new Uint8Array(MAX_BLOCKS * FACES);
-    this._fSlot = new Int32Array(MAX_BLOCKS * FACES);
-    this._fIdx = new Uint8Array(MAX_BLOCKS * FACES);
-    this._fCz = new Float32Array(MAX_BLOCKS * FACES);
-    this._fBucket = new Uint8Array(MAX_BLOCKS * FACES);
-    this._fOrder = [];
-    this._toneCss = new Array(NTONE);
-    this._tmpRgb = [0, 0, 0];
-    this._g0 = [0, 0, 0, 0]; this._g1 = [0, 0, 0, 0]; // ground-segment scratch
-    this._sp = [0, 0, 0]; // station-point scratch
+    this._H = 0; this._S = 0; this._cx = 0; this._topY = 0;
   }
 
-  init(ctx, w, h) { super.init(ctx, w, h); this._layout(); if (!this._blocks) this._build(); }
+  init(ctx, w, h) {
+    super.init(ctx, w, h);
+    this._layout();
+    this._build();
+    this._front = 0; // energize fresh on first mount
+  }
   onResize(w, h) { super.onResize(w, h); this._layout(); }
-  setView(i) { this.viewIndex = ((i % this.views.length) + this.views.length) % this.views.length; }
 
   _layout() {
     this._H = Math.min(this.w, this.h);
-    this._spanX = this._H * 0.52;     // plan half-width  (u in [-1,1])
-    this._spanZ = this._H * 0.50;     // plan half-depth  (v in [0,1] -> z)
-    this._groundY = this._H * 0.13;   // ground plane (down = +y)
+    this._S = this._H * 0.60;     // plan-unit -> px (visual scale; tune vs. map)
+    this._cx = this.w * 0.5;
+    this._topY = this.h * 0.13;   // apex y on screen (station near the top)
+    // reach = farthest screen corner, so front=1 lights the whole visible frame.
+    let reach = 0;
+    for (const [sx, sy] of [[0, 0], [this.w, 0], [0, this.h], [this.w, this.h]]) {
+      const px = (sx - this._cx) / this._S, py = (sy - this._topY) / this._S;
+      reach = Math.max(reach, Math.hypot(px, py));
+    }
+    this._reach = reach * 1.04;
   }
 
-  // half-width of the tapering boundary at depth v (centered on u=0).
-  _half(v) { return lerp(0.18, 0.92, clamp((v - 0.05) / 0.92, 0, 1)); }
+  // east/west district edge (the actual boundary road) at depth py.
+  _xLb(py) { return -Math.min(py * TAN_F, SH_L); }
+  _xRb(py) { return Math.min(py * TAN_A, SH_R); }
 
-  // Author the stylised Kunitachi plan: railway + station, the radiating trident
-  // (大学通り + 富士見/旭 fan avenues), a grid clipped to the tapering boundary,
-  // building footprints + the two university super-blocks. Order keys make streets
-  // plot in station-first and the city grow southward.
+  // Author the Kunitachi plan into `this._seg`. Each segment is ordered near->far
+  // from the apex so the wavefront draws it outward.
   _build() {
-    const seg = []; // {u0,v0,u1,v1, ord, kind} kind:0 grid 1 avenue 2 boundary
-    // boundary trapezoid
-    const B = [[-0.18, 0.05], [0.18, 0.05], [0.92, 0.97], [-0.92, 0.97]];
-    for (let i = 0; i < 4; i++) {
-      const a = B[i], b = B[(i + 1) % 4];
-      seg.push({ u0: a[0], v0: a[1], u1: b[0], v1: b[1], ord: 0.0, kind: 2 });
-    }
-    // railway (double line across the top) + the trident of avenues
-    seg.push({ u0: -0.55, v0: 0.035, u1: 0.55, v1: 0.035, ord: 0.02, kind: 1 });
-    seg.push({ u0: -0.55, v0: 0.058, u1: 0.55, v1: 0.058, ord: 0.03, kind: 1 });
-    seg.push({ u0: 0, v0: 0.06, u1: 0, v1: 0.96, ord: 0.06, kind: 1 });       // 大学通り
-    seg.push({ u0: 0, v0: 0.08, u1: -0.62, v1: 0.93, ord: 0.12, kind: 1 });   // 富士見通り
-    seg.push({ u0: 0, v0: 0.08, u1: 0.62, v1: 0.93, ord: 0.12, kind: 1 });    // 旭通り
-    // secondary grid — verticals (skip the central boulevard corridor)
-    const Ug = [-0.7, -0.55, -0.4, -0.25, 0.25, 0.4, 0.55, 0.7];
-    for (const u of Ug) {
-      const au = Math.abs(u);
-      // inside the boundary from the v where half(v) first exceeds |u|
-      let vs = 0.06;
-      if (au > 0.18) vs = Math.max(0.06, 0.05 + 0.92 * (au - 0.18) / 0.74 + 0.01);
-      if (vs >= 0.94) continue;
-      seg.push({ u0: u, v0: vs, u1: u, v1: 0.95, ord: 0.45 + 0.5 * (au / 0.92), kind: 0 });
-    }
-    // horizontals (clipped to the tapering boundary, split by the boulevard)
-    const Vg = [0.18, 0.30, 0.42, 0.54, 0.66, 0.78, 0.90];
-    for (const v of Vg) {
-      const hw = this._half(v);
-      const ord = 0.5 + 0.45 * v;
-      seg.push({ u0: -hw, v0: v, u1: -0.05, v1: v, ord, kind: 0 });
-      seg.push({ u0: 0.05, v0: v, u1: hw, v1: v, ord, kind: 0 });
-    }
-    this._seg = seg;
-
-    // building footprints. Landmarks go FIRST so the density cap (which culls by
-    // iteration order) never sheds them; the grid fills in after.
-    const blocks = [];
-    // two university super-blocks (一橋大学 west / east), broad + low
-    blocks.push({ uMin: -0.36, uMax: -0.12, vMin: 0.34, vMax: 0.62, hNorm: 0.7, key: 0.34, uni: 1 });
-    blocks.push({ uMin: 0.12, uMax: 0.36, vMin: 0.34, vMax: 0.62, hNorm: 0.62, key: 0.34, uni: 1 });
-    this._accentBlock = 1; // the east campus is the beat-flash mark
-    // station building (slim tower just south of the railway)
-    blocks.push({ uMin: -0.035, uMax: 0.035, vMin: 0.075, vMax: 0.13, hNorm: 1.25, key: 0.03 });
-    const bw = 0.085, bd = 0.078;
-    const cols = [-0.82, -0.69, -0.56, -0.43, -0.30, -0.17, 0.17, 0.30, 0.43, 0.56, 0.69, 0.82];
-    const rows = [0.13, 0.23, 0.33, 0.43, 0.53, 0.63, 0.73, 0.83, 0.92];
-    for (const cu of cols) {
-      for (const cv of rows) {
-        if (Math.abs(cu) < 0.06) continue;                       // keep boulevard clear
-        if (Math.abs(cu) + bw / 2 > this._half(cv) - 0.015) continue; // outside boundary
-        // leave room for the two campuses (added explicitly below)
-        if (cv > 0.31 && cv < 0.65 && Math.abs(cu) > 0.10 && Math.abs(cu) < 0.40) continue;
-        const n = this.noise.noise2D(cu * 3.1, cv * 3.1) * 0.5 + 0.5; // 0..1 stable
-        const classMul = 1 + 0.6 * smoothstep(0.42, 0.0, Math.abs(cu)); // taller near the spine
-        blocks.push({
-          uMin: cu - bw / 2, uMax: cu + bw / 2, vMin: cv - bd / 2, vMax: cv + bd / 2,
-          hNorm: (0.35 + 0.65 * n) * classMul, key: clamp((cv - 0.05) / 0.92, 0, 1),
-        });
+    const seg = [];
+    const add = (ax, ay, bx, by, kind) => {
+      if (seg.length >= MAX_SEG) return;
+      let dA = Math.hypot(ax, ay), dB = Math.hypot(bx, by);
+      if (dB < dA) { // keep (ax,ay) as the station-near end
+        const tx = ax; ax = bx; bx = tx; const ty = ay; ay = by; by = ty;
+        const td = dA; dA = dB; dB = td;
       }
+      seg.push({ ax, ay, bx, by, dA, dB, kind });
+    };
+
+    // 中央線 railway: double E-W line through the station, split at the spine.
+    const railHalf = 0.50;
+    for (const ry of [-0.045, -0.062]) {
+      add(0, ry, -railHalf, ry, K_RAIL);
+      add(0, ry, railHalf, ry, K_RAIL);
     }
-    this._blocks = blocks;
+
+    // The radiating trident — 富士見 (west) runs much LONGER than 旭 (east).
+    add(0, 0, 0, 1.15, K_SPINE);                 // 大学通り (pierces south)
+    add(0, 0, -SH_L, SH_L_Y, K_AVE);             // 富士見通り (long, wide)
+    add(0, 0, SH_R, SH_R_Y, K_AVE);              // 旭通り     (short)
+
+    // Pentagon boundary (the avenues themselves are the two diagonal upper edges).
+    add(-SH_L, SH_L_Y, -SH_L, SOUTH, K_BOUND);   // west vertical side
+    add(-SH_L, SOUTH, SH_R, SOUTH, K_BOUND);     // south base
+    add(SH_R, SOUTH, SH_R, SH_R_Y, K_BOUND);     // east vertical side
+
+    // 一橋大学 super-blocks hugging 大学通り (open + ungridded; grid routes around).
+    const CAMP = [
+      [-0.30, 0.26, -0.08, 0.56], // west campus (left of the spine)
+      [0.08, 0.30, 0.27, 0.52],  // east campus (right of the spine)
+    ];
+    this._campus = CAMP;
+
+    const k = this.p('density');
+    this._genGrid(add, DV_BASE / k, DH_BASE / k, CAMP);
+    this._gridK = k;
+
+    this._seg = seg;
+  }
+
+  // Full-frame orthogonal grid: BRIGHT (K_GRID) inside the pentagon, DIM (K_GOUT)
+  // outside it. Inside lines keep the avenue clearance + route around the campuses.
+  _genGrid(add, DVe, DHe, CAMP) {
+    const colC = (px) => CAMP.find((c) => px > c[0] && px < c[2]);
+    const rowC = (py, x0, x1) => CAMP.find((c) => py > c[1] && py < c[3] && x1 > c[0] && x0 < c[2]);
+
+    // ---- N-S columns ----
+    const genCol = (px) => {
+      const ap = Math.abs(px), east = px > 0;
+      const TANe = east ? TAN_A : TAN_F, SHe = east ? SH_R : SH_L;
+      if (ap > SHe) { add(px, EXT_N, px, EXT_S, K_GOUT); return; } // lateral: all dim
+      const pB = ap / TANe;                   // enters the district (on the avenue)
+      const pBri = (ap + AVE_MX) / TANe;      // bright grid starts (avenue clearance)
+      if (pB > EXT_N + 0.01) add(px, EXT_N, px, pB, K_GOUT);   // dim above the district
+      if (EXT_S > SOUTH + 0.01) add(px, SOUTH, px, EXT_S, K_GOUT); // dim below
+      if (pBri < SOUTH - 0.02) {              // bright inside, carved around a campus
+        const c = colC(px);
+        if (c && pBri < c[3]) {
+          if (pBri < c[1] - 0.01) add(px, pBri, px, c[1], K_GRID);
+          add(px, c[3], px, SOUTH, K_GRID);
+        } else {
+          add(px, pBri, px, SOUTH, K_GRID);
+        }
+      }
+    };
+    for (let px = CL; px < EXT_X; px += DVe) genCol(px);
+    for (let px = -CL; px > -EXT_X; px -= DVe) genCol(px);
+
+    // ---- E-W rows ----
+    const brightRow = (x0, x1, py) => { // x0<x1, carve campus
+      const c = rowC(py, x0, x1);
+      if (c) {
+        if (x0 < c[0] - 0.01) add(x0, py, c[0], py, K_GRID);
+        if (x1 > c[2] + 0.01) add(c[2], py, x1, py, K_GRID);
+      } else {
+        add(x0, py, x1, py, K_GRID);
+      }
+    };
+    const genRow = (py) => {
+      if (py >= 0 && py <= SOUTH) {
+        const le = this._xLb(py), re = this._xRb(py);   // district edges
+        if (le > -EXT_X + 0.01) add(-EXT_X, py, le, py, K_GOUT); // dim west of district
+        if (re < EXT_X - 0.01) add(re, py, EXT_X, py, K_GOUT);   // dim east of district
+        const bl = le + AVE_MX, br = re - AVE_MX;        // bright inside (split by spine)
+        if (bl < -CL - 0.01) brightRow(bl, -CL, py);
+        if (br > CL + 0.01) brightRow(CL, br, py);
+      } else {
+        const spineHere = py > SOUTH && py < 1.18;       // 大学通り still runs just past SOUTH
+        if (spineHere) {
+          add(-EXT_X, py, -CL, py, K_GOUT);
+          add(CL, py, EXT_X, py, K_GOUT);
+        } else {
+          add(-EXT_X, py, EXT_X, py, K_GOUT);
+        }
+      }
+    };
+    for (let py = EXT_N; py < EXT_S; py += DHe) genRow(py);
   }
 
   update(dt, audio, palette, clock) {
     this.t += dt;
     this.trail = this.p('trail');
-    const beatsF = clock.beats + clock.beatPhase;
-    const av = this.p('autoVary');
 
-    // energy follower / build drive (mirror of FallingCubes' drop follower)
+    if (this.p('density') !== this._gridK) this._build(); // rebuild when slider moves
+
+    // build drive: steady level + transient surge + bass kick
     this._energy += (audio.level - this._energy) * 0.1;
     const surge = audio.level - this._energy;
     const drive = clamp(audio.level * 0.7 + Math.max(0, surge) * 1.6 + audio.bass * 0.5, 0, 1.5);
 
-    if (this._sinking) {
-      this._b -= dt * SINK_RATE;
-      if (this._b <= 0) { this._b = 0; this._sinking = false; this._secStart = beatsF; }
-    } else {
-      this._b += dt * this.p('buildSpeed') * Math.max(STALL, drive);
-      if (this._b >= 1) this._b = 1;
-    }
-    this._b = clamp(this._b, 0, 1);
-    this._bView += (this._b - this._bView) * Math.min(1, dt * 4); // anti-pop
-
-    // LIVE breathing + section walker (only at full build)
-    const live = this._bView >= 0.97 && !this._sinking;
-    let vantPitch = 0.55, vantEmph = 1;
-    if (live) {
-      if (!this._inLive) { this._inLive = true; this._secStart = beatsF; this._vFrom = this._vTo = 0; this._xfade = 1; this._liveSection = 0; }
-      if (beatsF - this._secStart >= SEC_BEATS) {
-        this._secStart = beatsF - this._secStart > SEC_BEATS * 2 ? beatsF : this._secStart + SEC_BEATS;
-        this._vFrom = this._vTo; this._vTo = (this._vTo + 1) % LIVE_VANTAGES.length; this._xfade = 0;
-        if (++this._liveSection >= LIVE_SECTIONS) { this._sinking = true; this._inLive = false; this._liveSection = 0; }
-      }
-      this._xfade = Math.min(1, this._xfade + dt * (clock.bpm / 60) / (BAR * 2));
-      const e = smoothstep(0, 1, this._xfade);
-      const A = LIVE_VANTAGES[this._vFrom], Bv = LIVE_VANTAGES[this._vTo];
-      vantPitch = lerp(A.pitch, Bv.pitch, e);
-      vantEmph = lerp(A.emph, Bv.emph, e);
-    } else {
-      this._inLive = false;
-    }
-
-    // camera targets
-    const planLock = this.viewIndex === 1;
-    let pitchMag, yawBase;
-    if (planLock) {
-      pitchMag = lerp(1.54, 1.40, this._bView);           // stays near top-down
-      yawBase = lerp(0.0, 0.12, this._bView);
-    } else {
-      const tilt = smoothstep(0.32, 0.66, this._bView);   // top-down -> three-quarter
-      const buildPitch = lerp(1.52, 0.62, tilt);
-      pitchMag = live ? vantPitch : buildPitch;
-      pitchMag += live ? this.noise.noise2D(this.t * 0.05, 3) * 0.12 * av : 0;
-      yawBase = lerp(0.05, this.p('camYaw'), tilt);        // north-up plot -> angled axon
-    }
-    const yawTgt = yawBase
-      + (live && !planLock ? LIVE_VANTAGES[this._vTo].yaw * av : 0)
-      + (live && !planLock ? this.noise.noise2D(this.t * 0.04, 9) * 0.2 * av : 0);
-    this._camPitch += (-pitchMag - this._camPitch) * Math.min(1, dt * 3);
-    this._camYaw += (yawTgt - this._camYaw) * Math.min(1, dt * 3);
-    this._emph += ((live ? vantEmph : 1) - this._emph) * Math.min(1, dt * 2);
-    this._hAudio += ((live ? 1 + audio.bass * 0.2 : 1) - this._hAudio) * Math.min(1, dt * 5);
-
-    // beat punctuation: flash one campus roof for a bar
-    if (clock.beatJustWrapped && audio.beatHold > 0.6 && this.p('accent') > 0.5) {
-      this._accentUntil = beatsF + BAR;
-    }
+    // monotonic — current only ever flows further out, then holds at full
+    this._front = clamp(this._front + dt * this.p('buildSpeed') * Math.max(STALL, drive), 0, 1);
   }
 
   draw(ctx, alpha) {
     const A = alpha;
-    const H = this._H, F = FOCAL * H, q = this.clock.quality;
-    const bView = this._bView;
-    const ccy = Math.cos(this._camYaw), scy = Math.sin(this._camYaw);
-    const ccp = Math.cos(this._camPitch), scp = Math.sin(this._camPitch);
-    // vertical origin rides up as the city rises: keeps the station near the top
-    // in the flat plot, then centers the 3D city (the fan opens toward the camera).
-    const cx = this.w * 0.5, cy = this.h * 0.5 + H * lerp(0.05, -0.10, smoothstep(0.30, 0.72, bView));
-    const beatsF = this.clock.beats + this.clock.beatPhase;
-
-    // monochrome tone table (bg -> fg), rebuilt per frame; cache-friendly
-    const bg = this.palette.bg, fg = this.palette.fg, lightP = this.p('light');
-    for (let i = 0; i < NTONE; i++) this._toneCss[i] = rgbCss(lerpRgb(bg, fg, i / (NTONE - 1), this._tmpRgb));
-    const streetCss = rgbCss(lerpRgb(bg, fg, 0.5, this._tmpRgb));
-    const aveCss = rgbCss(lerpRgb(bg, fg, 0.72, this._tmpRgb));
-    const bndCss = rgbCss(lerpRgb(bg, fg, 0.6, this._tmpRgb));
+    const cx = this._cx, topY = this._topY, S = this._S, H = this._H;
+    const q = this.clock.quality;
+    const R = this._front * this._reach;          // wavefront radius (plan units)
+    const aveW = this.p('avenueWidth');
+    const spark = this.p('spark') > 0.5;
+    const base = Math.max(0.6, H * 0.0016);       // grid line width in px
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
 
-    const plotFrac = smoothstep(0.0, 0.32, bView);
-    const Z2c = this._groundY * scp;          // split plane at the ground centroid
-    const basis = { ccy, scy, ccp, scp, F, cx, cy, gy: this._groundY };
+    const sparkR = Math.max(1.2, base * 1.1);
+    for (let i = 0; i < this._seg.length; i++) {
+      const s = this._seg[i];
+      if ((s.kind === K_GRID || s.kind === K_GOUT) && q < 0.7 && (i & 1)) continue; // shed under load
+      if (R <= s.dA) continue;                    // wavefront hasn't reached this line
+      const t = s.dB > s.dA ? clamp((R - s.dA) / (s.dB - s.dA), 0, 1) : 1;
 
-    // --- streets, FAR half (drawn behind the risen blocks) ---
-    this._drawStreets(ctx, A, basis, Z2c, false, plotFrac, q, streetCss, aveCss, bndCss);
+      const ax = cx + s.ax * S, ay = topY + s.ay * S;
+      const tipX = s.ax + (s.bx - s.ax) * t, tipY = s.ay + (s.by - s.ay) * t;
+      const sx = cx + tipX * S, sy = topY + tipY * S;
 
-    // --- project + shade buildings (those the wavefront has reached) ---
-    // front sweeps key 0->1 as bView 0.44->1.0; *1.15 so the farthest blocks
-    // (key~0.95) still reach full height by bView=1. local is 0 at front=0, so
-    // NOTHING extrudes during PLOT — the plan stays flat until the tilt begins.
-    const front = 1.15 * smoothstep(0.44, 1.0, bView);
-    const cap = Math.min(MAX_BLOCKS, Math.round(this._blocks.length * this.p('density')));
-    const hScale = H * 0.105 * this._emph * this._hAudio;
-    const mode = this.modeIndex, wantFaces = mode !== 1;
-    this._accentSlot = -1;
-    let bi = 0, fc = 0;
-    for (let k = 0; k < this._blocks.length && bi < cap; k++) {
-      const b = this._blocks[k];
-      const local = smoothstep(b.key, b.key + 0.14, front);
-      if (local <= 0.001) continue;
-      const h = b.hNorm * hScale * local;
-      if (h < 0.5) continue;
-      const base = this._groundY, top = this._groundY - h;
-      const x0 = b.uMin * this._spanX, x1 = b.uMax * this._spanX;
-      const z0 = (b.vMin - 0.5) * 2 * this._spanZ, z1 = (b.vMax - 0.5) * 2 * this._spanZ;
-      const slot = bi * 8;
-      // 8 verts in BOX_V order
-      this._pv(slot + 0, x0, base, z0, basis); this._pv(slot + 1, x1, base, z0, basis);
-      this._pv(slot + 2, x1, top, z0, basis); this._pv(slot + 3, x0, top, z0, basis);
-      this._pv(slot + 4, x0, base, z1, basis); this._pv(slot + 5, x1, base, z1, basis);
-      this._pv(slot + 6, x1, top, z1, basis); this._pv(slot + 7, x0, top, z1, basis);
-      // block-center camera z (stable sort key) — also cull behind the camera
-      const cxw = (x0 + x1) * 0.5, czw = (z0 + z1) * 0.5, cyw = (base + top) * 0.5;
-      const Zc = cxw * scy + czw * ccy;
-      const blockCz = cyw * scp + Zc * ccp;
-      if (blockCz >= F * 0.92) continue;
-      if (k === this._accentBlock) this._accentSlot = bi;
-      // faces: world-normal shading (stable) + camera-normal-z cull
-      for (let f = 0; f < FACES; f++) {
-        const n = BOX_F[f].n;
-        const Zn = n[0] * scy + n[2] * ccy;
-        const camNz = n[1] * scp + Zn * ccp;
-        const isFront = camNz > 0;
-        this._front[bi * FACES + f] = isFront ? 1 : 0;
-        if (!wantFaces || !isFront) continue;
-        const ndl = Math.max(0, n[0] * LNX + n[1] * LNY + n[2] * LNZ);
-        let shadeT = 0.34 + 0.6 * ndl * (0.5 + 0.5 * lightP);
-        const depthCue = clamp(map(blockCz, -0.5 * H, 0.5 * H, 0.7, 1.0), 0.68, 1.0);
-        shadeT = clamp(shadeT * depthCue + (b.uni ? 0.04 : 0) + (f === 0 ? 0.06 : 0), 0, 1);
-        this._fSlot[fc] = bi; this._fIdx[fc] = f; this._fCz[fc] = blockCz;
-        this._fBucket[fc] = Math.round(shadeT * (NTONE - 1));
-        fc++;
+      let lw, al;
+      switch (s.kind) {
+        case K_SPINE: lw = base * aveW; al = 1.0; break;
+        case K_AVE: lw = base * 2.0; al = 0.95; break;
+        case K_BOUND: lw = base * 2.0; al = 0.95; break; // bold frame around the district
+        case K_RAIL: lw = base * 1.7; al = 0.9; break;
+        case K_GOUT: lw = base * 0.8; al = 0.20; break;  // DIM outer mesh
+        default: lw = base; al = 0.6;                    // BRIGHT inside grid
       }
-      bi++;
+      ctx.strokeStyle = this.palette.fgCss(al * A);
+      ctx.lineWidth = lw;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(sx, sy); ctx.stroke();
+
+      if (spark && s.kind !== K_GOUT && t > 0.001 && t < 0.999) { // crackle at live tips
+        ctx.fillStyle = this.palette.accentCss(clamp(0.85 * A, 0, 1));
+        ctx.beginPath(); ctx.arc(sx, sy, sparkR, 0, TWO_PI); ctx.fill();
+      }
     }
 
-    if (mode === 1) {
-      this._strokeFaces(ctx, A, fc);
-    } else {
-      // sort faces far -> near (ascending camera-z; camera sits at +F)
-      const order = this._fOrder; order.length = fc;
-      for (let i = 0; i < fc; i++) order[i] = i;
-      order.sort((a, b) => (this._fCz[a] - this._fCz[b]) || (a - b));
-      const pvx = this._pvx, pvy = this._pvy;
-      ctx.globalAlpha = A;
-      let lastB = -1;
-      for (let oi = 0; oi < fc; oi++) {
-        const rec = order[oi], bk = this._fBucket[rec];
-        if (bk !== lastB) { ctx.fillStyle = this._toneCss[bk]; lastB = bk; }
-        const s = this._fSlot[rec] * 8, id = BOX_F[this._fIdx[rec]].idx;
-        ctx.beginPath();
-        ctx.moveTo(pvx[s + id[0]], pvy[s + id[0]]);
-        ctx.lineTo(pvx[s + id[1]], pvy[s + id[1]]);
-        ctx.lineTo(pvx[s + id[2]], pvy[s + id[2]]);
-        ctx.lineTo(pvx[s + id[3]], pvy[s + id[3]]);
-        ctx.closePath(); ctx.fill();
-      }
-      // beat-flash the east campus roof (the one saturated accent on the city)
-      if (this._accentSlot >= 0 && beatsF < this._accentUntil) {
-        const s = this._accentSlot * 8, id = BOX_F[0].idx;
-        ctx.globalAlpha = A; ctx.fillStyle = this.palette.accentCss();
-        ctx.beginPath();
-        ctx.moveTo(pvx[s + id[0]], pvy[s + id[0]]);
-        ctx.lineTo(pvx[s + id[1]], pvy[s + id[1]]);
-        ctx.lineTo(pvx[s + id[2]], pvy[s + id[2]]);
-        ctx.lineTo(pvx[s + id[3]], pvy[s + id[3]]);
-        ctx.closePath(); ctx.fill();
-      }
-      // Hybrid bright edges (skipped under load)
-      if (mode === 0 && q > 0.6) this._strokeFaces(ctx, clamp(0.6 + 0.3 * (this.audio ? this.audio.beatHold : 0), 0, 1) * A, fc, this.palette.fgCss());
+    this._drawMarks(ctx, A, R, cx, topY, S, base);
+    ctx.globalAlpha = A;
+  }
+
+  _drawMarks(ctx, A, R, cx, topY, S, base) {
+    // rotary + station building fade in early (the source)
+    const appear = clamp(this._front * 6, 0, 1);
+    if (appear > 0.01) {
+      ctx.strokeStyle = this.palette.fgCss(0.85 * appear * A);
+      ctx.lineWidth = Math.max(1, base * 1.4);
+      ctx.beginPath();
+      ctx.arc(cx, topY, Math.max(3, 0.045 * S), 0, TWO_PI); // roundabout at the apex
+      ctx.stroke();
+      this._rect(ctx, -0.05, -0.078, 0.05, -0.018, cx, topY, S,
+        this.palette.fgCss(0.95 * appear * A), Math.max(1, base * 1.3));
     }
 
-    // --- streets, NEAR half (drawn over the blocks: foreground plan lines) ---
-    this._drawStreets(ctx, A, basis, Z2c, true, plotFrac, q, streetCss, aveCss, bndCss);
+    // 一橋大学 super-blocks appear as the wavefront sweeps over them
+    for (const c of this._campus) {
+      const near = Math.hypot(Math.min(Math.abs(c[0]), Math.abs(c[2])), c[1]);
+      const f = clamp((R - near) / 0.12, 0, 1);
+      if (f <= 0.01) continue;
+      this._rect(ctx, c[0], c[1], c[2], c[3], cx, topY, S,
+        this.palette.fgCss(0.72 * f * A), Math.max(0.8, base * 1.2));
+    }
 
-    // --- the single Ikeda-red accent: the station node ---
-    this._project(0, this._groundY, (0.04 - 0.5) * 2 * this._spanZ, basis, this._sp);
-    ctx.globalAlpha = clamp(plotFrac * 1.2, 0, 1) * A;
+    // the single Ikeda-red node: the station / energizing source
+    ctx.globalAlpha = clamp(appear * 1.2, 0, 1) * A;
     ctx.fillStyle = this.palette.accentCss();
-    const r = Math.max(2.5, H * 0.012);
+    const r = Math.max(2.5, this._H * 0.011);
     ctx.beginPath();
-    ctx.moveTo(this._sp[0], this._sp[1] - r); ctx.lineTo(this._sp[0] + r, this._sp[1]);
-    ctx.lineTo(this._sp[0], this._sp[1] + r); ctx.lineTo(this._sp[0] - r, this._sp[1]);
+    ctx.moveTo(cx, topY - r); ctx.lineTo(cx + r, topY);
+    ctx.lineTo(cx, topY + r); ctx.lineTo(cx - r, topY);
     ctx.closePath(); ctx.fill();
     ctx.globalAlpha = A;
   }
 
-  // project a world point (wx, wy, wz) -> out=[sx, sy, f]
-  _project(wx, wy, wz, b, out) {
-    const X = wx * b.ccy - wz * b.scy;
-    const Z = wx * b.scy + wz * b.ccy;
-    const Y = wy * b.ccp - Z * b.scp;
-    const Z2 = wy * b.scp + Z * b.ccp;
-    const f = b.F / (b.F - Z2);
-    out[0] = b.cx + X * f; out[1] = b.cy + Y * f; out[2] = f;
-  }
-  // project into the vertex buffers at index vi
-  _pv(vi, wx, wy, wz, b) {
-    const X = wx * b.ccy - wz * b.scy;
-    const Z = wx * b.scy + wz * b.ccy;
-    const Y = wy * b.ccp - Z * b.scp;
-    const Z2 = wy * b.scp + Z * b.ccp;
-    const f = b.F / (b.F - Z2);
-    this._pvx[vi] = b.cx + X * f; this._pvy[vi] = b.cy + Y * f; this._pvf[vi] = f;
-  }
-
-  // wireframe / hybrid edges: stroke the visible-face outlines, far -> near
-  _strokeFaces(ctx, A, fc, css) {
-    const order = this._fOrder; order.length = fc;
-    for (let i = 0; i < fc; i++) order[i] = i;
-    order.sort((a, b) => (this._fCz[a] - this._fCz[b]) || (a - b));
-    ctx.strokeStyle = css || this.palette.fgCss();
-    const pvx = this._pvx, pvy = this._pvy, pvf = this._pvf;
-    for (let oi = 0; oi < fc; oi++) {
-      const rec = order[oi], s = this._fSlot[rec] * 8, id = BOX_F[this._fIdx[rec]].idx;
-      const fw = (pvf[s + id[0]] + pvf[s + id[2]]) * 0.5;
-      ctx.globalAlpha = clamp(A * clamp(fw, 0.6, 1.3), 0, 1);
-      ctx.lineWidth = Math.max(0.6, 1.0 * fw);
-      ctx.beginPath();
-      ctx.moveTo(pvx[s + id[0]], pvy[s + id[0]]);
-      ctx.lineTo(pvx[s + id[1]], pvy[s + id[1]]);
-      ctx.lineTo(pvx[s + id[2]], pvy[s + id[2]]);
-      ctx.lineTo(pvx[s + id[3]], pvy[s + id[3]]);
-      ctx.closePath(); ctx.stroke();
-    }
-    ctx.globalAlpha = A;
-  }
-
-  // Draw the plan's lines on the ground, clipped to one side of the split plane
-  // (the FallingCubes _drawFloor idea) so foreground lines cross IN FRONT of the
-  // risen blocks and background lines pass behind them. Each segment fades in by
-  // its order key vs the plot progress.
-  _drawStreets(ctx, A, b, Z2c, near, plotFrac, q, streetCss, aveCss, bndCss) {
-    const sx = this._spanX, sz = this._spanZ;
-    const p0 = this._g0, p1 = this._g1;
-    for (let i = 0; i < this._seg.length; i++) {
-      const sgm = this._seg[i];
-      if (sgm.kind === 0 && q < 0.7 && (i & 1)) continue; // shed half the grid under load
-      const fade = smoothstep(sgm.ord, sgm.ord + 0.06, plotFrac);
-      if (fade <= 0.002) continue;
-      // to world
-      let wx0 = sgm.u0 * sx, wz0 = (sgm.v0 - 0.5) * 2 * sz;
-      let wx1 = sgm.u1 * sx, wz1 = (sgm.v1 - 0.5) * 2 * sz;
-      // split at the ground centroid plane: da = Z*ccp (near = da>=0)
-      const za = (wx0 * b.scy + wz0 * b.ccy) * b.ccp;
-      const zb = (wx1 * b.scy + wz1 * b.ccy) * b.ccp;
-      const aIn = near ? za >= 0 : za < 0;
-      const bIn = near ? zb >= 0 : zb < 0;
-      if (!aIn && !bIn) continue;
-      let ta = 0, tb = 1;
-      if (aIn !== bIn) { const tc = za / (za - zb); if (aIn) tb = tc; else ta = tc; }
-      const ax = wx0 + (wx1 - wx0) * ta, az = wz0 + (wz1 - wz0) * ta;
-      const bx = wx0 + (wx1 - wx0) * tb, bz = wz0 + (wz1 - wz0) * tb;
-      this._project(ax, b.gy, az, b, p0);
-      this._project(bx, b.gy, bz, b, p1);
-      const depth = clamp((p0[2] + p1[2]) * 0.5, 0.5, 1.4);
-      // near-half lines sit OVER the blocks as faint blueprint overlay
-      const base = sgm.kind === 2 ? 0.62 : sgm.kind === 1 ? 0.8 : 0.42;
-      ctx.globalAlpha = clamp(base * fade * depth * (near ? 0.85 : 1) * A, 0, 1);
-      ctx.strokeStyle = sgm.kind === 2 ? bndCss : sgm.kind === 1 ? aveCss : streetCss;
-      ctx.lineWidth = Math.max(0.5, (sgm.kind === 1 ? 1.7 : sgm.kind === 2 ? 1.2 : 0.8) * depth);
-      ctx.beginPath();
-      ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
-    }
-    ctx.globalAlpha = A;
+  // stroke a plan-space rectangle outline
+  _rect(ctx, x0, y0, x1, y1, cx, topY, S, css, lw) {
+    const a = cx + x0 * S, b = topY + y0 * S, c = cx + x1 * S, d = topY + y1 * S;
+    ctx.strokeStyle = css; ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.rect(Math.min(a, c), Math.min(b, d), Math.abs(c - a), Math.abs(d - b));
+    ctx.stroke();
   }
 }
