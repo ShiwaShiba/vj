@@ -61,12 +61,18 @@ const BDV = 0.095, BDH = 0.085;          // building-block grid spacing (plan un
 const K_INSIDE = 0, K_OUTSIDE = 1, K_LAND = 2; // block kinds: inside district / outside / landmark
 const FOCAL = 4.5;                       // camera focal length in units of H (weak perspective)
 
+// Phase loop: ENERGIZE (flat circuit) -> RISE (city extrudes) -> HOLD -> SINK -> RISE…
+const PH_ENERGIZE = 0, PH_RISE = 1, PH_HOLD = 2, PH_SINK = 3;
+const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 3;
+const SINK_RATE = 0.26;                  // teardown speed (audio-independent, can't stall)
+
 export class GroundPlan extends Scene {
   constructor() {
     super('groundplan', 'Ground Plan');
     this.trail = 0.85;
 
     this.defineParam('buildSpeed', 0.14, 0.04, 0.5, 0.02, 'Build Speed');
+    this.defineParam('riseSpeed', 0.16, 0.04, 0.5, 0.02, 'Rise Speed');
     this.defineParam('density', 1.2, 0.4, 2.0, 0.05, 'Grid (fine↔coarse)');
     this.defineParam('avenueWidth', 3.0, 1.5, 5.0, 0.1, '大学通り Width');
     this.defineParam('spark', 1, 0, 1, 1, 'Spark');
@@ -86,8 +92,11 @@ export class GroundPlan extends Scene {
     this._blocks = null;               // building footprints (built with the grid)
 
     this._camYaw = 0; this._camPitch = -Math.PI / 2; // top-down until the city rises
-    this._cyLift = 0;                                 // vertical re-framing as it tilts (Task 4)
+    this._cyLift = 0;                                 // vertical re-framing as it tilts
     this._p0 = [0, 0, 0]; this._p1 = [0, 0, 0];       // projection scratch
+
+    this._phase = PH_ENERGIZE; this._rise = 0; this._riseView = 0;
+    this._secStart = 0; this._holdN = 0;
   }
 
   init(ctx, w, h) {
@@ -269,6 +278,38 @@ export class GroundPlan extends Scene {
 
     // monotonic — current only ever flows further out, then holds at full
     this._front = clamp(this._front + dt * this.p('buildSpeed') * Math.max(STALL, drive), 0, 1);
+
+    // phase loop: energize -> rise -> hold -> sink -> rise…
+    const beatsF = clock.beats + clock.beatPhase;
+    switch (this._phase) {
+      case PH_ENERGIZE:
+        if (this._front >= 1) this._phase = PH_RISE;
+        break;
+      case PH_RISE:
+        this._rise = clamp(this._rise + dt * this.p('riseSpeed') * Math.max(STALL, drive), 0, 1);
+        if (this._rise >= 1) { this._phase = PH_HOLD; this._secStart = beatsF; this._holdN = 0; }
+        break;
+      case PH_HOLD:
+        if (beatsF - this._secStart >= SEC_BEATS) {
+          this._secStart = beatsF;
+          if (++this._holdN >= HOLD_SECTIONS) this._phase = PH_SINK;
+        }
+        break;
+      case PH_SINK:
+        this._rise -= dt * SINK_RATE;
+        if (this._rise <= 0) { this._rise = 0; this._phase = PH_RISE; } // map stays energized; city rebuilds
+        break;
+    }
+    this._riseView += (this._rise - this._riseView) * Math.min(1, dt * 4); // anti-pop
+
+    // camera: top-down (俯瞰) -> three-quarter as the city rises (Tilt behaviour;
+    // cam modes wired in Task 6). Re-frame slightly so the tilted city stays centered.
+    const tilt = smoothstep(0.0, 1.0, this._riseView);
+    const pitchTgt = lerp(Math.PI / 2, 0.62, tilt);
+    const yawTgt = lerp(0.0, 0.45, tilt);
+    this._camPitch += (-pitchTgt - this._camPitch) * Math.min(1, dt * 3);
+    this._camYaw += (yawTgt - this._camYaw) * Math.min(1, dt * 3);
+    this._cyLift = lerp(0, this._H * 0.06, tilt);
   }
 
   draw(ctx, alpha) {
