@@ -1,0 +1,9 @@
+{
+  "name": "vj",
+  "private": true,
+  "type": "module",
+  "description": "Audio-reactive monochrome VJ web app (buildless ES modules + Canvas2D/WebGL PWA). package.json exists only so Node treats the .js sources as ESM for tests; there is no build step.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
