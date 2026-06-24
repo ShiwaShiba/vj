@@ -56,12 +56,13 @@ const K_GRID = 0, K_AVE = 1, K_SPINE = 2, K_BOUND = 3, K_RAIL = 4, K_GOUT = 5;
 
 // Building footprints (3D phase). Blocks use a COARSER grid than the streets so
 // they read as city blocks, independent of the street-density slider.
-const MAX_BLOCKS = 1300;
-const BLOCK_CELLS = 1.6;                  // a city block spans this many street-grid cells (Fix C)
+const MAX_BLOCKS = 2600;                  // buffer ceiling; the drawn count is the live maxBlocks param
+const BLOCK_CELLS = 1.15;                 // finer footprints → a dense low-rise carpet (reference)
 const CUBE_FILL_IN = 0.82;                // inside the district: cubes nearly fill cells (びっしり)
-const CUBE_FILL_OUT = 0.55;               // outside the district: smaller, scattered
+const CUBE_FILL_OUT = 0.62;               // outside: fuller so the fabric reads continuous N+S
 const OUT_SPARSE = 0.32;                  // District scope: fraction of outside cells that rise
-const JIT_POS = 0.07;                     // per-cell position jitter — breaks the CG-perfect grid
+const JIT_POS = 0.09;                     // per-cell position jitter — breaks the CG-perfect grid
+const NORTH_V = -0.18;                    // dense voxel carpet reaches this far N of the apex (3D only)
 const K_INSIDE = 0, K_OUTSIDE = 1, K_LAND = 2; // block kinds: inside district / outside / landmark
 const FOCAL = 4.5;                       // camera focal length in units of H (weak perspective)
 
@@ -121,6 +122,7 @@ export class GroundPlan extends Scene {
     this.defineParam('yawTilt', 0.10, -0.20, 0.50, 0.01, 'Aerial Yaw');
     this.defineParam('frameZoom', 1.40, 1.0, 1.8, 0.02, 'Frame Zoom');   // tilt-gated width fill
     this.defineParam('frameDrop', 0.05, 0.0, 0.25, 0.01, 'Frame Drop');  // tilt-gated vertical seat
+    this.defineParam('maxBlocks', 1900, 800, MAX_BLOCKS, 100, 'Carpet Density'); // drawn-block cap (live)
 
     // independent switchable axes (rendered as labelled button rows by ControlPanel)
     this.modeGroups = [
@@ -327,12 +329,18 @@ export class GroundPlan extends Scene {
     }
 
     const inset = Math.min(bdv, bdh) * 0.18;
-    for (let v = 0.08; v < EXT_S - bdh; v += bdh) {
+    for (let v = NORTH_V; v < EXT_S - bdh; v += bdh) {  // start N of the apex (reference shows city both sides of the rail)
       for (let u = -EXT_X + bdv; u < EXT_X; u += bdv) {
         const cu = u + bdv / 2, cv = v + bdh / 2;
         if (Math.abs(cu) < CL) continue;              // spine corridor kept clear
         if (inCamp(cu, cv)) continue;                 // campuses are explicit landmarks
+        if (cv < 0.08) {                              // the new northern band: keep the hero + tracks clear
+          if (Math.abs(cu) < 0.16 && cv > -0.10) continue; // 旧駅舎 footprint (incl. west wing) — no voxel overlap
+          if (Math.abs(cv + 0.053) < 0.025) continue;      // 中央線 rail corridor
+        }
         const inside = inPent(cu, cv);
+        const inNorth = cv < 0 && cv > NORTH_V && Math.abs(cu) < SH_L; // dense fabric just N of the apex
+        const dense = inside || inNorth;
         const n = this.noise.noise2D(cu * 3.1, cv * 3.1) * 0.5 + 0.5; // 0..1 stable
         const n2 = this.noise.noise2D(cu * 1.3, cv * 1.3) * 0.5 + 0.5; // low-freq "districts"
         const nMix = clamp(0.55 * n + 0.55 * n2 * n2, 0, 1);          // n2² keeps tall clumps rare
@@ -341,12 +349,12 @@ export class GroundPlan extends Scene {
         const jx = this.noise.noise2D(cu * 7.7 + 3, cv * 7.7 + 3) * bdv * JIT_POS;
         const jy = this.noise.noise2D(cu * 7.7 + 9, cv * 7.7 + 9) * bdh * JIT_POS;
         const sj = 0.86 + 0.28 * (this.noise.noise2D(cu * 5.3 + 1, cv * 5.3 + 1) * 0.5 + 0.5);
-        const fill = inside ? CUBE_FILL_IN : CUBE_FILL_OUT;
+        const fill = dense ? CUBE_FILL_IN : CUBE_FILL_OUT;
         const halfU = (bdv * 0.5 - inset) * fill * sj;
         const halfV = (bdh * 0.5 - inset) * fill * sj;
         const ox = cu + jx, oy = cv + jy;
         // keep cubes LOW so a dense field reads as a low-rise city, not tall gravestones
-        const hNorm = (inside ? 0.10 + 0.55 * nMix : 0.07 + 0.28 * nMix) * spineBoost; // low floor, rare tall
+        const hNorm = (dense ? 0.10 + 0.55 * nMix : 0.07 + 0.28 * nMix) * spineBoost; // low floor, rare tall
         const rnd = this.noise.noise2D(cu * 11.3 + 21, cv * 11.3 + 21) * 0.5 + 0.5; // sparse-outside roll
         blocks.push({ uMin: ox - halfU, uMax: ox + halfU, vMin: oy - halfV, vMax: oy + halfV,
           hNorm, key: distKey(ox, oy), kind: inside ? K_INSIDE : K_OUTSIDE, rnd });
@@ -578,7 +586,7 @@ export class GroundPlan extends Scene {
       this._drawStation(ctx, b, A, clamp(smoothstep(0, 0.16, front3d), 0, 1) * stStand, lightP, wantFaces, style); // station falls last
       this._drawCampus(ctx, b, A, front3d, lightP, wantFaces); // 一橋: low open plates, not towers
       const ccy = b.ccy, scy = b.scy, ccp = b.ccp, scp = b.scp, F = b.F;
-      const cap = Math.round(MAX_BLOCKS * clamp(q, 0.5, 1)); // shed far blocks under load
+      const cap = Math.round(Math.min(this.p('maxBlocks'), MAX_BLOCKS) * clamp(q, 0.5, 1)); // live density × q-shed
       let bi = 0, fc = 0;
       for (let k = 0; k < this._blocks.length && bi < cap; k++) {
         const blk = this._blocks[k];
