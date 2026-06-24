@@ -67,9 +67,13 @@ const FOCAL = 4.5;                       // camera focal length in units of H (w
 
 // Phase loop: ENERGIZE (flat circuit) -> RISE (city extrudes) -> HOLD -> SINK -> RISE…
 const PH_ENERGIZE = 0, PH_RISE = 1, PH_HOLD = 2, PH_SINK = 3;
-const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 2;
+const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 4; // let all four LIVE vantages play before SINK
 const SINK_RATE = 0.26;                  // teardown ease rate (audio-independent, can't stall)
 const RETRACT_RATE = 0.5;                // SINK: speed the lit circuit recedes after buildings drop
+// Tilt-driven vertical re-framing: as the camera tilts the foreshortened city collapses
+// upward, so push the whole picture DOWN to center it. Gated by `tilt` (0 at riseView=0),
+// so the locked top-down plot is provably untouched. Apex screen-y: 0.13h -> ~0.33h.
+const FRAME_DROP = 0.20;                 // fraction of H the frame drops at full tilt
 // Branching-energize schedule (Fix A): trunks grow first with staggered starts; the
 // street grid branches off its parent trunk after the trunk has passed its attach point.
 const TRUNK_SPAN = 0.55;                 // front-space a full-length trunk takes to grow
@@ -90,10 +94,10 @@ const BOX_F = [
 
 // LIVE camera vantages (pitch from vertical, yaw kick) walked during HOLD.
 const LIVE_VANTAGES = [
-  { pitch: 0.62, yaw: 0.30 },
-  { pitch: 0.80, yaw: 0.66 },
-  { pitch: 0.50, yaw: -0.22 },
-  { pitch: 0.68, yaw: 0.98 },
+  { pitch: 0.58, yaw: -0.10 }, // frontal three-quarter — the establishing shot
+  { pitch: 0.50, yaw: 0.40 },  // low, swung west — long raking read
+  { pitch: 0.82, yaw: 1.05 },  // near-overhead, strong yaw
+  { pitch: 0.70, yaw: -0.45 }, // east, fairly high
 ];
 
 export class GroundPlan extends Scene {
@@ -200,7 +204,7 @@ export class GroundPlan extends Scene {
     }
 
     // The radiating trident — 富士見 (west) runs much LONGER than 旭 (east).
-    add(0, 0, 0, 1.15, K_SPINE);                 // 大学通り (pierces south)
+    add(0, 0, 0, 1.06, K_SPINE);                 // 大学通り (pierces just past the district)
     add(0, 0, -SH_L, SH_L_Y, K_AVE);             // 富士見通り (long, wide)
     add(0, 0, SH_R, SH_R_Y, K_AVE);              // 旭通り     (short)
 
@@ -208,7 +212,7 @@ export class GroundPlan extends Scene {
     // constants; staggered t0 = time-offset starts, tg ∝ length = equal spatial speed.
     const lenFujimi = Math.hypot(SH_L, SH_L_Y), lenAsahi = Math.hypot(SH_R, SH_R_Y);
     this._trunkSched = {
-      spine:  { t0: 0.00, tg: TRUNK_SPAN, len: 1.15 },
+      spine:  { t0: 0.00, tg: TRUNK_SPAN, len: 1.06 },
       rail:   { t0: 0.02, tg: TRUNK_SPAN * 0.7 * (railHalf / lenFujimi), len: railHalf },
       fujimi: { t0: 0.05, tg: TRUNK_SPAN, len: lenFujimi },
       asahi:  { t0: 0.09, tg: TRUNK_SPAN * (lenAsahi / lenFujimi), len: lenAsahi },
@@ -311,7 +315,9 @@ export class GroundPlan extends Scene {
         if (inCamp(cu, cv)) continue;                 // campuses are explicit landmarks
         const inside = inPent(cu, cv);
         const n = this.noise.noise2D(cu * 3.1, cv * 3.1) * 0.5 + 0.5; // 0..1 stable
-        const spineBoost = 1 + 0.5 * smoothstep(0.5, 0.0, Math.abs(cu)); // taller near 大学通り
+        const n2 = this.noise.noise2D(cu * 1.3, cv * 1.3) * 0.5 + 0.5; // low-freq "districts"
+        const nMix = clamp(0.55 * n + 0.55 * n2 * n2, 0, 1);          // n2² keeps tall clumps rare
+        const spineBoost = 1 + 0.8 * smoothstep(0.18, 0.0, Math.abs(cu)); // a tight 大学通り main-street ridge
         // anti-"cheap": shrink (~60% smaller) + jitter size/position to break the perfect grid
         const jx = this.noise.noise2D(cu * 7.7 + 3, cv * 7.7 + 3) * bdv * JIT_POS;
         const jy = this.noise.noise2D(cu * 7.7 + 9, cv * 7.7 + 9) * bdh * JIT_POS;
@@ -321,7 +327,7 @@ export class GroundPlan extends Scene {
         const halfV = (bdh * 0.5 - inset) * fill * sj;
         const ox = cu + jx, oy = cv + jy;
         // keep cubes LOW so a dense field reads as a low-rise city, not tall gravestones
-        const hNorm = (inside ? 0.12 + 0.30 * n : 0.09 + 0.16 * n) * spineBoost;
+        const hNorm = (inside ? 0.10 + 0.55 * nMix : 0.07 + 0.28 * nMix) * spineBoost; // low floor, rare tall
         const rnd = this.noise.noise2D(cu * 11.3 + 21, cv * 11.3 + 21) * 0.5 + 0.5; // sparse-outside roll
         blocks.push({ uMin: ox - halfU, uMax: ox + halfU, vMin: oy - halfV, vMax: oy + halfV,
           hNorm, key: distKey(ox, oy), kind: inside ? K_INSIDE : K_OUTSIDE, rnd });
@@ -379,7 +385,7 @@ export class GroundPlan extends Scene {
         if (bl < -CL - 0.01) brightRow(bl, -CL, py);
         if (br > CL + 0.01) brightRow(CL, br, py);
       } else {
-        const spineHere = py > SOUTH && py < 1.18;       // 大学通り still runs just past SOUTH
+        const spineHere = py > SOUTH && py < 1.08;       // 大学通り still runs just past SOUTH
         if (spineHere) {
           add(-EXT_X, py, -CL, py, K_GOUT);
           add(CL, py, EXT_X, py, K_GOUT);
@@ -453,10 +459,11 @@ export class GroundPlan extends Scene {
       const vf = LIVE_VANTAGES[this._vFrom], vt = LIVE_VANTAGES[this._vTo];
       pitchTgt = lerp(vf.pitch, vt.pitch, e);
       yawTgt = lerp(vf.yaw, vt.yaw, e);
+      yawTgt += 0.03 * Math.sin(this.t * 0.25); // a slow breath within the held vantage (no swoop)
     }
     this._camPitch += (-pitchTgt - this._camPitch) * Math.min(1, dt * 3);
     this._camYaw += (yawTgt - this._camYaw) * Math.min(1, dt * 3);
-    this._cyLift = lerp(0, this._H * 0.06, tilt);
+    this._cyLift = lerp(0, this._H * FRAME_DROP, tilt); // re-center the tilted city (0 at top-down)
   }
 
   draw(ctx, alpha) {
@@ -525,7 +532,7 @@ export class GroundPlan extends Scene {
         const blk = this._blocks[k];
         if (scope === 2 && blk.kind !== K_LAND) continue;    // Landmark: only landmarks rise
         if (scope === 0 && blk.kind === K_OUTSIDE && blk.rnd > OUT_SPARSE) continue; // District: sparse outside
-        const local = smoothstep(blk.key, blk.key + 0.14, front3d);
+        const local = smoothstep(blk.key, blk.key + 0.10, front3d);
         if (local <= 0.001) continue;
         let hN = blk.hNorm;
         if (height === 1) hN = (blk.kind === K_LAND ? blk.hNorm : 0.6);           // Even
