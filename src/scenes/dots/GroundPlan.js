@@ -63,7 +63,7 @@ const FOCAL = 4.5;                       // camera focal length in units of H (w
 
 // Phase loop: ENERGIZE (flat circuit) -> RISE (city extrudes) -> HOLD -> SINK -> RISE…
 const PH_ENERGIZE = 0, PH_RISE = 1, PH_HOLD = 2, PH_SINK = 3;
-const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 3;
+const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 2;
 const SINK_RATE = 0.26;                  // teardown speed (audio-independent, can't stall)
 
 // 3D box faces + monochrome shading (reused from the 3D checkpoint / FallingCubes).
@@ -428,8 +428,9 @@ export class GroundPlan extends Scene {
       const bg = this.palette.bg, fg = this.palette.fg, tmp = this._tmpRgb;
       for (let i = 0; i < NTONE; i++) this._toneCss[i] = rgbCss(lerpRgb(bg, fg, i / (NTONE - 1), tmp));
       const ccy = b.ccy, scy = b.scy, ccp = b.ccp, scp = b.scp, F = b.F;
+      const cap = Math.round(MAX_BLOCKS * clamp(q, 0.5, 1)); // shed far blocks under load
       let bi = 0, fc = 0;
-      for (let k = 0; k < this._blocks.length && bi < MAX_BLOCKS; k++) {
+      for (let k = 0; k < this._blocks.length && bi < cap; k++) {
         const blk = this._blocks[k];
         if (scope === 0 && blk.kind === K_OUTSIDE) continue; // District: outside stays flat ground
         if (scope === 2 && blk.kind !== K_LAND) continue;    // Landmark: only landmarks rise
