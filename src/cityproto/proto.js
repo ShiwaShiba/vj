@@ -1,4 +1,5 @@
 import * as THREE from '../vendor/three.module.js';
+import { buildTerrain, buildTerrainGrid } from './terrain.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
@@ -7,14 +8,11 @@ renderer.setClearColor(0x07080a, 1);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-camera.position.set(0, 9, 11);
-camera.lookAt(0, 0, 1.2);
+camera.position.set(0.6, 8.2, 12.5);
+camera.lookAt(0.4, 0, 1.4);
 
-const cube = new THREE.Mesh(
-  new THREE.BoxGeometry(1, 1, 1),
-  new THREE.MeshBasicMaterial({ color: 0x999999 }),
-);
-scene.add(cube);
+scene.add(buildTerrain());
+scene.add(buildTerrainGrid());
 
 function resize() {
   const w = innerWidth, h = innerHeight;
