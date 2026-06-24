@@ -1,7 +1,31 @@
-# ハンドオフ — GroundPlan 3D（駅舎ほぼ完成・改善継続フェーズへ）
+# ハンドオフ — GroundPlan 3D（リファレンス接近・修正フェーズへ）
 
-> 更新 2026-06-24（**セッション3末**）。セッション2の駅舎/キューブに加え、**動きの質感改善（波1+波2）**を実装・検証済（全commit済・未push）。
+> 更新 2026-06-24（**セッション4末**）。セッション3の動き改善に加え、**リファレンス画像(スキャナUI)へ寄せる全4層 + 検証ハーネス**を実装・検証・commit済（全commit済・**未push**, SW `vj-v14`のまま）。
+> ⚠️ **ユーザーは「修正が必要」と判断（詳細は次セッションで指示）。セッション4の成果は committed だが最終OK・配信承認ではない。**
 > このファイル + memory（`groundplan-flat-redirect.md`）+ git だけで再開できるように書いてある。
+
+## ★ セッション4（リファレンス画像へ寄せる）— DONE・未配信・**要修正**
+
+全て `GroundPlan.js`（+ HUDフックで `Scene.js`/`Engine.js`/`Overlay.js`）。**commit済（push無し、SW `vj-v14`）**。各Phase末に `__pose` freeze-frame + **golden PNG との tolerant pixel-diff==0** で検証。
+
+| commit | 内容 |
+|---|---|
+| `7ffb3fe` | **#0** dev `window.__pose` freeze-frame ハーネス（**HANDOFFが前提にしていた `__pose` は実在しなかったので新規実装**） |
+| `8604fd4` | **#1** リファレンス相当フルHUD（スキャナUI） |
+| `7821ccd` | **#2a** 浅い俯瞰＋線路水平 |
+| `820fbd3` | **#2b** 幅埋めズーム（`_project`一律, 駅舎非接触） |
+| `05b0c23` | O(n) 深度バケットソート |
+| `d055fe7` | **#3** 密度カーペット＋北側バンド |
+| `4ed9dfb` | **#4** 開放/緑地ゾーン（最新code） |
+
+- **検証の確立（重要）**: `__pose={riseView,front,phase,sinkFront,camPitch,camYaw}` で1フレーム固定（本番は `window.__pose` 未設定で完全不変, `update()`冒頭で早期return）。golden は **viewport 1280×720 / `trail`param=1（全消去で決定的）/ overlay grain·vignette·hud off** で撮り `localStorage['gp_golden_png']` に保存→各Phaseで `getImageData` tolerant diff(>16)。**全7 commit累積で riseView=0 byte一致**＝鉄則#3 維持。⚠️ 検証前に必ず **viewport を 1280×720 に戻す**（golden と寸法一致。760×428等だと dpr2 で 1520×856 になり diff 誤検知）。
+- **#1 HUD**: 新 `Scene.drawHud(ctx,w,h,info)` フック（Overlay が generic HUD の後に呼ぶ。Engine `info` に `scene:active` 追加）。GroundPlan が `hudOwnsCorners=true` で generic四隅(id/BPM/MIC/fps)を抑制。drawHud = タイトル / レイヤー一覧01-06 / WIDE AREA ミニマップ(ペンタゴン+三叉+駅星 schematic, ~14stroke) / リーダー線ラベル3本(`_anchors` を draw()末で `_g` 投影→2Dでも正しく刺さる) / AUDIO REACTIVITY 5メーター(`_hudBands`: bass/mid/treble/beatHold から KICK/SNARE/HI-HAT/BASS/PAD を化粧導出, 新DSP無) / LAYER STATUS 6×9ドット(`_hudLayers` で `_front`幹sched/`_riseView`/`_phase`/audio から活性導出) / 座標 / MONO·FPS。コスト **0.06ms/frame**(静的キャッシュ不要と実測)。モノクロ厳守(MONOで色0, SIGNALで赤は駅ノード+リーダー点15×16pxのみ)。
+- **#2a ポーズ**: Tilt/Live base を `pitch 0.62→0.46`・`yaw 0.45→0.10`（線路傾き 0.263→**0.042**水平）。`LIVE_VANTAGES` を yaw∈[-0.05,0.18]/pitch∈[0.44,0.56] に制約。**#2b 幅埋め**: `_basis` に `zoom=lerp(1,frameZoom,tilt)`、`_project`/`_pv` 出力を `*zoom`（(cx,cy)中心一律, tilt=0で1）＋ `frameDrop`(旧const FRAME_DROP撤去)。**駅舎 `_drawStation` はメソッド非編集**（投影が一律ズームするので街と coherent, 鉄則#1）。riseView=1で 線路 y/H≈0.29上中央・幅~83%・大学通り手前。
+- **#3 密度**: 先に **O(n)深度バケットソート**（新 `_depthOrder`, NB=256, `order.sort` 2箇所置換, 1300で frame pixel一致を A/B 確認）。次に `BLOCK_CELLS 1.6→1.15`/`MAX_BLOCKS 1300→2600`(buffer上限)/`CUBE_FILL_OUT→0.62`/`JIT→0.09`。**描画数は live param `maxBlocks`**(既定1900, 800-2600, `cap=min(maxBlocks,MAX_BLOCKS)*clamp(q,.5,1)`)。**北側バンド**: ブロックループ `v=0.08→NORTH_V(-0.18)`、`inNorth` dense override、駅footprint(|u|<0.16,v>-0.10)+線路回廊(|v+0.053|<0.025)を彫り抜き、北は `K_OUTSIDE` タグ（District間引き可）。City/Hybrid q=1 **draw 11.99ms**(dev Mac, 55%/22ms)。
+- **#4 緑地**: `K_GREEN=3` + `this._green`(大型3区画 `[u0,v0,u1,v1]`, 中央分離帯は監査推奨でカット)。`inGreen` で carpet 穴、`K_GREEN` プレートを always-kept `land` bucket へ・`_keyMax` 除外、cubeループで `continue`。`_drawCampus` を一般化(緑=暗く平ら `h*0.004`/shade cap`0.40`, curb`0.8`維持)。**2D rim は描かない**(plate curb が輪郭, front3dゲート)→ tilt-gate 不要で riseView=0 自動不変。`greenActivity()` が HUD layer05 駆動。区画は district 内に収め avenue/boundary を貫かない。
+- **新 live ツマミ**(ControlPanel): `pitchTilt 0.46` / `yawTilt 0.10` / `frameZoom 1.40` / `frameDrop 0.05` / `maxBlocks(Carpet Density) 1900`。
+- **perf**: dev Mac headless City/Hybrid q=1 draw 11.99ms。**実機iPad未計測**（22ms超なら q-shed で cap 自動低下 or `maxBlocks` を下げる）。
+- **新規シンボル**: `Scene.drawHud` / `_drawHud own` 抑制 / `_anchors,_hudA,_hudL,_hudBands,_hudLayers,_hudSeg,_hudTc,_hudMinimap,greenActivity,_depthOrder,_fDepth,_fDCnt` / 定数 `NORTH_V,K_GREEN` / params 上記5 / `b.zoom`。
 
 ## ★ セッション3（動きの質感改善）— DONE・未配信
 
@@ -23,23 +47,24 @@
 - **perf**: dev Mac headless で District/Hybrid ~49fps(11.3ms) / City/Hybrid ~41fps / quality=1。**実機iPad計測は未（ユーザーのデバイス必須）**＝§6参照。
 - 新定数/状態: `FRAME_DROP, SINK_W, _sinkFront, _keyMax, _cSX/_cSY`。新メソッド `_drawCampus`。
 
-## ▶ 次回キックオフ（このまま貼って開始できる）
+## ▶ 次回キックオフ（このまま貼って開始できる）— **修正対応セッション**
 
-> GroundPlan 3D の続き。まず `docs/HANDOFF-groundplan-3d.md` の **★セッション3** と **§5技術的学び** と **§6**、memory `groundplan-flat-redirect.md` を読んで。
+> GroundPlan 3D の続き（**リファレンス接近の修正フェーズ**）。まず `docs/HANDOFF-groundplan-3d.md` の **★セッション4** と **§5技術的学び** と memory `groundplan-flat-redirect.md` を読んで。
 >
-> 状態: 波1+波2（動きの質感改善 全7点）は**実装・検証・commit 済（`79c2942`→`318139d`, main, 未push, SW vj-v14のまま）**。作業ツリーはクリーン。
+> 状態: リファレンス画像(スキャナUI)へ寄せる全4層 + 検証ハーネスは**実装・検証・commit 済（`7ffb3fe`→`4ed9dfb`, main, 未push, SW vj-v14のまま）**。作業ツリーはクリーン。**ただし俺が「修正が必要」と判断済**。これから直したい点をラフに指示するので、当てて実機(localhost:8125)確認→commit。
 >
-> 鉄則（厳守）: 駅舎 `_drawStation` 不可侵 / モノクロ（赤は駅ノード+tipのみ・グロー禁止）/ **真俯瞰(riseView=0)は配信2Dと一致を維持**＝リフレーミング/高さ/崩落は全て `tilt` か `front3d`（riseView=0で0）でゲート / `git checkout … GroundPlan.js` 禁止 / **配信は俺の承認後のみ**（sw.js vj-v15 bump+push、勝手にやらない）/「直った」は §5 のスクショ・pixel/数値検証後に報告。
+> 鉄則（厳守）: 駅舎 `_drawStation` **メソッド非編集**（幅埋めズームは `_project` の `b.zoom` で一律）/ モノクロ（赤は駅ノード+リーダー点+tipのみ・グロー禁止・ハードコードhex禁止＝`palette.*Css`経由）/ **真俯瞰(riseView=0)は配信2Dと byte 一致を維持**＝構図/高さ/崩落/密度/緑地は全て `tilt` か `front3d`(riseView=0で0)でゲート / `git checkout … GroundPlan.js` 禁止（退避は `git stash`）/ **配信は俺の承認後のみ**（sw.js vj-v15 bump+push、勝手にやらない）/「直った」は §5 のスクショ・pixel/数値検証後に報告。
 >
-> 今回やること: **実機(localhost:8125)を見ながらライブ微調整**。回せるツマミ＝`FRAME_DROP`(0.20)/`LIVE_VANTAGES`(4視点 pitch/yaw)/微ドリフト(0.03rad)/`SEC_BEATS`(32)・`HOLD_SECTIONS`(4)/`SINK_RATE`(崩落速度)/キャンパス高(`H*0.008`)/`spineBoost`(0.8)・背骨長(1.06)/量塊の高さ分布。俺がラフに指示するので当てて実機確認→commit。
+> 回せる live ツマミ（ControlPanel, 数値のみ実機で）: `Aerial Pitch=pitchTilt`(0.46) / `Aerial Yaw=yawTilt`(0.10) / `Frame Zoom=frameZoom`(1.40) / `Frame Drop=frameDrop`(0.05) / `Carpet Density=maxBlocks`(1900, 最大2600)。HUD配置/緑地coords(`this._green`)/北バンド(`NORTH_V`)はコード定数。
 >
-> 並行で残: **実機iPad perf計測**（City/Hybrid/1300 で ≥30fps、手順は §6）。
+> 並行で残: **実機iPad perf計測**（City/Hybrid, `maxBlocks`変えて, 22ms予算=≈45fps。超なら q-shed が cap を自動で下げる、または `maxBlocks` を下げる。dev Mac headless は draw 11.99ms で余裕だが iPad未計測）。
 
-**再開時の実機セットアップ（headlessでの検証手順）**:
+**再開時の実機セットアップ + 決定的検証手順（セッション4で確立）**:
 1. `preview_start`（name=`vj`, port 8125）。`http://localhost:8125`。
-2. SWキャッシュ解除（§2スニペット）→ reload。
-3. 決定的フレーム検証は freeze-frame: `gp.update` を monkeypatch して `window.__pose({phase,front,rise,riseView,cam,vantage,scope,height,style,sinkFront})` で状態固定（本セッションで使用、§5）。`sinkFront` は SINK波の検証用。`window.__unfreeze()` で復帰。
-4. ⚠️ headless は dpr=1 報告でも実 backing が2×のことがあり、screenshot が左上に縮む場合がある（環境差・コードは正しい）。composition は読める。iPad実機では正常。
+2. SWキャッシュ解除（§2スニペット）→ reload → `#start` クリック → `window.__vj.scenes.start('groundplan')`。
+3. **`window.__pose` は実在の committed override**（`7ffb3fe`, `GroundPlan.update()`冒頭, dev限定）。`window.__pose = {riseView, front, phase, sinkFront, camPitch, camYaw}` で1フレーム固定（camは省略時 pitchTilt/yawTilt から算出）。**復帰は `delete window.__pose`**。本番は未設定で完全不変。
+4. **真俯瞰parity検証（鉄則#3 trip wire）**: ⚠️ **必ず viewport を `preview_resize` で 1280×720 に戻す**（golden と寸法一致。760×428等は dpr2で backing 1520×856 になり diff 誤検知）。手順 = `s.params.trail.value=1`（決定的）+ overlay `grain/vignette/scanlines/hud=false`（map raster分離）+ `__pose={riseView:0,front:1,phase:1}` → `getImageData` を `localStorage['gp_golden_png']`(セッション4で保存)と tolerant diff(>16) → **0 px が合格**。golden が無い/コード変更で疑わしい時は: `git stash` で前commitに戻し golden 撮り直し → `git stash pop`。
+5. ⚠️ headless screenshot は固定サーフェスのため viewport を変えても内容が左上に縮む（環境差・コードは正しい）。読める大きさが要る時は **viewport 760×428**（backing 1520, ほぼフィル）。HUD詳細は `getImageData` で領域サンプリングして確認（screenshot より確実）。composition/aesthetic は iPad実機が正。
 
 ---
 
@@ -55,10 +80,10 @@
 | | コミット | SW | 内容 | 公開 |
 |---|---|---|---|---|
 | **本番 origin/main** | `f2a37e5` | `vj-v14` | **2D平面地図のみ** | ✅ https://shiwashiba.github.io/vj/ |
-| **ローカル main HEAD** | `0185cbb` | `vj-v14` | 2D + 3D（A〜E + 駅舎 + キューブ密度 + **波1/波2 動き改善**）全commit済 | ❌ 未push |
+| **ローカル main HEAD** | `4ed9dfb` | `vj-v14` | 2D + 3D（…波1/波2 + **セッション4: スキャナHUD/構図/密度/緑地 全Phase**）全commit済・**要修正** | ❌ 未push |
 
 ### 🚨 絶対に守る
-- **セッション2+3の成果は全て commit 済**（`79c2942`→`0185cbb`、上記★表）。**まだ push していない**（SW `vj-v14` のまま）。
+- **セッション2+3+4の成果は全て commit 済**（`79c2942`→`4ed9dfb`、上記★表）。**まだ push していない**（SW `vj-v14` のまま）。セッション4は**要修正**（次セッションで指示）。
 - **`git checkout … -- src/scenes/dots/GroundPlan.js` を実行しない**（履歴は safe だが習慣として封印）。
 - 配信はユーザー承認後のみ（下記手順、SW bump + push）。
 
