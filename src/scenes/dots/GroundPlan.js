@@ -79,6 +79,14 @@ const BOX_F = [
   { idx: [1, 2, 6, 5], n: [1, 0, 0] },  // east wall
 ];
 
+// LIVE camera vantages (pitch from vertical, yaw kick) walked during HOLD.
+const LIVE_VANTAGES = [
+  { pitch: 0.62, yaw: 0.30 },
+  { pitch: 0.80, yaw: 0.66 },
+  { pitch: 0.50, yaw: -0.22 },
+  { pitch: 0.68, yaw: 0.98 },
+];
+
 export class GroundPlan extends Scene {
   constructor() {
     super('groundplan', 'Ground Plan');
@@ -119,6 +127,7 @@ export class GroundPlan extends Scene {
 
     this._phase = PH_ENERGIZE; this._rise = 0; this._riseView = 0;
     this._secStart = 0; this._holdN = 0;
+    this._vFrom = 0; this._vTo = 0; this._xfade = 1; // LIVE vantage walker
 
     // 3D projection / face scratch (allocation-free hot loop)
     this._pvx = new Float32Array(MAX_BLOCKS * 8);
@@ -321,11 +330,15 @@ export class GroundPlan extends Scene {
         break;
       case PH_RISE:
         this._rise = clamp(this._rise + dt * this.p('riseSpeed') * Math.max(STALL, drive), 0, 1);
-        if (this._rise >= 1) { this._phase = PH_HOLD; this._secStart = beatsF; this._holdN = 0; }
+        if (this._rise >= 1) {
+          this._phase = PH_HOLD; this._secStart = beatsF; this._holdN = 0;
+          this._vFrom = this._vTo = 0; this._xfade = 1;
+        }
         break;
       case PH_HOLD:
         if (beatsF - this._secStart >= SEC_BEATS) {
           this._secStart = beatsF;
+          this._vFrom = this._vTo; this._vTo = (this._vTo + 1) % LIVE_VANTAGES.length; this._xfade = 0;
           if (++this._holdN >= HOLD_SECTIONS) this._phase = PH_SINK;
         }
         break;
@@ -336,11 +349,24 @@ export class GroundPlan extends Scene {
     }
     this._riseView += (this._rise - this._riseView) * Math.min(1, dt * 4); // anti-pop
 
-    // camera: top-down (俯瞰) -> three-quarter as the city rises (Tilt behaviour;
-    // cam modes wired in Task 6). Re-frame slightly so the tilted city stays centered.
+    // camera (cam axis): 俯瞰 -> three-quarter as the city rises.
+    const cam = this.mg('cam');
     const tilt = smoothstep(0.0, 1.0, this._riseView);
-    const pitchTgt = lerp(Math.PI / 2, 0.62, tilt);
-    const yawTgt = lerp(0.0, 0.45, tilt);
+    let pitchTgt, yawTgt;
+    if (cam === 2) {                          // Plan: stay near top-down (low relief)
+      pitchTgt = lerp(Math.PI / 2, 1.28, tilt);
+      yawTgt = lerp(0.0, 0.12, tilt);
+    } else {                                  // Tilt / Live base
+      pitchTgt = lerp(Math.PI / 2, 0.62, tilt);
+      yawTgt = lerp(0.0, 0.45, tilt);
+    }
+    if (cam === 1 && this._phase === PH_HOLD) { // Live: walk vantages during hold
+      this._xfade = Math.min(1, this._xfade + dt * (clock.bpm / 60) / (BAR * 2));
+      const e = smoothstep(0, 1, this._xfade);
+      const vf = LIVE_VANTAGES[this._vFrom], vt = LIVE_VANTAGES[this._vTo];
+      pitchTgt = lerp(vf.pitch, vt.pitch, e);
+      yawTgt = lerp(vf.yaw, vt.yaw, e);
+    }
     this._camPitch += (-pitchTgt - this._camPitch) * Math.min(1, dt * 3);
     this._camYaw += (yawTgt - this._camYaw) * Math.min(1, dt * 3);
     this._cyLift = lerp(0, this._H * 0.06, tilt);
@@ -395,7 +421,7 @@ export class GroundPlan extends Scene {
     const front3d = 1.15 * smoothstep(0, 1, this._riseView);
     if (front3d > 0.001) {
       const S = this._S;
-      const style = this.mg('style');
+      const style = this.mg('style'), scope = this.mg('scope'), height = this.mg('height');
       const wantFaces = style !== 1;        // Wire = stroke only, no fills
       const lightP = this.p('light');
       const hScale = H * 0.105;
@@ -405,9 +431,14 @@ export class GroundPlan extends Scene {
       let bi = 0, fc = 0;
       for (let k = 0; k < this._blocks.length && bi < MAX_BLOCKS; k++) {
         const blk = this._blocks[k];
+        if (scope === 0 && blk.kind === K_OUTSIDE) continue; // District: outside stays flat ground
+        if (scope === 2 && blk.kind !== K_LAND) continue;    // Landmark: only landmarks rise
         const local = smoothstep(blk.key, blk.key + 0.14, front3d);
         if (local <= 0.001) continue;
-        const h = blk.hNorm * hScale * local;
+        let hN = blk.hNorm;
+        if (height === 1) hN = (blk.kind === K_LAND ? blk.hNorm : 0.6);           // Even
+        else if (height === 2) hN = blk.hNorm * (0.4 + 1.4 * this._bandFor(blk)); // Pulse
+        const h = hN * hScale * local;
         if (h < 0.5) continue;
         const x0 = blk.uMin * S, x1 = blk.uMax * S;
         const z0 = (blk.vMin - 0.5) * S, z1 = (blk.vMax - 0.5) * S;
@@ -534,6 +565,14 @@ export class GroundPlan extends Scene {
     this._g(u1, v1, b, p); ctx.lineTo(p[0], p[1]);
     this._g(u0, v1, b, p); ctx.lineTo(p[0], p[1]);
     ctx.closePath(); ctx.stroke();
+  }
+
+  // Pulse height: pick an audio band by the block's lateral region (west=bass,
+  // center=mid, east=treble) for an equalizer-like pulsing city.
+  _bandFor(blk) {
+    const a = this.audio; if (!a) return 0;
+    const cu = (blk.uMin + blk.uMax) * 0.5;
+    return cu < -0.25 ? a.bass : cu > 0.25 ? a.treble : a.mid;
   }
 
   // project a box vertex (wx, wy, wz) into the vertex buffers at index vi
