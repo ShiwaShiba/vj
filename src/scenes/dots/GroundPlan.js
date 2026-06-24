@@ -406,6 +406,27 @@ export class GroundPlan extends Scene {
 
     if (this.p('density') !== this._gridK) this._build(); // rebuild when slider moves
 
+    // dev-only freeze-frame override (production untouched when window.__pose is unset).
+    // Lets headless verification pin an exact pose: window.__pose = { riseView, front,
+    // phase, sinkFront, camPitch, camYaw }. Any omitted field keeps its current value;
+    // camera is set DIRECTLY (no smoothing) so a single rendered frame is exact.
+    if (typeof window !== 'undefined' && window.__pose) {
+      const P = window.__pose;
+      if (P.riseView != null) { this._rise = P.riseView; this._riseView = P.riseView; }
+      if (P.front != null) this._front = P.front;
+      if (P.phase != null) this._phase = P.phase;
+      if (P.sinkFront != null) this._sinkFront = P.sinkFront;
+      const tilt = smoothstep(0.0, 1.0, this._riseView);
+      let pitchTgt, yawTgt;
+      if (this.mg('cam') === 2) { pitchTgt = lerp(Math.PI / 2, 1.28, tilt); yawTgt = lerp(0.0, 0.12, tilt); }
+      else { pitchTgt = lerp(Math.PI / 2, 0.62, tilt); yawTgt = lerp(0.0, 0.45, tilt); }
+      if (P.camPitch != null) pitchTgt = P.camPitch;
+      if (P.camYaw != null) yawTgt = P.camYaw;
+      this._camPitch = -pitchTgt; this._camYaw = yawTgt;
+      this._cyLift = lerp(0, this._H * FRAME_DROP, tilt);
+      return;
+    }
+
     // build drive: steady level + transient surge + bass kick
     this._energy += (audio.level - this._energy) * 0.1;
     const surge = audio.level - this._energy;
