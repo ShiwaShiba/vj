@@ -23,6 +23,24 @@
 - **perf**: dev Mac headless で District/Hybrid ~49fps(11.3ms) / City/Hybrid ~41fps / quality=1。**実機iPad計測は未（ユーザーのデバイス必須）**＝§6参照。
 - 新定数/状態: `FRAME_DROP, SINK_W, _sinkFront, _keyMax, _cSX/_cSY`。新メソッド `_drawCampus`。
 
+## ▶ 次回キックオフ（このまま貼って開始できる）
+
+> GroundPlan 3D の続き。まず `docs/HANDOFF-groundplan-3d.md` の **★セッション3** と **§5技術的学び** と **§6**、memory `groundplan-flat-redirect.md` を読んで。
+>
+> 状態: 波1+波2（動きの質感改善 全7点）は**実装・検証・commit 済（`79c2942`→`318139d`, main, 未push, SW vj-v14のまま）**。作業ツリーはクリーン。
+>
+> 鉄則（厳守）: 駅舎 `_drawStation` 不可侵 / モノクロ（赤は駅ノード+tipのみ・グロー禁止）/ **真俯瞰(riseView=0)は配信2Dと一致を維持**＝リフレーミング/高さ/崩落は全て `tilt` か `front3d`（riseView=0で0）でゲート / `git checkout … GroundPlan.js` 禁止 / **配信は俺の承認後のみ**（sw.js vj-v15 bump+push、勝手にやらない）/「直った」は §5 のスクショ・pixel/数値検証後に報告。
+>
+> 今回やること: **実機(localhost:8125)を見ながらライブ微調整**。回せるツマミ＝`FRAME_DROP`(0.20)/`LIVE_VANTAGES`(4視点 pitch/yaw)/微ドリフト(0.03rad)/`SEC_BEATS`(32)・`HOLD_SECTIONS`(4)/`SINK_RATE`(崩落速度)/キャンパス高(`H*0.008`)/`spineBoost`(0.8)・背骨長(1.06)/量塊の高さ分布。俺がラフに指示するので当てて実機確認→commit。
+>
+> 並行で残: **実機iPad perf計測**（City/Hybrid/1300 で ≥30fps、手順は §6）。
+
+**再開時の実機セットアップ（headlessでの検証手順）**:
+1. `preview_start`（name=`vj`, port 8125）。`http://localhost:8125`。
+2. SWキャッシュ解除（§2スニペット）→ reload。
+3. 決定的フレーム検証は freeze-frame: `gp.update` を monkeypatch して `window.__pose({phase,front,rise,riseView,cam,vantage,scope,height,style,sinkFront})` で状態固定（本セッションで使用、§5）。`sinkFront` は SINK波の検証用。`window.__unfreeze()` で復帰。
+4. ⚠️ headless は dpr=1 報告でも実 backing が2×のことがあり、screenshot が左上に縮む場合がある（環境差・コードは正しい）。composition は読める。iPad実機では正常。
+
 ---
 
 ## 0. 一行で言うと
