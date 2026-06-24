@@ -71,10 +71,11 @@ const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 4; // let all four LIVE vant
 const SINK_RATE = 0.26;                  // teardown ease rate (audio-independent, can't stall)
 const SINK_W = 0.12;                      // collapse-wave thickness in key space (mirrors the rise)
 const RETRACT_RATE = 0.5;                // SINK: speed the lit circuit recedes after buildings drop
-// Tilt-driven vertical re-framing: as the camera tilts the foreshortened city collapses
-// upward, so push the whole picture DOWN to center it. Gated by `tilt` (0 at riseView=0),
-// so the locked top-down plot is provably untouched. Apex screen-y: 0.13h -> ~0.33h.
-const FRAME_DROP = 0.20;                 // fraction of H the frame drops at full tilt
+// Tilt-driven reframing (both gated by `tilt`, 0 at riseView=0, so the locked top-down
+// plot is provably untouched): a uniform width-fill ZOOM applied in _project about (cx,cy)
+// — which scales the whole 3D view (blocks, roads, station, marks, HUD anchors) coherently
+// without touching _drawStation or any _S read — plus a vertical frame DROP to seat the
+// near-horizontal railway in the upper-middle. Both are live params (frameZoom / frameDrop).
 // Branching-energize schedule (Fix A): trunks grow first with staggered starts; the
 // street grid branches off its parent trunk after the trunk has passed its attach point.
 const TRUNK_SPAN = 0.55;                 // front-space a full-length trunk takes to grow
@@ -118,6 +119,8 @@ export class GroundPlan extends Scene {
     // Reference-framing pose (live-tunable): shallow aerial + near-horizontal railway.
     this.defineParam('pitchTilt', 0.46, 0.30, 0.90, 0.01, 'Aerial Pitch');
     this.defineParam('yawTilt', 0.10, -0.20, 0.50, 0.01, 'Aerial Yaw');
+    this.defineParam('frameZoom', 1.40, 1.0, 1.8, 0.02, 'Frame Zoom');   // tilt-gated width fill
+    this.defineParam('frameDrop', 0.05, 0.0, 0.25, 0.01, 'Frame Drop');  // tilt-gated vertical seat
 
     // independent switchable axes (rendered as labelled button rows by ControlPanel)
     this.modeGroups = [
@@ -436,7 +439,7 @@ export class GroundPlan extends Scene {
       if (P.camPitch != null) pitchTgt = P.camPitch;
       if (P.camYaw != null) yawTgt = P.camYaw;
       this._camPitch = -pitchTgt; this._camYaw = yawTgt;
-      this._cyLift = lerp(0, this._H * FRAME_DROP, tilt);
+      this._cyLift = lerp(0, this._H * this.p('frameDrop'), tilt);
       return;
     }
 
@@ -508,7 +511,7 @@ export class GroundPlan extends Scene {
     }
     this._camPitch += (-pitchTgt - this._camPitch) * Math.min(1, dt * 3);
     this._camYaw += (yawTgt - this._camYaw) * Math.min(1, dt * 3);
-    this._cyLift = lerp(0, this._H * FRAME_DROP, tilt); // re-center the tilted city (0 at top-down)
+    this._cyLift = lerp(0, this._H * this.p('frameDrop'), tilt); // seat the tilted city (0 at top-down)
   }
 
   draw(ctx, alpha) {
@@ -1069,10 +1072,12 @@ export class GroundPlan extends Scene {
   // plot (sx=cx+u*S, sy=topY+v*S); tilting pitch yields the 3D view.
   _basis() {
     const S = this._S;
+    const tilt = smoothstep(0, 1, this._riseView);
     return {
       ccy: Math.cos(this._camYaw), scy: Math.sin(this._camYaw),
       ccp: Math.cos(this._camPitch), scp: Math.sin(this._camPitch),
       F: FOCAL * this._H, cx: this._cx, cy: this._topY + 0.5 * S + this._cyLift,
+      zoom: lerp(1, this.p('frameZoom'), tilt), // uniform width-fill scale about (cx,cy); =1 at riseView=0
     };
   }
 
@@ -1083,7 +1088,8 @@ export class GroundPlan extends Scene {
     const Y = wy * b.ccp - Z * b.scp;
     const Z2 = wy * b.scp + Z * b.ccp;
     const f = b.F / (b.F - Z2);
-    out[0] = b.cx + X * f; out[1] = b.cy + Y * f; out[2] = f;
+    const z = b.zoom || 1;
+    out[0] = b.cx + X * f * z; out[1] = b.cy + Y * f * z; out[2] = f;
   }
 
   // project a ground point at plan (u, v), height h above ground (default 0)
@@ -1116,7 +1122,8 @@ export class GroundPlan extends Scene {
     const Y = wy * b.ccp - Z * b.scp;
     const Z2 = wy * b.scp + Z * b.ccp;
     const f = b.F / (b.F - Z2);
-    this._pvx[vi] = b.cx + X * f; this._pvy[vi] = b.cy + Y * f; this._pvf[vi] = f;
+    const z = b.zoom || 1;
+    this._pvx[vi] = b.cx + X * f * z; this._pvy[vi] = b.cy + Y * f * z; this._pvf[vi] = f;
   }
 
   // stroke the visible box-face outlines (wireframe / hybrid edges), far -> near
