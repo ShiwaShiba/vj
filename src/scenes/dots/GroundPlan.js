@@ -154,6 +154,14 @@ export class GroundPlan extends Scene {
     this._fOrder = [];
     this._toneCss = new Array(NTONE);
     this._tmpRgb = [0, 0, 0];
+
+    // --- reference "scanner UI" HUD state (drawn by drawHud over the generic overlay) ---
+    this.hudOwnsCorners = true;                 // tells Overlay to suppress its generic corners
+    this._aSt = [0, 0, 0]; this._aRail = [0, 0, 0]; this._aAve = [0, 0, 0]; // projected label anchors
+    this._anchors = { station: this._aSt, rail: this._aRail, avenue: this._aAve };
+    this._hudA = { kick: 0, snare: 0, hihat: 0, bass: 0, pad: 0, pMid: 0 };  // cosmetic 5-band meters
+    this._hudL = [0, 0, 0, 0, 0, 0];            // per-layer activity (list + status dots)
+    this._hudT = 0;                             // last drawHud time (for meter dt)
   }
 
   init(ctx, w, h) {
@@ -629,6 +637,214 @@ export class GroundPlan extends Scene {
 
     this._drawMarks(ctx, A, R, b, base);
     ctx.globalAlpha = A;
+
+    // HUD anchors: project the three labelled features for the overlay's leader lines.
+    // Overwrites the shared arrays in place (no per-frame alloc). _g collapses to the flat
+    // ortho plot at riseView=0, so the leaders track correctly in both 2D and tilted views.
+    this._g(0, 0, b, this._aSt);
+    this._g(0.52, -0.053, b, this._aRail);
+    this._g(0, 0.72, b, this._aAve);
+  }
+
+  // ===== reference "scanner UI" HUD (screen-space; never touches the map raster) =====
+  // Layer 05 activity for the HUD; Phase 4 (open/green zones) overrides this getter.
+  greenActivity() { return 0; }
+
+  // Derive 5 cosmetic meters (KICK/SNARE/HI-HAT/BASS/PAD) from the existing bass/mid/treble
+  // + beat signals. HUD-only — no new DSP. Alpha smoothings tuned for ~60fps; fine cosmetically.
+  _hudBands(audio) {
+    const m = this._hudA;
+    const bh = audio.beatHold || 0, bs = audio.bass || 0, md = audio.mid || 0, tr = audio.treble || 0, lv = audio.level || 0;
+    const kt = clamp(bh * (0.4 + 0.6 * bs), 0, 1);
+    m.kick += (kt - m.kick) * (kt > m.kick ? 0.9 : 0.12);          // beat-gated bass punch
+    const snT = Math.max(0, md - m.pMid); m.pMid += (md - m.pMid) * 0.25;
+    const st = clamp(snT * 3 + md * 0.25, 0, 1);
+    m.snare += (st - m.snare) * (st > m.snare ? 0.8 : 0.15);       // mid transient
+    m.hihat += (tr - m.hihat) * 0.5;                               // trebly twitch
+    m.bass += (bs - m.bass) * 0.18;                               // slow body
+    const pt = clamp(lv * 0.8 - bh * 0.3, 0, 1);
+    m.pad += (pt - m.pad) * 0.06;                                  // ambient room tone
+    return m;
+  }
+
+  // 6 layer-activity values [railway, station, road, block, green, density], 0..1, derived
+  // from the live animation state so the indicators track the events they name.
+  _hudLayers(audio) {
+    const sc = this._trunkSched || {}, L = this._hudL;
+    const trunk = (tr) => tr ? clamp((this._front - tr.t0) / (tr.tg || 1), 0, 1) : 0;
+    const rise = this._riseView, sink = this._sinkFront, ph = this._phase;
+    L[0] = trunk(sc.rail) * (0.5 + 0.5 * (audio.treble || 0));
+    L[1] = clamp(this._front * 6, 0, 1) * (0.6 + 0.4 * (audio.beatHold || 0));
+    L[2] = Math.max(trunk(sc.fujimi), trunk(sc.asahi), trunk(sc.spine)) * (0.5 + 0.5 * (audio.mid || 0));
+    L[3] = smoothstep(0, 0.6, rise) * (0.5 + 0.5 * (audio.bass || 0));
+    L[4] = Math.max(smoothstep(0.2, 0.9, rise) * 0.8, this.greenActivity());
+    const dens = ph === PH_RISE ? rise : ph === PH_HOLD ? 1
+      : ph === PH_SINK ? clamp(1 - sink / ((this._keyMax || 1) + 0.12), 0, 1) : this._front;
+    L[5] = dens * (0.4 + 0.6 * (audio.level || 0));
+    for (let i = 0; i < 6; i++) L[i] = clamp(L[i], 0, 1);
+    return L;
+  }
+
+  _hudSeg(ctx, x, y, v, pal, N, segW, segH, gap) {
+    const lit = Math.round(clamp(v, 0, 1) * N);
+    for (let i = 0; i < N; i++) {
+      ctx.fillStyle = pal.fgCss(i < lit ? 0.82 : 0.13);
+      ctx.fillRect(x + i * (segW + gap), y, segW, segH);
+    }
+  }
+
+  _hudTc(t) {
+    const f = Math.floor((t % 1) * 30), s = Math.floor(t) % 60, mm = Math.floor(t / 60) % 60, hh = Math.floor(t / 3600);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(hh)}:${p(mm)}:${p(s)}:${p(f)}`;
+  }
+
+  // Tiny live schematic of the district (pentagon + railway + trident + station star).
+  // ~14 strokes — far cheaper than re-projecting the city; reads as the reference minimap.
+  _hudMinimap(ctx, x, y, mw, mh, pal) {
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = pal.fgCss(0.4); ctx.strokeRect(x + 0.5, y + 0.5, mw, mh);
+    const t = 6, C = [[x, y, 1, 1], [x + mw, y, -1, 1], [x, y + mh, 1, -1], [x + mw, y + mh, -1, -1]];
+    ctx.strokeStyle = pal.fgCss(0.55); ctx.beginPath();
+    for (const [px, py, sx, sy] of C) { ctx.moveTo(px, py + sy * t); ctx.lineTo(px, py); ctx.lineTo(px + sx * t, py); }
+    ctx.stroke();
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '1px';
+    ctx.font = "9px ui-monospace, Menlo, monospace"; ctx.textAlign = 'left';
+    ctx.fillStyle = pal.fgCss(0.4); ctx.fillText('WIDE AREA', x + 5, y + 12);
+    const cx = x + mw * 0.5, ay = y + mh * 0.30, ms = mh * 0.46;
+    const P = (u, v) => [cx + u * ms, ay + v * ms];
+    let p, q;
+    ctx.strokeStyle = pal.fgCss(0.3);
+    p = P(-0.945, -0.05); q = P(0.945, -0.05);
+    ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();     // railway
+    ctx.beginPath();
+    p = P(0, 0); q = P(0, 1.06); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]);        // spine
+    p = P(0, 0); q = P(-0.945, 0.738); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]);  // 富士見
+    p = P(0, 0); q = P(0.511, 0.493); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]);   // 旭
+    ctx.stroke();
+    ctx.strokeStyle = pal.fgCss(0.22); ctx.beginPath();
+    p = P(-0.945, 0.738); ctx.moveTo(p[0], p[1]);
+    q = P(-0.945, 1.0); ctx.lineTo(q[0], q[1]);
+    q = P(0.511, 1.0); ctx.lineTo(q[0], q[1]);
+    q = P(0.511, 0.493); ctx.lineTo(q[0], q[1]); ctx.stroke();                          // pentagon base
+    const st = P(0, 0);
+    ctx.strokeStyle = pal.fgCss(0.9); ctx.lineWidth = 1.1; ctx.beginPath();
+    for (let i = 0; i < 3; i++) { const a = i * Math.PI / 3; ctx.moveTo(st[0] - 4 * Math.cos(a), st[1] - 4 * Math.sin(a)); ctx.lineTo(st[0] + 4 * Math.cos(a), st[1] + 4 * Math.sin(a)); }
+    ctx.stroke();                                                                       // station star
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+    ctx.restore();
+  }
+
+  drawHud(ctx, w, h, info) {
+    const pal = info.palette, audio = info.audio, clock = info.clock;
+    this._hudT = this.t;
+    const m = this._hudBands(audio);
+    const L = this._hudLayers(audio);
+    const an = this._anchors;
+    const hasLS = 'letterSpacing' in ctx;
+    const pad = 16;
+    const NAMES = ['RAILWAY', 'STATION', 'MAIN ROAD', 'BLOCK', 'GREEN / OPEN', 'BUILDING DENSITY'];
+    const XS = "10px ui-monospace, 'SF Mono', Menlo, monospace";
+    const SM = "11px ui-monospace, 'SF Mono', Menlo, monospace";
+    const BIG = "13px ui-monospace, 'SF Mono', Menlo, monospace";
+
+    ctx.save();
+    ctx.textBaseline = 'alphabetic';
+    ctx.lineWidth = 1;
+
+    // ---- TOP-LEFT: title + layer list ----
+    const lx = pad + 62;
+    if (hasLS) ctx.letterSpacing = '2px';
+    ctx.font = BIG; ctx.textAlign = 'left'; ctx.fillStyle = pal.fgCss(0.85);
+    ctx.fillText('KUNITACHI CITY // AROUND KUNITACHI STATION', lx, 30);
+    if (hasLS) ctx.letterSpacing = '1px';
+    ctx.font = XS;
+    for (let i = 0; i < 6; i++) {
+      const y = 50 + i * 15;
+      ctx.strokeStyle = pal.fgCss(0.45); ctx.strokeRect(lx + 0.5, y - 7.5, 7, 7);
+      ctx.fillStyle = pal.fgCss(0.12 + 0.7 * L[i]); ctx.fillRect(lx + 11, y - 7.5, 7, 7);
+      ctx.fillStyle = pal.fgCss(0.5); ctx.fillText(String(i + 1).padStart(2, '0'), lx + 24, y);
+      ctx.fillStyle = pal.fgCss(0.72); ctx.fillText(NAMES[i], lx + 42, y);
+    }
+
+    // ---- TOP-RIGHT: BPM + timecode + minimap ----
+    const rx = w - pad - 6;
+    ctx.textAlign = 'right';
+    ctx.font = BIG; ctx.fillStyle = pal.fgCss(0.85);
+    ctx.fillText(`${(audio.bpm || 0).toFixed(1)} BPM`, rx, 30);
+    ctx.font = SM; ctx.fillStyle = pal.fgCss(0.45);
+    ctx.fillText(this._hudTc(clock.time), rx, 48);
+    this._hudMinimap(ctx, rx - 150, 58, 150, 104, pal);
+
+    // ---- MAP LABELS with leader lines (track projected anchors) ----
+    if (an) {
+      const label = (text, bx, by, a, accentTip) => {
+        if (hasLS) ctx.letterSpacing = '1px';
+        ctx.font = XS; ctx.textAlign = 'left';
+        const tw = ctx.measureText(text).width;
+        ctx.strokeStyle = pal.fgCss(0.4); ctx.strokeRect(bx - 4 + 0.5, by - 11 + 0.5, tw + 8, 15);
+        ctx.fillStyle = pal.fgCss(0.78); ctx.fillText(text, bx, by);
+        if (a && a[2] > 0.05 && a[0] > pad && a[0] < w - pad && a[1] > pad && a[1] < h - pad) {
+          ctx.strokeStyle = pal.fgCss(0.35);
+          ctx.beginPath(); ctx.moveTo(bx - 4, by + 4); ctx.lineTo(a[0], a[1]); ctx.stroke();
+          ctx.fillStyle = accentTip ? pal.accentCss(0.9) : pal.fgCss(0.7);
+          ctx.beginPath(); ctx.arc(a[0], a[1], 2.2, 0, TWO_PI); ctx.fill();
+        }
+      };
+      label('KUNITACHI STATION', w * 0.40, h * 0.17, an.station, true);
+      label('JR CHUO LINE', w * 0.70, h * 0.20, an.rail, false);
+      label('UNIVERSITY AVENUE', w * 0.40, h * 0.78, an.avenue, false);
+    }
+
+    // ---- BOTTOM-LEFT: AUDIO REACTIVITY + MIC ----
+    if (hasLS) ctx.letterSpacing = '2px';
+    ctx.textAlign = 'left'; ctx.font = XS; ctx.fillStyle = pal.fgCss(0.5);
+    ctx.fillText('AUDIO REACTIVITY', pad + 8, h - 96);
+    if (hasLS) ctx.letterSpacing = '1px';
+    const meters = [['KICK', m.kick], ['SNARE', m.snare], ['HI-HAT', m.hihat], ['BASS', m.bass], ['PAD / ATMOS', m.pad]];
+    for (let i = 0; i < 5; i++) {
+      const y = h - 82 + i * 13;
+      ctx.fillStyle = pal.fgCss(0.55); ctx.fillText(meters[i][0], pad + 8, y);
+      this._hudSeg(ctx, pad + 78, y - 7, meters[i][1], pal, 12, 5, 6, 2);
+    }
+    const my = h - pad - 6;
+    ctx.fillStyle = pal.fgCss(0.5); ctx.fillText(audio.ready ? 'MIC' : 'MIC OFF', pad + 8, my);
+    ctx.strokeStyle = pal.fgCss(0.3); ctx.strokeRect(pad + 44.5, my - 8.5, 90, 8);
+    ctx.fillStyle = pal.fgCss(0.8); ctx.fillRect(pad + 45, my - 8, clamp(audio.level || 0, 0, 1) * 88, 6);
+    const lmh = [['L', audio.bass], ['M', audio.mid], ['H', audio.treble]];
+    for (let i = 0; i < 3; i++) {
+      const bx = pad + 148 + i * 26;
+      ctx.fillStyle = (lmh[i][1] || 0) > 0.45 ? pal.accentCss(0.9) : pal.fgCss(0.3); ctx.fillRect(bx, my - 8, 7, 7);
+      ctx.fillStyle = pal.fgCss(0.5); ctx.fillText(lmh[i][0], bx + 10, my);
+    }
+
+    // ---- BOTTOM-RIGHT: LAYER STATUS + coordinates ----
+    const colX = w - pad - 6 - 175;
+    if (hasLS) ctx.letterSpacing = '2px';
+    ctx.textAlign = 'left'; ctx.font = XS; ctx.fillStyle = pal.fgCss(0.5);
+    ctx.fillText('LAYER STATUS', colX, h - 96);
+    if (hasLS) ctx.letterSpacing = '1px';
+    const DOTS = 9;
+    for (let i = 0; i < 6; i++) {
+      const y = h - 82 + i * 12;
+      ctx.fillStyle = pal.fgCss(0.5);
+      ctx.fillText(`${String(i + 1).padStart(2, '0')} ${NAMES[i].split(' ')[0]}`, colX, y);
+      const lit = Math.round(L[i] * DOTS), scan = Math.floor((clock.time * 6 + i) % DOTS);
+      for (let d = 0; d < DOTS; d++) {
+        let a = d < lit ? 0.8 : 0.12;
+        if (d === scan && L[i] > 0.05) a = 1.0;
+        ctx.fillStyle = pal.fgCss(a);
+        ctx.beginPath(); ctx.arc(colX + 92 + d * 7, y - 3, 1.5, 0, TWO_PI); ctx.fill();
+      }
+    }
+    ctx.textAlign = 'right'; ctx.font = SM; ctx.fillStyle = pal.fgCss(0.5);
+    ctx.fillText('35.6844° N  139.4509° E', w - pad - 6, h - pad - 18);
+    ctx.font = XS; ctx.fillStyle = pal.fgCss(0.45);
+    ctx.fillText(`${pal.name}  ${Math.round(info.fps)}FPS`, w - pad - 6, h - pad - 6);
+
+    if (hasLS) ctx.letterSpacing = '0px';
+    ctx.restore();
   }
 
   _drawMarks(ctx, A, R, b, base) {

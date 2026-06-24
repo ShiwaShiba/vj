@@ -67,12 +67,16 @@ export class Overlay {
     }
 
     if (this.hud) this._drawHud(ctx, w, h, info);
+    if (this.hud && info.scene && info.scene.drawHud) info.scene.drawHud(ctx, w, h, info);
 
     ctx.restore();
   }
 
   _drawHud(ctx, w, h, info) {
     const { palette, audio, clock, fps, sceneIndex, sceneName, sceneMode } = info;
+    // A scene with its own rich HUD (e.g. Ground Plan) owns the four corners;
+    // suppress the generic id/BPM/MIC/fps blocks so they don't double-draw.
+    const own = !!(info.scene && info.scene.hudOwnsCorners);
     const fg = rgbCss(palette.fg);
     const accent = rgbCss(palette.accent);
     const dim = rgbCss(palette.fg, 0.42);
@@ -98,41 +102,44 @@ export class Overlay {
     const sm = "11px ui-monospace, 'SF Mono', Menlo, monospace";
 
     // Top-left: scene id + name (offset past the menu handle).
-    const idx = String((sceneIndex ?? 0) + 1).padStart(2, '0');
-    ctx.font = big;
-    ctx.textAlign = 'left';
-    ctx.fillStyle = fg;
-    ctx.fillText(`${idx} ${(sceneName || '').toUpperCase()}`, 78, 34);
-    ctx.font = sm;
-    ctx.fillStyle = dim;
-    if (sceneMode) ctx.fillText(`▸ ${sceneMode.toUpperCase()}`, 78, 52);
+    if (!own) {
+      const idx = String((sceneIndex ?? 0) + 1).padStart(2, '0');
+      ctx.font = big;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = fg;
+      ctx.fillText(`${idx} ${(sceneName || '').toUpperCase()}`, 78, 34);
+      ctx.font = sm;
+      ctx.fillStyle = dim;
+      if (sceneMode) ctx.fillText(`▸ ${sceneMode.toUpperCase()}`, 78, 52);
 
-    // Top-right: BPM + timecode.
-    ctx.textAlign = 'right';
-    ctx.font = big;
-    ctx.fillStyle = fg;
-    ctx.fillText(`${(audio.bpm || 0).toFixed(1)} BPM`, w - pad - 6, 34);
-    ctx.font = sm;
-    ctx.fillStyle = dim;
-    ctx.fillText(this._tc(clock.time), w - pad - 6, 52);
+      // Top-right: BPM + timecode.
+      ctx.textAlign = 'right';
+      ctx.font = big;
+      ctx.fillStyle = fg;
+      ctx.fillText(`${(audio.bpm || 0).toFixed(1)} BPM`, w - pad - 6, 34);
+      ctx.font = sm;
+      ctx.fillStyle = dim;
+      ctx.fillText(this._tc(clock.time), w - pad - 6, 52);
+    }
 
     // Beat indicator (top center).
     const bs = 9;
     ctx.fillStyle = audio.beatHold > 0.25 ? accent : dim;
     ctx.fillRect(w / 2 - bs / 2, pad + 6, bs, bs);
 
-    // Bottom-left: level meters.
-    ctx.textAlign = 'left';
-    ctx.font = sm;
-    ctx.fillStyle = dim;
-    ctx.fillText(audio.ready ? 'MIC' : 'MIC OFF', 24, h - 26);
-    this._meter(ctx, 64, h - 34, 120, 8, audio.level, fg, dim);
-    this._bands(ctx, 200, h - 34, audio, accent, dim);
+    // Bottom-left: level meters. Bottom-right: palette + fps.
+    if (!own) {
+      ctx.textAlign = 'left';
+      ctx.font = sm;
+      ctx.fillStyle = dim;
+      ctx.fillText(audio.ready ? 'MIC' : 'MIC OFF', 24, h - 26);
+      this._meter(ctx, 64, h - 34, 120, 8, audio.level, fg, dim);
+      this._bands(ctx, 200, h - 34, audio, accent, dim);
 
-    // Bottom-right: palette + fps.
-    ctx.textAlign = 'right';
-    ctx.fillStyle = dim;
-    ctx.fillText(`${palette.name} · ${Math.round(fps)}FPS`, w - pad - 6, h - 26);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = dim;
+      ctx.fillText(`${palette.name} · ${Math.round(fps)}FPS`, w - pad - 6, h - 26);
+    }
 
     if (hasLS) ctx.letterSpacing = '0px';
   }

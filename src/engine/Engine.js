@@ -55,6 +55,7 @@ export class Engine {
       sceneIndex: active ? this.scenes.scenes.indexOf(active) : 0,
       sceneName: active ? active.name : '',
       sceneMode: active ? active.modeName() : '',
+      scene: active, // live scene instance: lets Overlay call drawHud + read projected anchors
     });
 
     // --- perf bookkeeping ---

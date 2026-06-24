@@ -27,6 +27,7 @@ export class Scene {
   onResize(w, h) { this.w = w; this.h = h; }
   update(dt, audio, palette, clock) {}
   draw(ctx, alpha) {}
+  drawHud(ctx, w, h, info) {} // optional per-scene HUD, drawn over the generic overlay HUD
   dispose() {}
 
   defineParam(key, value, min, max, step, label) {
