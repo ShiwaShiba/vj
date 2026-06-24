@@ -59,6 +59,7 @@ const K_GRID = 0, K_AVE = 1, K_SPINE = 2, K_BOUND = 3, K_RAIL = 4, K_GOUT = 5;
 const MAX_BLOCKS = 240;
 const BDV = 0.095, BDH = 0.085;          // building-block grid spacing (plan units)
 const K_INSIDE = 0, K_OUTSIDE = 1, K_LAND = 2; // block kinds: inside district / outside / landmark
+const FOCAL = 4.5;                       // camera focal length in units of H (weak perspective)
 
 export class GroundPlan extends Scene {
   constructor() {
@@ -83,6 +84,10 @@ export class GroundPlan extends Scene {
 
     this.noise = new SimplexNoise(19); // stable per-block height variation
     this._blocks = null;               // building footprints (built with the grid)
+
+    this._camYaw = 0; this._camPitch = -Math.PI / 2; // top-down until the city rises
+    this._cyLift = 0;                                 // vertical re-framing as it tilts (Task 4)
+    this._p0 = [0, 0, 0]; this._p1 = [0, 0, 0];       // projection scratch
   }
 
   init(ctx, w, h) {
@@ -268,12 +273,14 @@ export class GroundPlan extends Scene {
 
   draw(ctx, alpha) {
     const A = alpha;
-    const cx = this._cx, topY = this._topY, S = this._S, H = this._H;
+    const H = this._H;
     const q = this.clock.quality;
     const R = this._front * this._reach;          // wavefront radius (plan units)
     const aveW = this.p('avenueWidth');
     const spark = this.p('spark') > 0.5;
     const base = Math.max(0.6, H * 0.0016);       // grid line width in px
+    const b = this._basis();
+    const p0 = this._p0, p1 = this._p1;
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -285,9 +292,10 @@ export class GroundPlan extends Scene {
       if (R <= s.dA) continue;                    // wavefront hasn't reached this line
       const t = s.dB > s.dA ? clamp((R - s.dA) / (s.dB - s.dA), 0, 1) : 1;
 
-      const ax = cx + s.ax * S, ay = topY + s.ay * S;
-      const tipX = s.ax + (s.bx - s.ax) * t, tipY = s.ay + (s.by - s.ay) * t;
-      const sx = cx + tipX * S, sy = topY + tipY * S;
+      this._g(s.ax, s.ay, b, p0);                 // station-near end
+      const tipU = s.ax + (s.bx - s.ax) * t, tipV = s.ay + (s.by - s.ay) * t;
+      this._g(tipU, tipV, b, p1);                 // live tip
+      const ax = p0[0], ay = p0[1], sx = p1[0], sy = p1[1];
 
       let lw, al;
       switch (s.kind) {
@@ -308,20 +316,22 @@ export class GroundPlan extends Scene {
       }
     }
 
-    this._drawMarks(ctx, A, R, cx, topY, S, base);
+    this._drawMarks(ctx, A, R, b, base);
     ctx.globalAlpha = A;
   }
 
-  _drawMarks(ctx, A, R, cx, topY, S, base) {
+  _drawMarks(ctx, A, R, b, base) {
+    const S = this._S, p = this._p0;
     // rotary + station building fade in early (the source)
     const appear = clamp(this._front * 6, 0, 1);
     if (appear > 0.01) {
+      this._g(0, 0, b, p); // apex
       ctx.strokeStyle = this.palette.fgCss(0.85 * appear * A);
       ctx.lineWidth = Math.max(1, base * 1.4);
       ctx.beginPath();
-      ctx.arc(cx, topY, Math.max(3, 0.045 * S), 0, TWO_PI); // roundabout at the apex
+      ctx.arc(p[0], p[1], Math.max(3, 0.045 * S * p[2]), 0, TWO_PI); // roundabout at the apex
       ctx.stroke();
-      this._rect(ctx, -0.05, -0.078, 0.05, -0.018, cx, topY, S,
+      this._projRect(ctx, -0.05, -0.078, 0.05, -0.018, b,
         this.palette.fgCss(0.95 * appear * A), Math.max(1, base * 1.3));
     }
 
@@ -330,27 +340,55 @@ export class GroundPlan extends Scene {
       const near = Math.hypot(Math.min(Math.abs(c[0]), Math.abs(c[2])), c[1]);
       const f = clamp((R - near) / 0.12, 0, 1);
       if (f <= 0.01) continue;
-      this._rect(ctx, c[0], c[1], c[2], c[3], cx, topY, S,
+      this._projRect(ctx, c[0], c[1], c[2], c[3], b,
         this.palette.fgCss(0.72 * f * A), Math.max(0.8, base * 1.2));
     }
 
     // the single Ikeda-red node: the station / energizing source
+    this._g(0, 0, b, p);
     ctx.globalAlpha = clamp(appear * 1.2, 0, 1) * A;
     ctx.fillStyle = this.palette.accentCss();
     const r = Math.max(2.5, this._H * 0.011);
     ctx.beginPath();
-    ctx.moveTo(cx, topY - r); ctx.lineTo(cx + r, topY);
-    ctx.lineTo(cx, topY + r); ctx.lineTo(cx - r, topY);
+    ctx.moveTo(p[0], p[1] - r); ctx.lineTo(p[0] + r, p[1]);
+    ctx.lineTo(p[0], p[1] + r); ctx.lineTo(p[0] - r, p[1]);
     ctx.closePath(); ctx.fill();
     ctx.globalAlpha = A;
   }
 
-  // stroke a plan-space rectangle outline
-  _rect(ctx, x0, y0, x1, y1, cx, topY, S, css, lw) {
-    const a = cx + x0 * S, b = topY + y0 * S, c = cx + x1 * S, d = topY + y1 * S;
+  // camera basis. At pitch=-90°/yaw=0 the projection collapses to the ortho flat
+  // plot (sx=cx+u*S, sy=topY+v*S); tilting pitch yields the 3D view.
+  _basis() {
+    const S = this._S;
+    return {
+      ccy: Math.cos(this._camYaw), scy: Math.sin(this._camYaw),
+      ccp: Math.cos(this._camPitch), scp: Math.sin(this._camPitch),
+      F: FOCAL * this._H, cx: this._cx, cy: this._topY + 0.5 * S + this._cyLift,
+    };
+  }
+
+  // weak-perspective projection of a world point (wx, wy, wz) -> out=[sx, sy, f]
+  _project(wx, wy, wz, b, out) {
+    const X = wx * b.ccy - wz * b.scy;
+    const Z = wx * b.scy + wz * b.ccy;
+    const Y = wy * b.ccp - Z * b.scp;
+    const Z2 = wy * b.scp + Z * b.ccp;
+    const f = b.F / (b.F - Z2);
+    out[0] = b.cx + X * f; out[1] = b.cy + Y * f; out[2] = f;
+  }
+
+  // project a ground point at plan (u, v), height h above ground (default 0)
+  _g(u, v, b, out, h = 0) { this._project(u * this._S, -h, (v - 0.5) * this._S, b, out); }
+
+  // stroke a plan-space rectangle outline on the ground (projected quad)
+  _projRect(ctx, u0, v0, u1, v1, b, css, lw) {
+    const p = this._p0;
     ctx.strokeStyle = css; ctx.lineWidth = lw;
     ctx.beginPath();
-    ctx.rect(Math.min(a, c), Math.min(b, d), Math.abs(c - a), Math.abs(d - b));
-    ctx.stroke();
+    this._g(u0, v0, b, p); ctx.moveTo(p[0], p[1]);
+    this._g(u1, v0, b, p); ctx.lineTo(p[0], p[1]);
+    this._g(u1, v1, b, p); ctx.lineTo(p[0], p[1]);
+    this._g(u0, v1, b, p); ctx.lineTo(p[0], p[1]);
+    ctx.closePath(); ctx.stroke();
   }
 }
