@@ -159,6 +159,8 @@ export class GroundPlan extends Scene {
     this._fIdx = new Uint8Array(MAX_BLOCKS * FACES);
     this._fCz = new Float32Array(MAX_BLOCKS * FACES);
     this._fBucket = new Uint8Array(MAX_BLOCKS * FACES);
+    this._fDepth = new Uint8Array(MAX_BLOCKS * FACES); // per-face depth bucket (O(n) painter sort)
+    this._fDCnt = new Int32Array(257);                 // depth-bucket counts (NB=256 + 1)
     this._fOrder = [];
     this._toneCss = new Array(NTONE);
     this._tmpRgb = [0, 0, 0];
@@ -621,9 +623,7 @@ export class GroundPlan extends Scene {
       if (!wantFaces) {
         this._strokeFaces(ctx, A, fc, this.palette.fgCss());
       } else {
-        const order = this._fOrder; order.length = fc;
-        for (let i = 0; i < fc; i++) order[i] = i;
-        order.sort((p, qq) => (this._fCz[p] - this._fCz[qq]) || (p - qq)); // far -> near
+        const order = this._depthOrder(fc); // O(n) far -> near painter sort
         const pvx = this._pvx, pvy = this._pvy;
         ctx.globalAlpha = A;
         let lastB = -1;
@@ -1126,11 +1126,28 @@ export class GroundPlan extends Scene {
     this._pvx[vi] = b.cx + X * f * z; this._pvy[vi] = b.cy + Y * f * z; this._pvf[vi] = f;
   }
 
+  // O(n) far->near painter ordering of the fc collected faces by camera depth (_fCz):
+  // a counting/bucket sort replacing the O(n log n) comparison sort. Stable within a bucket
+  // (increasing original index) so it matches the old `|| (p-q)` tie-break. NB=256 buckets
+  // resolve the low-rise voxels; returns this._fOrder filled to length fc.
+  _depthOrder(fc) {
+    const order = this._fOrder; order.length = fc;
+    if (fc <= 1) { if (fc === 1) order[0] = 0; return order; }
+    const cz = this._fCz, dep = this._fDepth, cnt = this._fDCnt, NB = 256;
+    let mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < fc; i++) { const v = cz[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+    const scale = mx > mn ? (NB - 1) / (mx - mn) : 0;
+    cnt.fill(0);
+    for (let i = 0; i < fc; i++) { let b = ((cz[i] - mn) * scale) | 0; if (b < 0) b = 0; else if (b >= NB) b = NB - 1; dep[i] = b; cnt[b]++; }
+    let acc = 0;
+    for (let b = 0; b < NB; b++) { const c = cnt[b]; cnt[b] = acc; acc += c; }
+    for (let i = 0; i < fc; i++) { const b = dep[i]; order[cnt[b]++] = i; }
+    return order;
+  }
+
   // stroke the visible box-face outlines (wireframe / hybrid edges), far -> near
   _strokeFaces(ctx, A, fc, css) {
-    const order = this._fOrder; order.length = fc;
-    for (let i = 0; i < fc; i++) order[i] = i;
-    order.sort((p, q) => (this._fCz[p] - this._fCz[q]) || (p - q));
+    const order = this._depthOrder(fc);
     ctx.strokeStyle = css || this.palette.fgCss();
     const pvx = this._pvx, pvy = this._pvy, pvf = this._pvf;
     for (let oi = 0; oi < fc; oi++) {
