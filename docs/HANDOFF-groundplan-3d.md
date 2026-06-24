@@ -1,7 +1,27 @@
 # ハンドオフ — GroundPlan 3D（駅舎ほぼ完成・改善継続フェーズへ）
 
-> 更新 2026-06-24（セッション2末）。前回のA〜E修正に加え、**旧国立駅舎ランドマークの作り込み**と**キューブ密度**を実装。
+> 更新 2026-06-24（**セッション3末**）。セッション2の駅舎/キューブに加え、**動きの質感改善（波1+波2）**を実装・検証済（全commit済・未push）。
 > このファイル + memory（`groundplan-flat-redirect.md`）+ git だけで再開できるように書いてある。
+
+## ★ セッション3（動きの質感改善）— DONE・未配信
+
+全て `GroundPlan.js`、**commit済（push無し、SWは vj-v14 のまま）**。freeze-frame + 数値 + スクショで検証済。
+
+| commit | 内容 |
+|---|---|
+| `79c2942` | チェックポイント（セッション2の未コミット成果を保全） |
+| `3504968` | **波1**: #1 リフレーミング / #3 カメラ / #4 量塊 / #6 背骨トリム |
+| `9f25fa8` | **#2** 一橋を低い開放プレート化（`_drawCampus`） |
+| `0185cbb` | **#5** SINK崩落波（far→near、駅舎が最後） |
+
+- **#1 リフレーミング**: `_cyLift = lerp(0, H*FRAME_DROP(0.20), tilt)`。傾き時に街を縦中央へ。`tilt`ゲートで真俯瞰(riseView=0)は不変。
+- **#3 カメラ**: `LIVE_VANTAGES` 4視点を別構図に + `HOLD_SECTIONS=4` + HOLD中 `yawTgt += 0.03*sin(t*0.25)` 微ドリフト。
+- **#4 量塊**: 多オクターブ `nMix=clamp(0.55n+0.55n2²,0,1)` でレアな高層クラスタ + `spineBoost=1+0.8*smoothstep(0.18,0,|cu|)` 背骨稜線。実測 中央値8px/p99 23px/背骨14.2 vs 外周6.3/最大は駅舎の0.5倍（墓標なし）。
+- **#6 背骨**: 大学通り南端 1.15→1.06（下フレームの尾引き除去）。※真俯瞰の背骨尾が僅かに短くなる（構造は不変）。
+- **#2 キャンパス**: 新 `_drawCampus`。`H*0.008*local`(=6.1px≒街平均0.65倍)の低プレート+明縁取り、中間グレー。cubeループ先頭に `K_LAND skip`。`front3d>0.001`ゲートで俯瞰不可視。`_drawStation`不変。
+- **#5 SINK**: 新 `_sinkFront`(0→`_keyMax`+SINK_W)。`_keyMax`(最遠ブロック, _buildBlocksで算出)で波を正規化。PH_SINK時のみ各localに `stand` 乗算で far→near 崩落、駅舎(key≈0)が最後。波の間tilt保持→抜けたらde-tilt+recede→再ENERGIZE。
+- **perf**: dev Mac headless で District/Hybrid ~49fps(11.3ms) / City/Hybrid ~41fps / quality=1。**実機iPad計測は未（ユーザーのデバイス必須）**＝§6参照。
+- 新定数/状態: `FRAME_DROP, SINK_W, _sinkFront, _keyMax, _cSX/_cSY`。新メソッド `_drawCampus`。
 
 ---
 
@@ -17,14 +37,12 @@
 | | コミット | SW | 内容 | 公開 |
 |---|---|---|---|---|
 | **本番 origin/main** | `f2a37e5` | `vj-v14` | **2D平面地図のみ** | ✅ https://shiwashiba.github.io/vj/ |
-| **ローカル main HEAD** | `be58b8b` | `vj-v14` | 2D + 3D立体化（**A〜E修正前**の旧3D） | ❌ 未push |
-| **作業ツリー（未コミット）** | — | — | **A〜E修正 + 駅舎 + キューブ密度（このセッション全部）** | ❌ 未コミット |
+| **ローカル main HEAD** | `0185cbb` | `vj-v14` | 2D + 3D（A〜E + 駅舎 + キューブ密度 + **波1/波2 動き改善**）全commit済 | ❌ 未push |
 
 ### 🚨 絶対に守る
-- **このセッションの成果（+232/−27行）は `GroundPlan.js` の未コミット作業ツリーにある。**
-- **`git checkout … -- src/scenes/dots/GroundPlan.js` を絶対に実行しない**（成果が消える）。旧版の復旧コマンドは封印。
-- **再開したらまず `git diff` で内容確認 → チェックポイントcommitを推奨**（push はしない）。
-- `docs/HANDOFF-groundplan-3d.md`（このファイル）も untracked。
+- **セッション2+3の成果は全て commit 済**（`79c2942`→`0185cbb`、上記★表）。**まだ push していない**（SW `vj-v14` のまま）。
+- **`git checkout … -- src/scenes/dots/GroundPlan.js` を実行しない**（履歴は safe だが習慣として封印）。
+- 配信はユーザー承認後のみ（下記手順、SW bump + push）。
 
 ### 配信手順（ユーザー承認後のみ・勝手にpushしない）
 1. 作業ツリーを commit（複数commitに分けてもよい）。
@@ -104,13 +122,14 @@
 
 ---
 
-## 6. 次の改善候補（新鮮な脳向け・未着手）
+## 6. 次の改善候補
 
-ユーザーは「全体の質感改善」を新鮮な脳でやりたい意向。駅舎は触らなくてよい（ほぼ完成）。候補：
-- **動き/カメラの質感**：Live walker の振り幅/速度、Tilt、HOLD/SINKテンポ（`SEC_BEATS=32`/`HOLD_SECTIONS=2`）の「丁寧で必然的」化。
-- **キューブ**：段差/高さ分布、通電→起き上がりの連動演出、間引きの自然さ。
-- **駅舎の最終調整候補**（必要なら）：段差/谷をより明確に、ドーマー拡大、左別棟の浴場窓追加。※ユーザーは「ほぼ完成」なので**触るなら最小限・要確認**。
-- **実機パフォーマンス**：interior ~1300 cube は iPad で要計測（未検証）。重ければ `cap=MAX_BLOCKS*q` の q-shed が効くが、`MAX_BLOCKS`/`BLOCK_CELLS` 調整も。
+**セッション3で対応済（★参照）**：動き/カメラ質感(#1#3)、キューブ段差/起き上がり(#4)、SINKテンポ(#5)、キャンパス(#2)、背骨(#6)。
+
+**残・次セッション向け**：
+- **★実機iPad perf計測（最優先・未完）**：dev Mac headless は District ~49fps / City ~41fps（quality=1）だが iPad未計測。手順=Mac IP:8125 を iPad Safari で開く（同一LAN）→ §2スニペットでSWキャッシュ解除 → Ground Plan, **scope=City + style=Hybrid**（最悪）→ Web Inspector で RISE→HOLD→SINK 10秒録画、最低FPSと律速フェーズ。**目標 持続≥30fps**。下回れば ①`clock.quality`下げてq-shedが効くか確認 ②`order.sort` を深度バケットソート(O(n))化 ③`MAX_BLOCKS` 1300→1100。
+- **ライブ・チューニング候補（数値のみ・実機で）**：`FRAME_DROP`(0.16–0.24)、`LIVE_VANTAGES` の pitch/yaw、微ドリフト振幅(0.03)、`SINK_RATE`(崩落の速さ)、キャンパス高さ(`H*0.008`)、`spineBoost`(0.8)。
+- **駅舎の最終調整候補**（必要なら・**触るなら最小限・要確認**）：段差/谷を明確化、ドーマー拡大、左別棟の浴場窓追加。
 - **minimal-techno 維持**：新規の色/グロー禁止、赤は駅ノード+tipのみ、モノクロ厳守 [[aesthetic-minimal-techno]]。
 
 ---
