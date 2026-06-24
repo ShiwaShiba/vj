@@ -525,11 +525,13 @@ export class GroundPlan extends Scene {
       for (let i = 0; i < NTONE; i++) this._toneCss[i] = rgbCss(lerpRgb(bg, fg, i / (NTONE - 1), tmp));
       // hero landmark: the旧国立駅舎 (gabled), at 大学通り's origin — drawn first (sits at the back)
       this._drawStation(ctx, b, A, clamp(smoothstep(0, 0.16, front3d), 0, 1), lightP, wantFaces, style);
+      this._drawCampus(ctx, b, A, front3d, lightP, wantFaces); // 一橋: low open plates, not towers
       const ccy = b.ccy, scy = b.scy, ccp = b.ccp, scp = b.scp, F = b.F;
       const cap = Math.round(MAX_BLOCKS * clamp(q, 0.5, 1)); // shed far blocks under load
       let bi = 0, fc = 0;
       for (let k = 0; k < this._blocks.length && bi < cap; k++) {
         const blk = this._blocks[k];
+        if (blk.kind === K_LAND) continue;                   // 一橋 campuses drawn as open plates (_drawCampus)
         if (scope === 2 && blk.kind !== K_LAND) continue;    // Landmark: only landmarks rise
         if (scope === 0 && blk.kind === K_OUTSIDE && blk.rnd > OUT_SPARSE) continue; // District: sparse outside
         const local = smoothstep(blk.key, blk.key + 0.10, front3d);
@@ -740,6 +742,66 @@ export class GroundPlan extends Scene {
       ctx.beginPath();
       for (let a = 0; a <= 10; a++) { const th = Math.PI * (a / 10); const pp = slopePt(du + dr * Math.cos(th), dt0 + dt * Math.sin(th)); if (a === 0) ctx.moveTo(pp[0], pp[1]); else ctx.lineTo(pp[0], pp[1]); }
       ctx.stroke();
+    }
+    ctx.globalAlpha = A;
+  }
+
+  // The 一橋大学 super-blocks as LOW OPEN PLATES (not towers): a large flat raised
+  // platform with a bright perimeter curb, in mid-gray. Reads as open campus ground —
+  // distinct from the dense cube field, never competing with the hero station. Gated by
+  // front3d (0 at top-down → invisible there; the flat map uses _drawMarks outlines).
+  _drawCampus(ctx, b, A, front3d, lightP, wantFaces) {
+    const S = this._S, H = this._H, out = this._p1;
+    const SX = this._cSX || (this._cSX = []), SY = this._cSY || (this._cSY = []);
+    for (let k = 0; k < this._blocks.length; k++) {
+      const blk = this._blocks[k];
+      if (blk.kind !== K_LAND) continue;
+      const local = smoothstep(blk.key, blk.key + 0.14, front3d);
+      if (local <= 0.001) continue;
+      const h = H * 0.008 * local;                  // low plate — well below the cube field
+      const x0 = blk.uMin * S, x1 = blk.uMax * S;
+      const z0 = (blk.vMin - 0.5) * S, z1 = (blk.vMax - 0.5) * S;
+      const V = [[x0, 0, z0], [x1, 0, z0], [x1, -h, z0], [x0, -h, z0],
+                 [x0, 0, z1], [x1, 0, z1], [x1, -h, z1], [x0, -h, z1]];
+      for (let i = 0; i < 8; i++) { this._project(V[i][0], V[i][1], V[i][2], b, out); SX[i] = out[0]; SY[i] = out[1]; }
+      const recs = [];
+      for (let f = 0; f < FACES; f++) {
+        const n = BOX_F[f].n, id = BOX_F[f].idx;
+        const camNz = n[1] * b.scp + (n[0] * b.scy + n[2] * b.ccy) * b.ccp;
+        if (camNz <= 0) continue;                   // backface cull
+        let cz = 0;
+        for (const vi of id) cz += V[vi][1] * b.scp + (V[vi][0] * b.scy + V[vi][2] * b.ccy) * b.ccp;
+        cz /= id.length;
+        let bucket = 0;
+        if (wantFaces) {
+          const ndl = Math.max(0, n[0] * LNX + n[1] * LNY + n[2] * LNZ);
+          let shadeT = 0.26 + 0.32 * ndl * (0.5 + 0.5 * lightP); // mid-gray, capped (not a bright tower)
+          shadeT = clamp(shadeT + (f === 0 ? 0.05 : 0), 0, 0.55);
+          bucket = Math.round(shadeT * (NTONE - 1));
+        }
+        recs.push({ id, cz, bucket });
+      }
+      recs.sort((p, q) => p.cz - q.cz);             // far -> near
+      ctx.globalAlpha = A;
+      if (wantFaces) {
+        for (const r of recs) {
+          ctx.fillStyle = this._toneCss[r.bucket];
+          ctx.beginPath(); ctx.moveTo(SX[r.id[0]], SY[r.id[0]]);
+          for (let j = 1; j < r.id.length; j++) ctx.lineTo(SX[r.id[j]], SY[r.id[j]]);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.strokeStyle = this.palette.fgCss(0.8 * A); ctx.lineWidth = Math.max(0.8, 1.2);
+        ctx.beginPath(); ctx.moveTo(SX[3], SY[3]);  // bright curb on the top rim (verts 3,2,6,7)
+        ctx.lineTo(SX[2], SY[2]); ctx.lineTo(SX[6], SY[6]); ctx.lineTo(SX[7], SY[7]);
+        ctx.closePath(); ctx.stroke();
+      } else {                                       // wire: outline every visible face
+        ctx.strokeStyle = this.palette.fgCss(0.85 * A); ctx.lineWidth = Math.max(0.7, 1.0);
+        for (const r of recs) {
+          ctx.beginPath(); ctx.moveTo(SX[r.id[0]], SY[r.id[0]]);
+          for (let j = 1; j < r.id.length; j++) ctx.lineTo(SX[r.id[j]], SY[r.id[j]]);
+          ctx.closePath(); ctx.stroke();
+        }
+      }
     }
     ctx.globalAlpha = A;
   }
