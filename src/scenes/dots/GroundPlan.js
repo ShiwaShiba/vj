@@ -56,15 +56,24 @@ const K_GRID = 0, K_AVE = 1, K_SPINE = 2, K_BOUND = 3, K_RAIL = 4, K_GOUT = 5;
 
 // Building footprints (3D phase). Blocks use a COARSER grid than the streets so
 // they read as city blocks, independent of the street-density slider.
-const MAX_BLOCKS = 240;
-const BDV = 0.095, BDH = 0.085;          // building-block grid spacing (plan units)
+const MAX_BLOCKS = 1300;
+const BLOCK_CELLS = 1.6;                  // a city block spans this many street-grid cells (Fix C)
+const CUBE_FILL_IN = 0.82;                // inside the district: cubes nearly fill cells (びっしり)
+const CUBE_FILL_OUT = 0.55;               // outside the district: smaller, scattered
+const OUT_SPARSE = 0.32;                  // District scope: fraction of outside cells that rise
+const JIT_POS = 0.07;                     // per-cell position jitter — breaks the CG-perfect grid
 const K_INSIDE = 0, K_OUTSIDE = 1, K_LAND = 2; // block kinds: inside district / outside / landmark
 const FOCAL = 4.5;                       // camera focal length in units of H (weak perspective)
 
 // Phase loop: ENERGIZE (flat circuit) -> RISE (city extrudes) -> HOLD -> SINK -> RISE…
 const PH_ENERGIZE = 0, PH_RISE = 1, PH_HOLD = 2, PH_SINK = 3;
 const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 2;
-const SINK_RATE = 0.26;                  // teardown speed (audio-independent, can't stall)
+const SINK_RATE = 0.26;                  // teardown ease rate (audio-independent, can't stall)
+const RETRACT_RATE = 0.5;                // SINK: speed the lit circuit recedes after buildings drop
+// Branching-energize schedule (Fix A): trunks grow first with staggered starts; the
+// street grid branches off its parent trunk after the trunk has passed its attach point.
+const TRUNK_SPAN = 0.55;                 // front-space a full-length trunk takes to grow
+const BRANCH_DELAY = 0.015;              // gap after a parent passes before its child starts
 
 // 3D box faces + monochrome shading (reused from the 3D checkpoint / FallingCubes).
 const NTONE = 16, FACES = 5;             // grayscale buckets; faces per block (top + 4 walls)
@@ -94,7 +103,7 @@ export class GroundPlan extends Scene {
 
     this.defineParam('buildSpeed', 0.14, 0.04, 0.5, 0.02, 'Build Speed');
     this.defineParam('riseSpeed', 0.16, 0.04, 0.5, 0.02, 'Rise Speed');
-    this.defineParam('density', 1.2, 0.4, 2.0, 0.05, 'Grid (fine↔coarse)');
+    this.defineParam('density', 2.0, 0.4, 2.0, 0.05, 'Grid (fine↔coarse)');
     this.defineParam('avenueWidth', 3.0, 1.5, 5.0, 0.1, '大学通り Width');
     this.defineParam('spark', 1, 0, 1, 1, 'Spark');
     this.defineParam('trail', 0.85, 0.3, 1.0, 0.05, 'Trail');
@@ -183,7 +192,8 @@ export class GroundPlan extends Scene {
     };
 
     // 中央線 railway: double E-W line through the station, split at the spine.
-    const railHalf = 0.50;
+    // Half-length matches 富士見's terminus extent so the line is as long (Fix D).
+    const railHalf = SH_L;
     for (const ry of [-0.045, -0.062]) {
       add(0, ry, -railHalf, ry, K_RAIL);
       add(0, ry, railHalf, ry, K_RAIL);
@@ -193,6 +203,16 @@ export class GroundPlan extends Scene {
     add(0, 0, 0, 1.15, K_SPINE);                 // 大学通り (pierces south)
     add(0, 0, -SH_L, SH_L_Y, K_AVE);             // 富士見通り (long, wide)
     add(0, 0, SH_R, SH_R_Y, K_AVE);              // 旭通り     (short)
+
+    // Per-trunk growth schedule for the branching energize (Fix A). Lengths from
+    // constants; staggered t0 = time-offset starts, tg ∝ length = equal spatial speed.
+    const lenFujimi = Math.hypot(SH_L, SH_L_Y), lenAsahi = Math.hypot(SH_R, SH_R_Y);
+    this._trunkSched = {
+      spine:  { t0: 0.00, tg: TRUNK_SPAN, len: 1.15 },
+      rail:   { t0: 0.02, tg: TRUNK_SPAN * 0.7 * (railHalf / lenFujimi), len: railHalf },
+      fujimi: { t0: 0.05, tg: TRUNK_SPAN, len: lenFujimi },
+      asahi:  { t0: 0.09, tg: TRUNK_SPAN * (lenAsahi / lenFujimi), len: lenAsahi },
+    };
 
     // Pentagon boundary (the avenues themselves are the two diagonal upper edges).
     add(-SH_L, SH_L_Y, -SH_L, SOUTH, K_BOUND);   // west vertical side
@@ -211,7 +231,56 @@ export class GroundPlan extends Scene {
     this._gridK = k;
 
     this._seg = seg;
+    this._schedule();
     this._buildBlocks();
+  }
+
+  // Assign each segment a front-space growth schedule {t0, tg} so the energize grows
+  // by BRANCHING — trunks first (staggered), then grid streets branch off their parent
+  // trunk after it passes — instead of a circular wavefront (Fix A). draw() compares
+  // this._front to s.t0 rather than clipping by radius.
+  _schedule() {
+    const sc = this._trunkSched;
+    const fEnd = sc.fujimi.t0 + sc.fujimi.tg, aEnd = sc.asahi.t0 + sc.asahi.tg;
+    const goutBase = fEnd + 0.04, GOUT_SPAN = 0.30;
+    for (let i = 0; i < this._seg.length; i++) {
+      const s = this._seg[i];
+      switch (s.kind) {
+        case K_SPINE: s.t0 = sc.spine.t0; s.tg = sc.spine.tg; break;
+        case K_RAIL:  s.t0 = sc.rail.t0;  s.tg = sc.rail.tg;  break;
+        case K_AVE: {
+          const tr = (s.ax < 0 || s.bx < 0) ? sc.fujimi : sc.asahi;
+          s.t0 = tr.t0; s.tg = tr.tg; break;
+        }
+        case K_BOUND: {
+          let cT;                                                   // key off geometry, not a-order
+          if (Math.abs(s.ax) >= SH_L - 0.01) cT = fEnd;            // west vertical side
+          else if (Math.abs(s.ax) >= SH_R - 0.01 && Math.abs(s.ay - SOUTH) > 0.2) cT = aEnd; // east side
+          else cT = Math.max(fEnd, aEnd);                          // south base
+          s.t0 = cT + BRANCH_DELAY; s.tg = TRUNK_SPAN * 0.5; break;
+        }
+        case K_GOUT: {                                             // dim outer mesh: fill from the
+          const ex = Math.max(0, Math.abs(s.ax) - SH_L);          // district envelope OUTWARD so no
+          const ey = Math.max(0, s.ay - SOUTH) + Math.max(0, -s.ay); // circle re-forms (alpha 0.20)
+          const outward = clamp((ex + ey) / EXT_X, 0, 1);
+          const hsh = Math.sin(s.ax * 12.9898 + s.ay * 78.233) * 43758.5453;
+          const j = (hsh - Math.floor(hsh)) - 0.5;                 // -0.5..0.5 de-circling jitter
+          s.t0 = goutBase + outward * GOUT_SPAN + j * 0.06; s.tg = TRUNK_SPAN * 0.7; break;
+        }
+        default: {                                                // K_GRID
+          if (s.ax === s.bx) {                                    // vertical column → branch off avenue
+            const ave = s.ax < 0 ? sc.fujimi : sc.asahi;
+            const connDist = Math.hypot(s.ax, s.ay);
+            const connectT = ave.t0 + (Math.min(connDist, ave.len) / ave.len) * ave.tg;
+            s.t0 = connectT + BRANCH_DELAY; s.tg = TRUNK_SPAN * 0.6;
+          } else {                                                // horizontal row → branch off spine,
+            const py = s.ay;                                      // keyed by spine depth (py) so both
+            const connectT = sc.spine.t0 + (clamp(py, 0, sc.spine.len) / sc.spine.len) * sc.spine.tg;
+            s.t0 = connectT + BRANCH_DELAY; s.tg = TRUNK_SPAN * 0.6; // campus-split halves share it
+          }
+        }
+      }
+    }
   }
 
   // Building footprints derived from the frozen flat geometry: the station tower +
@@ -220,28 +289,42 @@ export class GroundPlan extends Scene {
   _buildBlocks() {
     const blocks = [];
     const reach = this._reach || 1.4;
+    // building blocks track the street grid: finer grid → smaller blocks (Fix C).
+    const k = this.p('density');
+    const bdv = (DV_BASE / k) * BLOCK_CELLS, bdh = (DH_BASE / k) * BLOCK_CELLS;
+    this._cellScale = clamp(Math.min(bdv, bdh) / 0.085, 0.4, 1.2); // non-landmark height shrinks too
     const distKey = (u, v) => clamp(Math.hypot(u, v) / reach, 0, 1);
     const inPent = (u, v) => v >= 0 && v <= SOUTH && u > this._xLb(v) && u < this._xRb(v);
     const inCamp = (u, v) => this._campus.some((c) => u > c[0] && u < c[2] && v > c[1] && v < c[3]);
 
-    blocks.push({ uMin: -0.05, uMax: 0.05, vMin: -0.06, vMax: 0.04, hNorm: 1.4, key: 0.02, kind: K_LAND }); // 駅舎タワー
+    // (the station itself is the旧駅舎, drawn as a custom gabled landmark in _drawStation)
     for (const c of this._campus) {
       blocks.push({ uMin: c[0], uMax: c[2], vMin: c[1], vMax: c[3], hNorm: 0.5,
         key: distKey((c[0] + c[2]) / 2, (c[1] + c[3]) / 2), kind: K_LAND }); // 一橋 西/東
     }
 
-    const inset = Math.min(BDV, BDH) * 0.18;
-    for (let v = 0.08; v < EXT_S - BDH; v += BDH) {
-      for (let u = -EXT_X + BDV; u < EXT_X; u += BDV) {
-        const cu = u + BDV / 2, cv = v + BDH / 2;
+    const inset = Math.min(bdv, bdh) * 0.18;
+    for (let v = 0.08; v < EXT_S - bdh; v += bdh) {
+      for (let u = -EXT_X + bdv; u < EXT_X; u += bdv) {
+        const cu = u + bdv / 2, cv = v + bdh / 2;
         if (Math.abs(cu) < CL) continue;              // spine corridor kept clear
         if (inCamp(cu, cv)) continue;                 // campuses are explicit landmarks
         const inside = inPent(cu, cv);
         const n = this.noise.noise2D(cu * 3.1, cv * 3.1) * 0.5 + 0.5; // 0..1 stable
         const spineBoost = 1 + 0.5 * smoothstep(0.5, 0.0, Math.abs(cu)); // taller near 大学通り
-        const hNorm = (inside ? 0.35 + 0.6 * n : 0.18 + 0.25 * n) * spineBoost;
-        blocks.push({ uMin: u + inset, uMax: u + BDV - inset, vMin: v + inset, vMax: v + BDH - inset,
-          hNorm, key: distKey(cu, cv), kind: inside ? K_INSIDE : K_OUTSIDE });
+        // anti-"cheap": shrink (~60% smaller) + jitter size/position to break the perfect grid
+        const jx = this.noise.noise2D(cu * 7.7 + 3, cv * 7.7 + 3) * bdv * JIT_POS;
+        const jy = this.noise.noise2D(cu * 7.7 + 9, cv * 7.7 + 9) * bdh * JIT_POS;
+        const sj = 0.86 + 0.28 * (this.noise.noise2D(cu * 5.3 + 1, cv * 5.3 + 1) * 0.5 + 0.5);
+        const fill = inside ? CUBE_FILL_IN : CUBE_FILL_OUT;
+        const halfU = (bdv * 0.5 - inset) * fill * sj;
+        const halfV = (bdh * 0.5 - inset) * fill * sj;
+        const ox = cu + jx, oy = cv + jy;
+        // keep cubes LOW so a dense field reads as a low-rise city, not tall gravestones
+        const hNorm = (inside ? 0.12 + 0.30 * n : 0.09 + 0.16 * n) * spineBoost;
+        const rnd = this.noise.noise2D(cu * 11.3 + 21, cv * 11.3 + 21) * 0.5 + 0.5; // sparse-outside roll
+        blocks.push({ uMin: ox - halfU, uMax: ox + halfU, vMin: oy - halfV, vMax: oy + halfV,
+          hNorm, key: distKey(ox, oy), kind: inside ? K_INSIDE : K_OUTSIDE, rnd });
       }
     }
     const land = blocks.filter((b) => b.kind === K_LAND);
@@ -319,16 +402,17 @@ export class GroundPlan extends Scene {
     const surge = audio.level - this._energy;
     const drive = clamp(audio.level * 0.7 + Math.max(0, surge) * 1.6 + audio.bass * 0.5, 0, 1.5);
 
-    // monotonic — current only ever flows further out, then holds at full
-    this._front = clamp(this._front + dt * this.p('buildSpeed') * Math.max(STALL, drive), 0, 1);
-
-    // phase loop: energize -> rise -> hold -> sink -> rise…
+    // phase loop: energize (branch-grow the circuit) -> rise (city) -> hold -> sink -> energize…
+    // The branching energize replays every loop: SINK recedes the circuit, then it re-grows.
     const beatsF = clock.beats + clock.beatPhase;
+    const fStep = dt * this.p('buildSpeed') * Math.max(STALL, drive);
     switch (this._phase) {
       case PH_ENERGIZE:
+        this._front = clamp(this._front + fStep, 0, 1); // branching grows outward with energy
         if (this._front >= 1) this._phase = PH_RISE;
         break;
       case PH_RISE:
+        this._front = 1;                                // circuit fully lit while the city rises
         this._rise = clamp(this._rise + dt * this.p('riseSpeed') * Math.max(STALL, drive), 0, 1);
         if (this._rise >= 1) {
           this._phase = PH_HOLD; this._secStart = beatsF; this._holdN = 0;
@@ -343,8 +427,11 @@ export class GroundPlan extends Scene {
         }
         break;
       case PH_SINK:
-        this._rise -= dt * SINK_RATE;
-        if (this._rise <= 0) { this._rise = 0; this._phase = PH_RISE; } // map stays energized; city rebuilds
+        this._rise += (0 - this._rise) * Math.min(1, dt * SINK_RATE * 4); // eased building teardown
+        if (this._rise < 0.5) this._front = Math.max(0, this._front - dt * RETRACT_RATE); // recede circuit
+        if (this._rise <= 0.004 && this._front <= 0.004) {
+          this._rise = 0; this._front = 0; this._phase = PH_ENERGIZE;     // re-energize: branch-grow again
+        }
         break;
     }
     this._riseView += (this._rise - this._riseView) * Math.min(1, dt * 4); // anti-pop
@@ -390,8 +477,9 @@ export class GroundPlan extends Scene {
     for (let i = 0; i < this._seg.length; i++) {
       const s = this._seg[i];
       if ((s.kind === K_GRID || s.kind === K_GOUT) && q < 0.7 && (i & 1)) continue; // shed under load
-      if (R <= s.dA) continue;                    // wavefront hasn't reached this line
-      const t = s.dB > s.dA ? clamp((R - s.dA) / (s.dB - s.dA), 0, 1) : 1;
+      if (this._front <= s.t0) continue;          // branching front hasn't reached this segment yet
+      const raw = s.tg > 0 ? clamp((this._front - s.t0) / s.tg, 0, 1) : 1;
+      const t = smoothstep(0, 1, raw);            // eased tip (kills the cheap linear crawl)
 
       this._g(s.ax, s.ay, b, p0);                 // station-near end
       const tipU = s.ax + (s.bx - s.ax) * t, tipV = s.ay + (s.by - s.ay) * t;
@@ -424,22 +512,25 @@ export class GroundPlan extends Scene {
       const style = this.mg('style'), scope = this.mg('scope'), height = this.mg('height');
       const wantFaces = style !== 1;        // Wire = stroke only, no fills
       const lightP = this.p('light');
-      const hScale = H * 0.105;
+      const hScaleLand = H * 0.105;                          // landmarks keep full height
+      const hScaleCity = H * 0.105 * (this._cellScale || 1); // non-landmarks shrink with the grid (Fix C)
       const bg = this.palette.bg, fg = this.palette.fg, tmp = this._tmpRgb;
       for (let i = 0; i < NTONE; i++) this._toneCss[i] = rgbCss(lerpRgb(bg, fg, i / (NTONE - 1), tmp));
+      // hero landmark: the旧国立駅舎 (gabled), at 大学通り's origin — drawn first (sits at the back)
+      this._drawStation(ctx, b, A, clamp(smoothstep(0, 0.16, front3d), 0, 1), lightP, wantFaces, style);
       const ccy = b.ccy, scy = b.scy, ccp = b.ccp, scp = b.scp, F = b.F;
       const cap = Math.round(MAX_BLOCKS * clamp(q, 0.5, 1)); // shed far blocks under load
       let bi = 0, fc = 0;
       for (let k = 0; k < this._blocks.length && bi < cap; k++) {
         const blk = this._blocks[k];
-        if (scope === 0 && blk.kind === K_OUTSIDE) continue; // District: outside stays flat ground
         if (scope === 2 && blk.kind !== K_LAND) continue;    // Landmark: only landmarks rise
+        if (scope === 0 && blk.kind === K_OUTSIDE && blk.rnd > OUT_SPARSE) continue; // District: sparse outside
         const local = smoothstep(blk.key, blk.key + 0.14, front3d);
         if (local <= 0.001) continue;
         let hN = blk.hNorm;
         if (height === 1) hN = (blk.kind === K_LAND ? blk.hNorm : 0.6);           // Even
         else if (height === 2) hN = blk.hNorm * (0.4 + 1.4 * this._bandFor(blk)); // Pulse
-        const h = hN * hScale * local;
+        const h = hN * (blk.kind === K_LAND ? hScaleLand : hScaleCity) * local;
         if (h < 0.5) continue;
         const x0 = blk.uMin * S, x1 = blk.uMax * S;
         const z0 = (blk.vMin - 0.5) * S, z1 = (blk.vMax - 0.5) * S;
@@ -511,10 +602,11 @@ export class GroundPlan extends Scene {
         this.palette.fgCss(0.95 * appear * A), Math.max(1, base * 1.3));
     }
 
-    // 一橋大学 super-blocks appear as the wavefront sweeps over them
+    // 一橋大学 super-blocks appear as their parent avenue's branch reaches them
     for (const c of this._campus) {
-      const near = Math.hypot(Math.min(Math.abs(c[0]), Math.abs(c[2])), c[1]);
-      const f = clamp((R - near) / 0.12, 0, 1);
+      const ave = ((c[0] + c[2]) / 2 < 0) ? this._trunkSched.fujimi : this._trunkSched.asahi;
+      const arriveT = ave.t0 + (c[1] / ave.len) * ave.tg;
+      const f = clamp((this._front - arriveT) / 0.10, 0, 1);
       if (f <= 0.01) continue;
       this._projRect(ctx, c[0], c[1], c[2], c[3], b,
         this.palette.fgCss(0.72 * f * A), Math.max(0.8, base * 1.2));
@@ -529,6 +621,119 @@ export class GroundPlan extends Scene {
     ctx.moveTo(p[0], p[1] - r); ctx.lineTo(p[0] + r, p[1]);
     ctx.lineTo(p[0], p[1] + r); ctx.lineTo(p[0] - r, p[1]);
     ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = A;
+  }
+
+  // The 旧国立駅舎 (1926) as the hero landmark at 大学通り's origin: a LOW building
+  // whose identity is the steep, asymmetric red gable roof. Monochrome here, so it
+  // reads by silhouette — a tall main gable (faces south, toward 大学通り) with an
+  // off-centre ridge + a distinctly LOWER east wing (the unequal-length roof).
+  // Custom mesh (not a box); projected/shaded/sorted like the city, drawn at the back.
+  _drawStation(ctx, b, A, local, lightP, wantFaces, style) {
+    if (local <= 0.001) return;
+    const S = this._S, hsc = S * 0.175 * local; // == _H*0.105 at natural layout (_S=_H*0.6)
+    // main hall (steep, roof-dominant, ridge biased west) + lower east wing.
+    // Built to measured ratios of the reference: main gable depth:width ≈ 1.7 (long edge =
+    // the ridge running back, like 富士見:旭), pitch ~51°, low walls, faces south. The 小屋
+    // sits on the LEFT (west); its ridge runs E-W, so from the front it reads as a flat
+    // sloped plane (a triangle only in side view). Plus a low platform canopy skirt.
+    const uW = -0.060, uE = 0.060, vS = 0.065, vN = -0.037, hW = 0.26, hR = 0.683;        // MAIN gable (~51°, depth halved)
+    const wuW = -0.140, wuE = -0.050, wvS = 0.058, wvN = -0.026, wRv = 0.016, whW = 0.17, whR = 0.40; // LEFT low gable (E-W ridge, lower, inserts into main → step+valley)
+    const cuW = -0.062, cuE = 0.062, cvN = 0.065, cvS = 0.118, cb = 0.12, ct = 0.175;     // canopy
+    const V = [
+      [uW, vS, 0], [uE, vS, 0], [uE, vN, 0], [uW, vN, 0],
+      [uW, vS, hW], [uE, vS, hW], [uE, vN, hW], [uW, vN, hW], [0, vS, hR], [0, vN, hR],
+      [wuW, wvS, 0], [wuE, wvS, 0], [wuE, wvN, 0], [wuW, wvN, 0],
+      [wuW, wvS, whW], [wuE, wvS, whW], [wuE, wvN, whW], [wuW, wvN, whW], [wuW, wRv, whR], [wuE, wRv, whR],
+      [cuW, cvS, cb], [cuE, cvS, cb], [cuE, cvN, cb], [cuW, cvN, cb],
+      [cuW, cvS, ct], [cuE, cvS, ct], [cuE, cvN, ct], [cuW, cvN, ct],
+    ];
+    const FACES_ST = [
+      [0, 1, 5, 4], [1, 2, 6, 5], [3, 0, 4, 7], [2, 3, 7, 6],            // main walls S,E,W,N
+      [4, 5, 8], [7, 6, 9], [4, 7, 9, 8], [5, 8, 9, 6],                  // main gable + slopes (idx4=S gable)
+      [10, 11, 15, 14], [13, 10, 14, 17], [12, 13, 17, 16],             // 小屋 walls S,W,N
+      [14, 15, 19, 18], [16, 17, 18, 19], [14, 17, 18],                 // 小屋 S slope, N slope, W gable
+      [24, 25, 26, 27], [20, 21, 25, 24], [21, 22, 26, 25], [23, 20, 24, 27], // canopy top,S,E,W
+    ];
+    const N = V.length, SX = this._stSX || (this._stSX = []), SY = this._stSY || (this._stSY = []);
+    const WX = [], WY = [], WZ = [], out = this._p1;
+    let cxw = 0, cyw = 0, czw = 0;
+    for (let i = 0; i < N; i++) {
+      const wx = V[i][0] * S, wy = -V[i][2] * hsc, wz = (V[i][1] - 0.5) * S;
+      WX[i] = wx; WY[i] = wy; WZ[i] = wz; cxw += wx; cyw += wy; czw += wz;
+      this._project(wx, wy, wz, b, out); SX[i] = out[0]; SY[i] = out[1];
+    }
+    cxw /= N; cyw /= N; czw /= N;
+    const recs = [];
+    for (let f = 0; f < FACES_ST.length; f++) {
+      const id = FACES_ST[f];
+      const ax = WX[id[1]] - WX[id[0]], ay = WY[id[1]] - WY[id[0]], az = WZ[id[1]] - WZ[id[0]];
+      const bx = WX[id[2]] - WX[id[0]], by = WY[id[2]] - WY[id[0]], bz = WZ[id[2]] - WZ[id[0]];
+      let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+      let fx = 0, fy = 0, fz = 0;
+      for (const vi of id) { fx += WX[vi]; fy += WY[vi]; fz += WZ[vi]; }
+      fx /= id.length; fy /= id.length; fz /= id.length;
+      if ((fx - cxw) * nx + (fy - cyw) * ny + (fz - czw) * nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+      const camNz = ny * b.scp + (nx * b.scy + nz * b.ccy) * b.ccp;
+      if (camNz <= 0) continue;                               // backface cull
+      const camZ = fy * b.scp + (fx * b.scy + fz * b.ccy) * b.ccp;
+      let bucket = 0;
+      if (wantFaces) {
+        const ndl = Math.max(0, nx * LNX + ny * LNY + nz * LNZ);
+        let shadeT = 0.34 + 0.6 * ndl * (0.5 + 0.5 * lightP);
+        shadeT = clamp(shadeT + 0.05 + (f === 4 ? 0.05 : 0), 0, 1); // landmark + south-gable pop
+        bucket = Math.round(shadeT * (NTONE - 1));
+      }
+      recs.push({ id, camZ, bucket });
+    }
+    recs.sort((p, q) => p.camZ - q.camZ);                     // far -> near
+    ctx.globalAlpha = A;
+    if (wantFaces) {
+      for (const r of recs) {
+        const id = r.id; ctx.fillStyle = this._toneCss[r.bucket];
+        ctx.beginPath(); ctx.moveTo(SX[id[0]], SY[id[0]]);
+        for (let j = 1; j < id.length; j++) ctx.lineTo(SX[id[j]], SY[id[j]]);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+    if (!wantFaces || style === 0) {                          // wire / hybrid edges
+      ctx.strokeStyle = this.palette.fgCss(); ctx.lineWidth = Math.max(0.8, 1.1);
+      ctx.globalAlpha = (wantFaces ? 0.5 : 1) * A;
+      for (const r of recs) {
+        const id = r.id;
+        ctx.beginPath(); ctx.moveTo(SX[id[0]], SY[id[0]]);
+        for (let j = 1; j < id.length; j++) ctx.lineTo(SX[id[j]], SY[id[j]]);
+        ctx.closePath(); ctx.stroke();
+      }
+    }
+    // south-gable detail (the iconic 半円アーチ窓 + three tall windows above), only when
+    // the south face is toward the camera. Drawn on the gable plane v=vS.
+    if (b.ccy * b.ccp > 0.04) {
+      const o2 = [0, 0, 0];
+      const pj = (u, z) => { this._project(u * S, -z * hsc, (vS - 0.5) * S, b, o2); return [o2[0], o2[1]]; };
+      ctx.strokeStyle = this.palette.fgCss(0.9 * A);
+      ctx.lineWidth = Math.max(0.7, 1.0); ctx.lineJoin = 'round';
+      const wr = 0.025, wz0 = 0.19, wz1 = 0.31, zr = wr / 0.175; // above the canopy; zr keeps arch round
+      ctx.beginPath();
+      let p = pj(-wr, wz0); ctx.moveTo(p[0], p[1]);
+      p = pj(-wr, wz1); ctx.lineTo(p[0], p[1]);
+      for (let a = 0; a <= 8; a++) { const th = Math.PI * (1 - a / 8); p = pj(wr * Math.cos(th), wz1 + zr * Math.sin(th)); ctx.lineTo(p[0], p[1]); }
+      p = pj(wr, wz0); ctx.lineTo(p[0], p[1]); ctx.closePath(); ctx.stroke();
+      ctx.lineWidth = Math.max(1.0, 1.5);
+      for (const cu of [-0.008, 0, 0.008]) { // three tall windows high in the gable
+        ctx.beginPath();
+        p = pj(cu, 0.50); ctx.moveTo(p[0], p[1]);
+        p = pj(cu, 0.59); ctx.lineTo(p[0], p[1]); ctx.stroke();
+      }
+      // semicircular ドーマー窓 (eyebrow) sitting on the LEFT low roof's south slope, toward the front
+      ctx.lineWidth = Math.max(0.7, 1.0);
+      const slopePt = (u, t) => { const vv = wvS + t * (wRv - wvS), zz = whW + t * (whR - whW); this._project(u * S, -zz * hsc, (vv - 0.5) * S, b, o2); return [o2[0], o2[1]]; };
+      const du = -0.092, dr = 0.020, dt = 0.16, dt0 = 0.13;
+      ctx.beginPath();
+      for (let a = 0; a <= 10; a++) { const th = Math.PI * (a / 10); const pp = slopePt(du + dr * Math.cos(th), dt0 + dt * Math.sin(th)); if (a === 0) ctx.moveTo(pp[0], pp[1]); else ctx.lineTo(pp[0], pp[1]); }
+      ctx.stroke();
+    }
     ctx.globalAlpha = A;
   }
 
