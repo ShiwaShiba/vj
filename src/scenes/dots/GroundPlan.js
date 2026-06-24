@@ -69,6 +69,7 @@ const FOCAL = 4.5;                       // camera focal length in units of H (w
 const PH_ENERGIZE = 0, PH_RISE = 1, PH_HOLD = 2, PH_SINK = 3;
 const BAR = 4, SEC_BEATS = BAR * 8, HOLD_SECTIONS = 4; // let all four LIVE vantages play before SINK
 const SINK_RATE = 0.26;                  // teardown ease rate (audio-independent, can't stall)
+const SINK_W = 0.12;                      // collapse-wave thickness in key space (mirrors the rise)
 const RETRACT_RATE = 0.5;                // SINK: speed the lit circuit recedes after buildings drop
 // Tilt-driven vertical re-framing: as the camera tilts the foreshortened city collapses
 // upward, so push the whole picture DOWN to center it. Gated by `tilt` (0 at riseView=0),
@@ -138,7 +139,7 @@ export class GroundPlan extends Scene {
     this._cyLift = 0;                                 // vertical re-framing as it tilts
     this._p0 = [0, 0, 0]; this._p1 = [0, 0, 0];       // projection scratch
 
-    this._phase = PH_ENERGIZE; this._rise = 0; this._riseView = 0;
+    this._phase = PH_ENERGIZE; this._rise = 0; this._riseView = 0; this._sinkFront = 0;
     this._secStart = 0; this._holdN = 0;
     this._vFrom = 0; this._vTo = 0; this._xfade = 1; // LIVE vantage walker
 
@@ -159,7 +160,7 @@ export class GroundPlan extends Scene {
     super.init(ctx, w, h);
     this._layout();
     this._build();
-    this._front = 0; // energize fresh on first mount
+    this._front = 0; this._sinkFront = 0; // energize fresh on first mount
   }
   onResize(w, h) { super.onResize(w, h); this._layout(); }
 
@@ -336,6 +337,8 @@ export class GroundPlan extends Scene {
     const land = blocks.filter((b) => b.kind === K_LAND);
     const rest = blocks.filter((b) => b.kind !== K_LAND).sort((a, b) => a.key - b.key);
     this._blocks = land.concat(rest).slice(0, MAX_BLOCKS);
+    this._keyMax = 0.001;                          // farthest kept block — anchors the SINK collapse wave
+    for (const b of this._blocks) if (b.kind !== K_LAND && b.key > this._keyMax) this._keyMax = b.key;
   }
 
   // Full-frame orthogonal grid: BRIGHT (K_GRID) inside the pentagon, DIM (K_GOUT)
@@ -429,14 +432,22 @@ export class GroundPlan extends Scene {
         if (beatsF - this._secStart >= SEC_BEATS) {
           this._secStart = beatsF;
           this._vFrom = this._vTo; this._vTo = (this._vTo + 1) % LIVE_VANTAGES.length; this._xfade = 0;
-          if (++this._holdN >= HOLD_SECTIONS) this._phase = PH_SINK;
+          if (++this._holdN >= HOLD_SECTIONS) { this._phase = PH_SINK; this._sinkFront = 0; }
         }
         break;
       case PH_SINK:
-        this._rise += (0 - this._rise) * Math.min(1, dt * SINK_RATE * 4); // eased building teardown
-        if (this._rise < 0.5) this._front = Math.max(0, this._front - dt * RETRACT_RATE); // recede circuit
-        if (this._rise <= 0.004 && this._front <= 0.004) {
-          this._rise = 0; this._front = 0; this._phase = PH_ENERGIZE;     // re-energize: branch-grow again
+        // far→near collapse wave (mirror of the rise): the city falls from the far edge
+        // inward while the camera stays tilted so we watch it; only once the wave has
+        // passed do we de-tilt + recede the lit circuit, then re-energize.
+        this._sinkFront += dt * SINK_RATE;
+        if (this._sinkFront < this._keyMax + SINK_W) {
+          this._rise = 1;                                                  // hold tilt during the collapse
+        } else {
+          this._rise += (0 - this._rise) * Math.min(1, dt * SINK_RATE * 4); // de-tilt the emptied board
+          this._front = Math.max(0, this._front - dt * RETRACT_RATE);       // recede the lit circuit
+          if (this._rise <= 0.004 && this._front <= 0.004) {
+            this._rise = 0; this._front = 0; this._sinkFront = 0; this._phase = PH_ENERGIZE;
+          }
         }
         break;
     }
@@ -524,7 +535,8 @@ export class GroundPlan extends Scene {
       const bg = this.palette.bg, fg = this.palette.fg, tmp = this._tmpRgb;
       for (let i = 0; i < NTONE; i++) this._toneCss[i] = rgbCss(lerpRgb(bg, fg, i / (NTONE - 1), tmp));
       // hero landmark: the旧国立駅舎 (gabled), at 大学通り's origin — drawn first (sits at the back)
-      this._drawStation(ctx, b, A, clamp(smoothstep(0, 0.16, front3d), 0, 1), lightP, wantFaces, style);
+      const stStand = this._phase === PH_SINK ? clamp(1 - smoothstep(this._keyMax, this._keyMax + SINK_W, this._sinkFront), 0, 1) : 1;
+      this._drawStation(ctx, b, A, clamp(smoothstep(0, 0.16, front3d), 0, 1) * stStand, lightP, wantFaces, style); // station falls last
       this._drawCampus(ctx, b, A, front3d, lightP, wantFaces); // 一橋: low open plates, not towers
       const ccy = b.ccy, scy = b.scy, ccp = b.ccp, scp = b.scp, F = b.F;
       const cap = Math.round(MAX_BLOCKS * clamp(q, 0.5, 1)); // shed far blocks under load
@@ -536,10 +548,12 @@ export class GroundPlan extends Scene {
         if (scope === 0 && blk.kind === K_OUTSIDE && blk.rnd > OUT_SPARSE) continue; // District: sparse outside
         const local = smoothstep(blk.key, blk.key + 0.10, front3d);
         if (local <= 0.001) continue;
+        const stand = this._phase === PH_SINK
+          ? clamp(1 - smoothstep(this._keyMax - blk.key, this._keyMax - blk.key + SINK_W, this._sinkFront), 0, 1) : 1; // far→near collapse
         let hN = blk.hNorm;
         if (height === 1) hN = (blk.kind === K_LAND ? blk.hNorm : 0.6);           // Even
         else if (height === 2) hN = blk.hNorm * (0.4 + 1.4 * this._bandFor(blk)); // Pulse
-        const h = hN * (blk.kind === K_LAND ? hScaleLand : hScaleCity) * local;
+        const h = hN * (blk.kind === K_LAND ? hScaleLand : hScaleCity) * local * stand;
         if (h < 0.5) continue;
         const x0 = blk.uMin * S, x1 = blk.uMax * S;
         const z0 = (blk.vMin - 0.5) * S, z1 = (blk.vMax - 0.5) * S;
@@ -758,7 +772,10 @@ export class GroundPlan extends Scene {
       if (blk.kind !== K_LAND) continue;
       const local = smoothstep(blk.key, blk.key + 0.14, front3d);
       if (local <= 0.001) continue;
-      const h = H * 0.008 * local;                  // low plate — well below the cube field
+      const stand = this._phase === PH_SINK
+        ? clamp(1 - smoothstep(this._keyMax - blk.key, this._keyMax - blk.key + SINK_W, this._sinkFront), 0, 1) : 1; // far→near collapse
+      const h = H * 0.008 * local * stand;          // low plate — well below the cube field
+      if (h < 0.3) continue;                          // fully collapsed during the SINK wave
       const x0 = blk.uMin * S, x1 = blk.uMax * S;
       const z0 = (blk.vMin - 0.5) * S, z1 = (blk.vMax - 0.5) * S;
       const V = [[x0, 0, z0], [x1, 0, z0], [x1, -h, z0], [x0, -h, z0],
