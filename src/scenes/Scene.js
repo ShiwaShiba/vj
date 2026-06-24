@@ -16,6 +16,7 @@ export class Scene {
     this.params = {}; // { key: { value, min, max, step, label } }
     this.modes = null; // optional list of { name }
     this.modeIndex = 0;
+    this.modeGroups = null; // optional named button-groups: [{ key, label, options:[string], index }]
     // Filled in by SceneManager each frame:
     this.audio = null;
     this.palette = null;
@@ -39,4 +40,14 @@ export class Scene {
     this.modeIndex = ((i % this.modes.length) + this.modes.length) % this.modes.length;
   }
   modeName() { return this.modes ? this.modes[this.modeIndex].name : ''; }
+
+  setModeGroup(key, i) {
+    const g = this.modeGroups && this.modeGroups.find((x) => x.key === key);
+    if (!g) return;
+    g.index = ((i % g.options.length) + g.options.length) % g.options.length;
+  }
+  mg(key) {
+    const g = this.modeGroups && this.modeGroups.find((x) => x.key === key);
+    return g ? g.index : 0;
+  }
 }

@@ -107,7 +107,13 @@
 }
 
 .vj-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.vj-modes { gap: 6px; }
+.vj-modes { gap: 6px; align-items: center; }
+.vj-mg-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--vj-dim);
+  min-width: 40px;
+}
 
 .vj-btn, .vj-toggle {
   min-height: 46px;

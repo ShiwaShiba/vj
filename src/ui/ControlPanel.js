@@ -150,6 +150,26 @@ export class ControlPanel {
       c.appendChild(vrow);
     }
 
+    // Generic named mode-groups (e.g. GroundPlan: 範囲 / カメラ / 高さ / スタイル).
+    if (scene.modeGroups && scene.setModeGroup) {
+      for (const g of scene.modeGroups) {
+        const grow = document.createElement('div');
+        grow.className = 'vj-row vj-modes';
+        const lab = document.createElement('span');
+        lab.className = 'vj-mg-label';
+        lab.textContent = g.label;
+        grow.appendChild(lab);
+        g.options.forEach((name, i) => {
+          const b = document.createElement('button');
+          b.className = 'vj-btn small' + (i === g.index ? ' active' : '');
+          b.textContent = name;
+          b.addEventListener('click', () => { scene.setModeGroup(g.key, i); this._rebuildSceneControls(); });
+          grow.appendChild(b);
+        });
+        c.appendChild(grow);
+      }
+    }
+
     const sliders = document.createElement('div');
     sliders.className = 'vj-sliders';
     for (const key in scene.params) {
