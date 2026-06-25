@@ -11,13 +11,13 @@ import { lonLatToGlobalPx } from './geo/dem.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = join(HERE, 'fixtures');
-const BBOX = { s: 35.690, w: 139.435, n: 35.705, e: 139.458 }; // ~1.5km around 国立駅
+const BBOX = { s: 35.672, w: 139.425, n: 35.703, e: 139.460 }; // 国立市全域（南=谷保天満宮まで延伸, 北=中央線少し北で切る＝非国立の北を除外）
 
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 const UA = 'citybake/1.0 (kunitachi-vj render)'; // Overpass rejects requests without a User-Agent (406)
-const QUERY = `[out:json][timeout:90][bbox:${BBOX.s},${BBOX.w},${BBOX.n},${BBOX.e}];
+const QUERY = `[out:json][timeout:120][bbox:${BBOX.s},${BBOX.w},${BBOX.n},${BBOX.e}];
 (
-  way["building"]; relation["building"];
+  // 建物は PLATEAU LOD1 を使うので OSM建物は取得しない（旧駅舎ランドマークは historic で取得される）。
   way["highway"]["name"];
   way["railway"="rail"]; node["railway"="station"]; way["railway"="station"];
   way["leisure"="park"]; relation["leisure"="park"];

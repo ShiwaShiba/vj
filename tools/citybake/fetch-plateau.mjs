@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = join(HERE, 'fixtures'), OUT = join(FIX, 'plateau');
-const BBOX = { s: 35.690, w: 139.435, n: 35.705, e: 139.458 }; // fetch.mjs と一致させる
+const BBOX = { s: 35.672, w: 139.425, n: 35.703, e: 139.460 }; // fetch.mjs と一致（南=谷保天満宮まで, 北=中央線少し北）
 const ZIP_URL = 'https://assets.cms.plateau.reearth.io/assets/fe/8aa8a6-0d53-4d20-bcb9-c0a1299b0536/13215_kunitachi-shi_pref_2023_citygml_2_op.zip';
 
 // 標準地域3次メッシュコード（約1km）
