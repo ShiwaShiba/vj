@@ -40,6 +40,8 @@ let tSec = 0;            // director clock (seconds) — scrubbable
 let last = null;         // perf timestamp of the previous frame
 let paused = false;      // freeze the clock to inspect a framing
 let parallax = false;    // straight dolly (false) vs micro-parallax (true), A/B by looking
+let trees = null;        // seasonal 並木 controller (buildTrees → {group, update, setMode})
+let mode = 0;            // 0 = monochrome (step-4 default); 1 = chroma (step-6 C key)
 
 const drawOverlay = makeOverlay(document.getElementById('ov'));
 function loop(now) {
@@ -52,6 +54,7 @@ function loop(now) {
     applyCamera();
     if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
     if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
+    if (trees) trees.update(f.season, mode, dt);     // 並木 monochrome seasons (染め sweeps the avenue)
   }
   renderer.render(scene, camera);
   drawOverlay();
@@ -64,7 +67,8 @@ window.__proto = {
   seek: (t) => { tSec = Math.max(0, t); },          // jump the director clock (seconds)
   setPaused: (b) => { paused = !!b; },
   setParallax: (b) => { parallax = !!b; },
-  state: () => ({ tSec, paused, parallax }),
+  setMode: (b) => { mode = b ? 1 : 0; },            // 0 mono / 1 chroma (sanity-check the 並木 colour path)
+  state: () => ({ tSec, paused, parallax, mode }),
 };
 
 // Swap the procedural city for the baked OSM/DEM/AO asset. Layers are added in
@@ -81,8 +85,7 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
   if (landmark) scene.add(landmark);
   if (station) scene.add(station);
   scene.add(buildStation(manifest));               // station glow accent (runtime canvas texture)
-  let trees = null;
-  if (terrain) { trees = buildTrees(manifest, terrain); scene.add(trees); } // 4. 木々 (green zones + 大学通り 並木)
+  if (terrain) { trees = buildTrees(manifest, terrain); scene.add(trees.group); } // 4. 木々 (green zones + 大学通り 並木, seasonal)
 
   // Keyframes: ④ = the current full-city params; ① is the 旧駅舎 (landmark) hero.
   const { SCALE, VSCALE, vOffset } = manifest.scale;

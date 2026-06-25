@@ -1,44 +1,50 @@
 import * as THREE from '../vendor/three.module.js';
+import { GRAD, seasonEndpoints } from './seasons.js';
 
-// Monochrome vegetation instancing (Plan 3, option B). Fills the southern void —
-// 一橋大学キャンパス + parks (manifest.green rects) — and lines 大学通り (the iconic
-// 並木道) with low grey canopies so the foreground reads as planted ground, not
-// black emptiness. Greys only (守る線: monochrome, no chroma). Canopies are
-// raycast onto the baked DEM terrain so they sit on the real relief.
-export function buildTrees(manifest, terrain, opts = {}) {
-  const { SCALE, VSCALE, vOffset } = manifest.scale;
+// Plan 3 step 4 — the 大学通り 並木 carry the seasons (monochrome). Two instanced
+// canopies: avenueMesh (大学通り both sides = the seasonal star) and scatterMesh
+// (green zones = damped greenery). A per-instance shader blends each canopy from
+// the previous season's settled look toward the current one as the director's
+// season.prog ramps 0→1, staggered by aPhase (position down the avenue) so the
+// change sweeps downstream. Greys only by default (守る線); chroma is the step-6
+// uMode opt-in. instanceMatrix (base size + DEM-raycast position) is never rewritten
+// — all season motion is uniform-driven (no re-lighting). seeds + layout come from
+// the pure planLayout below (node-testable; mirrors reveal.js's pure/THREE split).
+
+// PURE: plan where canopies stand, in manifest (u,v) space — no THREE, no terrain.
+// Returns { avenue:[{u,v,aPhase,seed}], scatter:[{u,v,aPhase,seed}] }. aPhase is the
+// avenue's v-extent normalized to [0,1] (the染め sweep axis); scatter aPhase is 0.
+export function planLayout(manifest, opts = {}) {
   const bounds = opts.bounds || { u0: -1.85, u1: 1.72, v0: -0.42, v1: 1.3 };
-  const cell = opts.cell ?? 0.028;        // ~12 m thinning grid (prevents clumping)
-  const radius = opts.radius ?? 0.072;    // canopy radius in world units (~5 m)
+  const cell = opts.cell ?? 0.028;          // ~12 m thinning grid (prevents clumping)
   const avenueOffset = opts.avenueOffset ?? 0.022;
 
-  // seeded xorshift → stable layout across reloads (looks intentional, not flickering)
+  // seeded xorshift → stable layout + per-instance seed across reloads
   let s = 0x2545f491 >>> 0;
   const rnd = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
 
   const inB = (u, v) => u > bounds.u0 && u < bounds.u1 && v > bounds.v0 && v < bounds.v1;
-
-  // grid-thin: one plant per occupied cell, dedupes overlapping green rects
-  const taken = new Set();
-  const plant = (u, v, pts) => {
+  const taken = new Set();                   // grid-thin shared across both lists
+  const plant = (u, v, arr) => {
     if (!inB(u, v)) return;
     const k = Math.floor(u / cell) + ',' + Math.floor(v / cell);
     if (taken.has(k)) return;
     taken.add(k);
-    pts.push([u, v]);
+    arr.push({ u, v, seed: rnd() });         // one seed per accepted instance, in stream order
   };
 
-  const pts = [];
-  // 1. scatter within green rects (oversample → grid thinning fills cells evenly)
-  for (const rect of manifest.green) {
+  // scatter first (green rects), then the avenue — preserves the original plant order
+  const scatter = [];
+  for (const rect of manifest.green || []) {
     const [a0, b0, a1, b1] = rect;
     const u0 = Math.min(a0, a1), v0 = Math.min(b0, b1);
     const du = Math.abs(a1 - a0), dv = Math.abs(b1 - b0);
     const n = Math.min(240, Math.max(6, Math.round((du * dv) / (cell * cell) * 3)));
-    for (let i = 0; i < n; i++) plant(u0 + rnd() * du, v0 + rnd() * dv, pts);
+    for (let i = 0; i < n; i++) plant(u0 + rnd() * du, v0 + rnd() * dv, scatter);
   }
-  // 2. line 大学通り both sides — the 並木道
-  for (const r of manifest.roads) {
+
+  const avenue = [];
+  for (const r of manifest.roads || []) {
     if (!r.name || !r.name.includes('大学通り')) continue;
     const P = r.points;
     for (let i = 0; i + 1 < P.length; i++) {
@@ -48,16 +54,102 @@ export function buildTrees(manifest, terrain, opts = {}) {
       let px = -(bv - av), py = (bu - au); const pl = Math.hypot(px, py) || 1; px /= pl; py /= pl;
       for (let k = 0; k < steps; k++) {
         const t = k / steps, cu = au + (bu - au) * t, cv = av + (bv - av) * t;
-        plant(cu + px * avenueOffset, cv + py * avenueOffset, pts);
-        plant(cu - px * avenueOffset, cv - py * avenueOffset, pts);
+        plant(cu + px * avenueOffset, cv + py * avenueOffset, avenue);
+        plant(cu - px * avenueOffset, cv - py * avenueOffset, avenue);
       }
     }
   }
 
-  if (!pts.length) return new THREE.Group();
+  // aPhase = normalized v across the PLANTED avenue extent, so the sweep spans the
+  // visible trees 0..1. Guard a degenerate (constant-v) avenue → aPhase 0 (no NaN).
+  let V0 = Infinity, V1 = -Infinity;
+  for (const p of avenue) { if (p.v < V0) V0 = p.v; if (p.v > V1) V1 = p.v; }
+  const span = V1 - V0;
+  for (const p of avenue) p.aPhase = span > 1e-9 ? (p.v - V0) / span : 0;
+  for (const p of scatter) p.aPhase = 0;     // sweep is avenue-only
 
-  // canopy: low-poly icosahedron with a baked vertical grey gradient (top lighter,
-  // base darker) so the unlit material still reads as a rounded mass. Monochrome.
+  return { avenue, scatter };
+}
+
+const TONE_HI = GRAD.base + GRAD.span;
+
+// Build the shared season uniforms. One {value} object per uniform, referenced by
+// BOTH meshes' materials so a single write updates both programs.
+function makeUniforms() {
+  return {
+    uProg: { value: 0 },
+    uScale: { value: new THREE.Vector2(1, 1) },        // prev, cur canopy scale
+    uDensity: { value: new THREE.Vector2(1, 1) },      // prev, cur fraction kept
+    uToneLo: { value: new THREE.Vector2(GRAD.base, GRAD.base) },
+    uToneHi: { value: new THREE.Vector2(TONE_HI, TONE_HI) },
+    uShimmer: { value: new THREE.Vector2(0, 0) },
+    uSnow: { value: new THREE.Vector2(0, 0) },
+    uColor0: { value: new THREE.Vector3(1, 1, 1) },    // step-6 chroma (dead at uMode=0)
+    uColor1: { value: new THREE.Vector3(1, 1, 1) },
+    uMode: { value: 0 },                               // 0 mono (default), 1 chroma
+    uTime: { value: 0 },
+    uStagger: { value: 0.7 },                          // 0.7 + uBand(0.3) = 1.0 → full sweep, no wrap pop
+    uBand: { value: 0.3 },
+    uGradBase: { value: GRAD.base },                   // single-source gradient recovery
+    uGradSpan: { value: GRAD.span },
+  };
+}
+
+// Patch an unlit canopy material with the season shader (the reveal.js onBeforeCompile
+// idiom). uDamp is per-material (1.0 avenue, <1 scatter); the rest of U is shared.
+function installSeasonShader(mat, U, uDampValue) {
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, U, { uDamp: { value: uDampValue } });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+attribute float aPhase;
+attribute float aSeed;
+uniform float uProg;
+uniform vec2 uScale;
+uniform vec2 uDensity;
+uniform float uStagger;
+uniform float uBand;
+uniform float uDamp;
+varying float vProgI;
+varying float vSeed;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+float _pStart = min(aPhase * uStagger, 1.0 - uBand);
+float progI = smoothstep(_pStart, _pStart + uBand, uProg);
+float dens = mix(uDensity.x, uDensity.y, progI);
+float keep = 1.0 - smoothstep(dens - 0.06, dens, aSeed);
+float sScale = mix(uScale.x, uScale.y, progI) * uDamp;
+transformed *= sScale * keep;
+transformed.y -= 999.0 * (1.0 - keep);
+vProgI = progI;
+vSeed = aSeed;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+uniform vec2 uToneLo;
+uniform vec2 uToneHi;
+uniform vec2 uShimmer;
+uniform vec2 uSnow;
+uniform vec3 uColor0;
+uniform vec3 uColor1;
+uniform float uMode;
+uniform float uTime;
+uniform float uGradBase;
+uniform float uGradSpan;
+varying float vProgI;
+varying float vSeed;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+float gradT = clamp((diffuseColor.r - uGradBase) / uGradSpan, 0.0, 1.0);
+float grey = mix(mix(uToneLo.x, uToneLo.y, vProgI), mix(uToneHi.x, uToneHi.y, vProgI), gradT);
+grey += mix(uShimmer.x, uShimmer.y, vProgI) * 0.06 * (sin(uTime * 1.7 + vSeed * 43.0) * 0.5 + 0.5);
+grey = mix(grey, 0.85, mix(uSnow.x, uSnow.y, vProgI) * smoothstep(0.45, 1.0, gradT));
+vec3 seasonC = mix(uColor0, uColor1, vProgI) * (0.45 + 0.55 * gradT);
+diffuseColor.rgb = mix(vec3(grey), seasonC, uMode);`);
+  };
+  mat.needsUpdate = true;
+}
+
+// Build the canopy base geometry: a low-poly icosahedron with a baked vertical grey
+// gradient (GRAD.base → GRAD.base+span) the shader later recovers and reseasons.
+function makeCanopyGeo(radius) {
   const geo = new THREE.IcosahedronGeometry(radius, 0);
   geo.scale(1, 1.3, 1);
   const pos = geo.attributes.position;
@@ -66,35 +158,81 @@ export function buildTrees(manifest, terrain, opts = {}) {
   const col = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
     const t = (pos.getY(i) - ymin) / (ymax - ymin || 1);
-    // linear greys; sRGB output lifts them, so keep low → a mid-grey vegetation
-    // mass that stays clearly below the white building carpet (守る線).
-    const g = 0.11 + 0.20 * t;            // 0.11 base → 0.31 crown
+    const g = GRAD.base + GRAD.span * t;     // single source (seasons.js GRAD) — shader recovers t
     col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = g;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+
+// Build one InstancedMesh from a plant list. Each gets its OWN cloned geometry (it
+// carries per-instance aPhase/aSeed) + its own material (its own uDamp). DEM-raycast
+// position + seed-driven base size go into instanceMatrix once and are never rewritten.
+function buildMesh(list, baseGeo, U, uDamp, radius, groundY, SCALE, vOffset) {
+  const geo = baseGeo.clone();
+  const aPhase = new Float32Array(list.length);
+  const aSeed = new Float32Array(list.length);
   const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  installSeasonShader(mat, U, uDamp);
+
+  const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+  mesh.frustumCulled = false;                // in-shader resize ⇒ CPU bounds would be wrong
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+  for (let i = 0; i < list.length; i++) {
+    const { u, v, aPhase: ph, seed } = list[i];
+    aPhase[i] = ph; aSeed[i] = seed;
+    const wx = u * SCALE, wz = (v - vOffset) * SCALE;
+    const gy = groundY(wx, wz);
+    const j = 0.75 + seed * 0.65;            // base size variety (deterministic from seed)
+    const ys = 0.9 + ((seed * 7.0) % 1) * 0.5;
+    sc.set(j, j * ys, j);
+    p.set(wx, gy + radius * sc.y * 0.7, wz);
+    m.compose(p, q, sc);
+    mesh.setMatrixAt(i, m);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  geo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(aPhase, 1));
+  geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(aSeed, 1));
+  return mesh;
+}
+
+// THREE: build the seasonal 並木 controller. Returns { group, update(season, mode, dt),
+// setMode(mode) }. proto.js adds group, calls update(f.season, mode, dt) each frame.
+export function buildTrees(manifest, terrain, opts = {}) {
+  const { SCALE, vOffset } = manifest.scale;
+  const radius = opts.radius ?? 0.072;       // canopy radius in world units (~5 m)
+  const { avenue, scatter } = planLayout(manifest, opts);
+
+  const group = new THREE.Group();
+  group.userData.type = 'trees';
+  const U = makeUniforms();
 
   // sit each canopy on the DEM via a downward raycast against the terrain mesh
   const ray = new THREE.Raycaster();
-  const down = new THREE.Vector3(0, -1, 0), from = new THREE.Vector3();
-  const groundY = (wx, wz) => { from.set(wx, 60, wz); ray.set(from, down); const h = ray.intersectObject(terrain, false); return h.length ? h[0].point.y : 0; };
+  const down = new THREE.Vector3(0, -1, 0), fromV = new THREE.Vector3();
+  const groundY = (wx, wz) => { fromV.set(wx, 60, wz); ray.set(fromV, down); const h = ray.intersectObject(terrain, false); return h.length ? h[0].point.y : 0; };
 
-  const mesh = new THREE.InstancedMesh(geo, mat, pts.length);
-  mesh.frustumCulled = false;
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
-  let n = 0;
-  for (const [u, v] of pts) {
-    const wx = u * SCALE, wz = (v - vOffset) * SCALE;
-    const gy = groundY(wx, wz);
-    const j = 0.75 + rnd() * 0.65;        // size variety
-    sc.set(j, j * (0.9 + rnd() * 0.5), j);
-    p.set(wx, gy + radius * sc.y * 0.7, wz);
-    m.compose(p, q, sc);
-    mesh.setMatrixAt(n++, m);
+  const baseGeo = makeCanopyGeo(radius);
+  if (avenue.length) group.add(buildMesh(avenue, baseGeo, U, 1.0, radius, groundY, SCALE, vOffset));
+  if (scatter.length) group.add(buildMesh(scatter, baseGeo, U, 0.45, radius, groundY, SCALE, vOffset));
+
+  let modeTarget = 0;
+  function update(season, mode, dt) {
+    const ep = seasonEndpoints(season.index);
+    U.uScale.value.set(ep.prev.scale, ep.cur.scale);
+    U.uDensity.value.set(ep.prev.density, ep.cur.density);
+    U.uToneLo.value.set(ep.prev.toneLo, ep.cur.toneLo);
+    U.uToneHi.value.set(ep.prev.toneHi, ep.cur.toneHi);
+    U.uShimmer.value.set(ep.prev.shimmer, ep.cur.shimmer);
+    U.uSnow.value.set(ep.prev.snow, ep.cur.snow);
+    U.uColor0.value.set(ep.colorPrev[0], ep.colorPrev[1], ep.colorPrev[2]);
+    U.uColor1.value.set(ep.colorCur[0], ep.colorCur[1], ep.colorCur[2]);
+    U.uProg.value = season.prog;
+    U.uTime.value += dt || 0;
+    if (mode != null) modeTarget = mode ? 1 : 0;
+    U.uMode.value += (modeTarget - U.uMode.value) * Math.min(1, (dt || 0) * 4); // ~0.6s crossfade
   }
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.count = n;
-  mesh.userData.type = 'trees';
-  mesh.userData.revealKey = 99;           // last reveal layer (Plan 3 anim)
-  return mesh;
+  function setMode(mode) { modeTarget = mode ? 1 : 0; }
+
+  return { group, update, setMode, uniforms: U };
 }
