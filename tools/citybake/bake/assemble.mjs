@@ -158,86 +158,134 @@ export function assembleCity({ osm, projector, planHeight, params }) {
   return { terrain, terrainGrid, buildings, landmark, station };
 }
 
-// Tuning knobs for the landmark gable (env, with readable defaults). The baker is a
-// CLI tool; unset env ⇒ deterministic defaults, so assembleCity stays test-pure.
-// Defaults chosen by eye (CPU-rasterized previews at the ①hero framing): a tall, steep,
-// south-facing gable reads as the iconic 1926 三角屋根 even when small in frame, and stands
-// above its neighbours as the monument. Overridable per-bake via env for further tuning.
+// Tuning knobs for the landmark (env, with readable defaults). The baker is a CLI tool;
+// unset env ⇒ deterministic defaults, so assembleCity stays test-pure.
 function gableTuning() {
+  const num = (k, d) => (process.env[k] != null ? +process.env[k] : d);
   return {
-    hScale: +process.env.LM_HSCALE || 2.2,                          // ridge-height boost for prominence
-    eaveFrac: process.env.LM_EAVE != null ? +process.env.LM_EAVE : 0.30, // wall top as a fraction of total H (low walls, tall roof)
-    peakFrac: process.env.LM_PEAK != null ? +process.env.LM_PEAK : 1.0,  // ridge as a fraction of total H
-    ridgeAxis: process.env.RIDGE_AXIS === 'long' ? 'long' : 'short',      // gable END faces the ① camera (south) by default
+    scaleM: num('LM_SCALE', 2.0),      // world units per reference-plan-unit (horizontal) — sets footprint size
+    pitchRatio: num('LM_PITCH', 0.175),// vertical:horizontal unit ratio (reference hsc/S → ~51° main gable)
+    winDepth: num('LM_WIN_DEPTH', 0.022), // south-facade window recess depth (world)
+    winOn: process.env.LM_WIN !== '0', // build the recessed south-facade windows
   };
 }
 
-// Idealize the 旧国立駅舎 footprint into a clean gabled monument: a PCA-oriented
-// rectangular box (walls baseY→eaveY) capped by a triangular roof that rises to a
-// ridge along the long axis. Gives the 1926 三角屋根 a legible silhouette at the
-// ①hero framing, where the raw OSM polygon would just read as a flat box. Same single
-// material (AO-shaded later); geometry only. Deterministic (no RNG). Returns a
-// perBuilding entry of the same shape extrudeBuilding/pointBox produce.
-export function buildLandmarkGable(soup, ring2d, baseY, params, opts = {}) {
-  const { SCALE, VSCALE, vOffset, mpu } = params;
-  const T = gableTuning();
+// The south facade (the camera-facing wall + gable triangle of the main hall), rebuilt
+// with the iconic 旧駅舎 windows recessed into it (so the AO bake reads them as dark): the
+// big semicircular-arch window at the eave line + three tall windows high in the gable.
+// The facade is a stack of trapezoid strips that follow the gable slope (silhouette stays
+// clean); window columns are left open and a blind recess (back panel + inward rim) sits
+// behind each. (uE symmetric: uW=−uE.) Replaces ST_REF faces 0 (S wall) + 4 (S gable).
+function addSouthFacade(soup, C) {
+  const { Cx, Cz, baseY, M, HZ, mu, mv, vS, uE, hW, hR, depth } = C;
+  const zS = Cz + (vS - mv) * M;                       // south plane world z (toward the ① camera)
+  const Pf = (a, h, d = 0) => ({ x: Cx + (a - mu) * M, y: baseY + h * HZ, z: zS - d }); // d pushes inward (north)
+  const wOf = (h) => (h <= hW ? uE : Math.max(0, uE * (hR - h) / (hR - hW))); // facade half-width at height h
+  const Nf = [0, 0, 1];                                // outward (south)
+  const quad = (c0, c1, c2, c3, n) => { faceTri(soup, c0, c1, c2, n[0], n[1], n[2]); faceTri(soup, c0, c2, c3, n[0], n[1], n[2]); };
 
-  // --- PCA: centroid + 2×2 covariance → larger-eigenvalue eigenvector = long axis ---
+  const WIN = [
+    [-0.025, 0.025, 0.19, 0.31],                       // iconic arch window (rectangular approx) at the eave
+    [-0.0105, -0.0055, 0.50, 0.59], [-0.0025, 0.0025, 0.50, 0.59], [0.0055, 0.0105, 0.50, 0.59], // three tall windows
+  ];
+  const hbsSet = new Set([0, hW, hR]);
+  for (const w of WIN) { hbsSet.add(w[2]); hbsSet.add(w[3]); }
+  const hbs = [...hbsSet].filter((h) => h >= 0 && h <= hR).sort((a, b) => a - b);
+
+  for (let s = 0; s < hbs.length - 1; s++) {           // facade strips, cut into columns around windows
+    const h0 = hbs[s], h1 = hbs[s + 1], wb = wOf(h0), wt = wOf(h1);
+    const cols = WIN.filter((w) => w[2] <= h0 + 1e-9 && w[3] >= h1 - 1e-9).map((w) => [w[0], w[1]]).sort((a, b) => a[0] - b[0]);
+    if (cols.length === 0) { quad(Pf(-wb, h0), Pf(wb, h0), Pf(wt, h1), Pf(-wt, h1), Nf); continue; }
+    quad(Pf(-wb, h0), Pf(cols[0][0], h0), Pf(cols[0][0], h1), Pf(-wt, h1), Nf);                 // left outer column
+    for (let i = 0; i < cols.length - 1; i++)                                                   // columns between windows
+      quad(Pf(cols[i][1], h0), Pf(cols[i + 1][0], h0), Pf(cols[i + 1][0], h1), Pf(cols[i][1], h1), Nf);
+    quad(Pf(cols[cols.length - 1][1], h0), Pf(wb, h0), Pf(wt, h1), Pf(cols[cols.length - 1][1], h1), Nf); // right outer column
+  }
+  for (const [aL, aR, hB, hT] of WIN) {                // blind recess behind each window
+    quad(Pf(aL, hB, depth), Pf(aR, hB, depth), Pf(aR, hT, depth), Pf(aL, hT, depth), Nf);      // back panel
+    quad(Pf(aL, hT, 0), Pf(aR, hT, 0), Pf(aR, hT, depth), Pf(aL, hT, depth), [0, -1, 0]);      // top rim (faces down)
+    quad(Pf(aL, hB, 0), Pf(aR, hB, 0), Pf(aR, hB, depth), Pf(aL, hB, depth), [0, 1, 0]);       // bottom rim (faces up)
+    quad(Pf(aL, hB, 0), Pf(aL, hT, 0), Pf(aL, hT, depth), Pf(aL, hB, depth), [1, 0, 0]);       // left rim
+    quad(Pf(aR, hB, 0), Pf(aR, hT, 0), Pf(aR, hT, depth), Pf(aR, hB, depth), [-1, 0, 0]);      // right rim
+  }
+}
+
+// push a triangle with the winding that makes its flat normal point along (nx,ny,nz).
+function faceTri(soup, P0, P1, P2, nx, ny, nz) {
+  const ux = P1.x - P0.x, uy = P1.y - P0.y, uz = P1.z - P0.z;
+  const vx = P2.x - P0.x, vy = P2.y - P0.y, vz = P2.z - P0.z;
+  const gx = uy * vz - uz * vy, gy = uz * vx - ux * vz, gz = ux * vy - uy * vx;
+  const ccw = gx * nx + gy * ny + gz * nz >= 0;
+  const Q = ccw ? P1 : P2, R = ccw ? P2 : P1;
+  pushTri(soup, P0.x, P0.y, P0.z, Q.x, Q.y, Q.z, R.x, R.y, R.z);
+}
+
+// The 旧国立駅舎 (1926) reference model — a faithful 3D port of the finished canvas-2D
+// _drawStation (src/scenes/dots/GroundPlan.js): an asymmetric stepped landmark whose
+// identity is a tall steep MAIN gable facing south (the ① camera) over a LOWER west
+// cross-wing (its E-W ridge inserts into the main hall → step + valley), plus a low
+// south entrance canopy. Measured ratios; +u east, +v south, +z up.
+const ST_REF = (() => {
+  const uW = -0.060, uE = 0.060, vS = 0.065, vN = -0.037, hW = 0.26, hR = 0.683;        // MAIN gable (~51°)
+  const wuW = -0.140, wuE = -0.050, wvS = 0.058, wvN = -0.026, wRv = 0.016, whW = 0.17, whR = 0.40; // LEFT low gable
+  const cuW = -0.062, cuE = 0.062, cvN = 0.065, cvS = 0.118, cb = 0.12, ct = 0.175;     // south canopy
+  const verts = [
+    [uW, vS, 0], [uE, vS, 0], [uE, vN, 0], [uW, vN, 0],
+    [uW, vS, hW], [uE, vS, hW], [uE, vN, hW], [uW, vN, hW], [0, vS, hR], [0, vN, hR],
+    [wuW, wvS, 0], [wuE, wvS, 0], [wuE, wvN, 0], [wuW, wvN, 0],
+    [wuW, wvS, whW], [wuE, wvS, whW], [wuE, wvN, whW], [wuW, wvN, whW], [wuW, wRv, whR], [wuE, wRv, whR],
+    [cuW, cvS, cb], [cuE, cvS, cb], [cuE, cvN, cb], [cuW, cvN, cb],
+    [cuW, cvS, ct], [cuE, cvS, ct], [cuE, cvN, ct], [cuW, cvN, ct],
+  ];
+  const faces = [
+    [0, 1, 5, 4], [1, 2, 6, 5], [3, 0, 4, 7], [2, 3, 7, 6],            // main walls S,E,W,N
+    [4, 5, 8], [7, 6, 9], [4, 7, 9, 8], [5, 8, 9, 6],                  // main gable + slopes (idx4=S gable)
+    [10, 11, 15, 14], [13, 10, 14, 17], [12, 13, 17, 16],             // 小屋 walls S,W,N
+    [14, 15, 19, 18], [16, 17, 18, 19], [14, 17, 18],                 // 小屋 S slope, N slope, W gable
+    [24, 25, 26, 27], [20, 21, 25, 24], [21, 22, 26, 25], [23, 20, 24, 27], // canopy top,S,E,W
+  ];
+  let mu = 0, mv = 0; for (const r of verts) { mu += r[0]; mv += r[1]; } mu /= verts.length; mv /= verts.length;
+  return { verts, faces, mu, mv, vS, uE, hW, hR };                     // mu,mv = plan centroid; dims for the windowed facade
+})();
+
+// Build the ported 旧駅舎 at the footprint centroid, scaled to the baker's world. The
+// footprint only supplies placement (centroid); the shape + ratios come from ST_REF.
+// Same single material (AO-shaded later); geometry only, deterministic (no RNG).
+export function buildLandmarkGable(soup, ring2d, baseY, params, opts = {}) {
+  const { SCALE, VSCALE, vOffset } = params;
+  const T = gableTuning();
+  const M = T.scaleM, HZ = M * T.pitchRatio;   // horizontal & vertical world-per-ref-unit
+
   let cu = 0, cv = 0;
   for (const p of ring2d) { cu += p.u; cv += p.v; }
   cu /= ring2d.length; cv /= ring2d.length;
-  let sxx = 0, sxy = 0, syy = 0;
-  for (const p of ring2d) { const du = p.u - cu, dv = p.v - cv; sxx += du * du; sxy += du * dv; syy += dv * dv; }
-  const tr = sxx + syy, disc = Math.sqrt(Math.max(0, tr * tr / 4 - (sxx * syy - sxy * sxy)));
-  const lam = tr / 2 + disc;                       // larger eigenvalue
-  let e1u, e1v;
-  if (Math.abs(sxy) > 1e-12) { e1u = lam - syy; e1v = sxy; }
-  else { e1u = sxx >= syy ? 1 : 0; e1v = sxx >= syy ? 0 : 1; }
-  const eL = Math.hypot(e1u, e1v) || 1; e1u /= eL; e1v /= eL;
-  if (e1u < 0 || (e1u === 0 && e1v < 0)) { e1u = -e1u; e1v = -e1v; } // sign canonicalization (deterministic)
-  let e2u = -e1v, e2v = e1u;
+  const Cx = cu * SCALE, Cz = (cv - vOffset) * SCALE; // world anchor; +v(south) → +z (toward ① camera)
 
-  // half-extents along the two axes (oriented bounding box)
-  let L = 0, Wd = 0;
-  for (const p of ring2d) {
-    const du = p.u - cu, dv = p.v - cv;
-    L = Math.max(L, Math.abs(du * e1u + dv * e1v));
-    Wd = Math.max(Wd, Math.abs(du * e2u + dv * e2v));
-  }
-  if (T.ridgeAxis === 'short') { [e1u, e2u] = [e2u, e1u]; [e1v, e2v] = [e2v, e1v]; [L, Wd] = [Wd, L]; }
-
-  // --- heights: walls to eave, roof to ridge ---
-  const H = (Math.max(opts.heightM ?? 9, 9) / mpu) * VSCALE * T.hScale;
-  const eaveY = baseY + H * T.eaveFrac;
-  const ridgeY = baseY + H * T.peakFrac;
-
-  // plan corners (e1,e2 frame) + world projector
-  const cor = (s1, s2) => ({ u: cu + s1 * L * e1u + s2 * Wd * e2u, v: cv + s1 * L * e1v + s2 * Wd * e2v });
-  const A = cor(-1, -1), B = cor(+1, -1), C = cor(+1, +1), D = cor(-1, +1);
-  const R0 = { u: cu - L * e1u, v: cv - L * e1v }, R1 = { u: cu + L * e1u, v: cv + L * e1v };
-  const W = (p, y) => ({ x: p.u * SCALE, y, z: (p.v - vOffset) * SCALE });
-  const Aw = W(A, eaveY), Bw = W(B, eaveY), Cw = W(C, eaveY), Dw = W(D, eaveY);
-  const R0w = W(R0, ridgeY), R1w = W(R1, ridgeY);
+  // ref(u,v,z) → world, centred on the model plan-centroid so the main hall sits on the anchor
+  const Wv = ST_REF.verts.map((r) => ({ x: Cx + (r[0] - ST_REF.mu) * M, y: baseY + r[2] * HZ, z: Cz + (r[1] - ST_REF.mv) * M }));
+  let mx = 0, my = 0, mz = 0;
+  for (const p of Wv) { mx += p.x; my += p.y; mz += p.z; } mx /= Wv.length; my /= Wv.length; mz /= Wv.length;
 
   const vStart = soup.positions.length / 3;
-  // walls: reuse the box extruder (its eave-height top cap sits hidden under the roof)
-  extrude(soup, [A, B, C, D], baseY, eaveY, SCALE, vOffset);
+  let maxY = baseY;
+  // the two camera-facing south faces (wall idx0 + gable idx4) are replaced by the windowed facade
+  const skip = T.winOn ? new Set([0, 4]) : new Set();
+  for (let fi = 0; fi < ST_REF.faces.length; fi++) {
+    if (skip.has(fi)) continue;
+    const id = ST_REF.faces[fi];
+    const P = id.map((i) => Wv[i]);
+    // outward face normal = geometric normal flipped to point away from the model centroid
+    const ax = P[1].x - P[0].x, ay = P[1].y - P[0].y, az = P[1].z - P[0].z;
+    const bx = P[2].x - P[0].x, by = P[2].y - P[0].y, bz = P[2].z - P[0].z;
+    let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+    let fx = 0, fy = 0, fz = 0; for (const p of P) { fx += p.x; fy += p.y; fz += p.z; } fx /= P.length; fy /= P.length; fz /= P.length;
+    if ((fx - mx) * nx + (fy - my) * ny + (fz - mz) * nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    for (let j = 1; j < P.length - 1; j++) faceTri(soup, P[0], P[j], P[j + 1], nx, ny, nz); // fan-triangulate the polygon
+    for (const p of P) if (p.y > maxY) maxY = p.y;
+  }
+  if (T.winOn) addSouthFacade(soup, { Cx, Cz, baseY, M, HZ, mu: ST_REF.mu, mv: ST_REF.mv, vS: ST_REF.vS, uE: ST_REF.uE, hW: ST_REF.hW, hR: ST_REF.hR, depth: T.winDepth });
 
-  // roof: push each tri with the winding that makes its flat normal point outward
-  const face = (P0, P1, P2, nx, ny, nz) => {
-    const ux = P1.x - P0.x, uy = P1.y - P0.y, uz = P1.z - P0.z;
-    const vx = P2.x - P0.x, vy = P2.y - P0.y, vz = P2.z - P0.z;
-    const gx = uy * vz - uz * vy, gy = uz * vx - ux * vz, gz = ux * vy - uy * vx;
-    const ccw = gx * nx + gy * ny + gz * nz >= 0;
-    const Q = ccw ? P1 : P2, R = ccw ? P2 : P1;
-    pushTri(soup, P0.x, P0.y, P0.z, Q.x, Q.y, Q.z, R.x, R.y, R.z);
-  };
-  face(Cw, Dw, R0w, e2u, 0.5, e2v); face(Cw, R0w, R1w, e2u, 0.5, e2v);   // +e2 slope
-  face(Bw, Aw, R0w, -e2u, 0.5, -e2v); face(Bw, R0w, R1w, -e2u, 0.5, -e2v); // -e2 slope
-  face(Bw, Cw, R1w, e1u, 0, e1v);                                          // +e1 gable end
-  face(Aw, Dw, R0w, -e1u, 0, -e1v);                                        // -e1 gable end
-
-  return { u: cu, v: cv, height: (ridgeY - baseY) / VSCALE, revealKey: Math.hypot(cu, cv), vStart, vCount: soup.positions.length / 3 - vStart };
+  return { u: cu, v: cv, height: (maxY - baseY) / VSCALE, revealKey: Math.hypot(cu, cv), vStart, vCount: soup.positions.length / 3 - vStart };
 }
 
 // A small distinct block at a point (footprint-less station/landmark nodes).

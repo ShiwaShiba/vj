@@ -61,7 +61,7 @@ test('landmark and station become distinct nodes', () => {
   assert.ok(out.station && out.station.positions.length > 0, 'station node present');
 });
 
-test('landmark is gabled: roof rises to a ridge above a distinct eave', () => {
+test('landmark is the asymmetric 旧駅舎: a tall main gable over a distinctly lower west wing, on the DEM', () => {
   const osm = {
     footprints: [], roads: [], rails: [], green: [],
     landmark: { ring: sq(35.6988, 139.4462, 0.0004), heightM: 9, levels: 2, name: '旧国立駅舎', tags: { historic: 'building' } },
@@ -69,12 +69,15 @@ test('landmark is gabled: roof rises to a ridge above a distinct eave', () => {
   };
   const out = assembleCity({ osm, projector, planHeight: flat, params: PARAMS });
   const pos = out.landmark.positions;
-  // total H = max(9,9)/420*5*hScale (baseY 0 on the flat DEM); eave = eaveFrac·H, ridge = peakFrac·H
-  const H = (9 / 420) * 5 * 2.2, eaveY = H * 0.30, ridgeY = H; // matches gableTuning() defaults
-  assert.ok(Math.abs(maxY(pos) - ridgeY) < 1e-4, `ridge at ~${ridgeY.toFixed(4)}, got ${maxY(pos).toFixed(4)}`);
-  assert.ok(hasYNear(pos, eaveY, 1e-4), 'walls top out at a distinct eave height below the ridge');
+  // ported ST_REF (baseY 0 on the flat DEM): main ridge z=0.683, west-wing ridge z=0.40 — both
+  // scale by HZ so the ratio is exact; the wing ridge plateau sits below the main ridge.
+  const top = maxY(pos);
+  const wingRidge = top * (0.40 / 0.683);
   assert.ok(Math.abs(minY(pos)) < 1e-6, 'base sits on the flat DEM');
-  assert.ok(pos.length / 3 > 36, `more verts than a plain box (walls+roof), got ${pos.length / 3}`);
+  assert.ok(top > 0, 'main ridge above base');
+  assert.ok(hasYNear(pos, wingRidge, top * 0.03), 'a distinctly lower west-wing ridge plateau exists');
+  assert.ok(wingRidge < top * 0.95, 'west wing is lower than the main ridge (stepped silhouette)');
+  assert.ok(pos.length / 3 > 80, `multi-volume mesh (main + wing + canopy), got ${pos.length / 3} verts`);
   for (const k of ['u', 'v', 'height', 'revealKey', 'type', 'vStart', 'vCount'])
     assert.ok(k in out.landmark.perBuilding[0], `landmark perBuilding missing ${k}`);
 });
