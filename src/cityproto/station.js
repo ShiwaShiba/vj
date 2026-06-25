@@ -1,18 +1,14 @@
 import * as THREE from '../vendor/three.module.js';
-import { terrainHeight } from './geo.js';
 
-// The station landmark: a small bright structure at the apex + a restrained
-// white glow node (single accent, matching the reference's glowing station —
-// NOT decorative bloom everywhere). 旧駅舎 craft comes in Plan 2/3.
-export function buildStation({ SCALE = 6, VSCALE = 5 } = {}) {
+// The station landmark accent: a restrained white glow node at the apex (the
+// solid station box itself now comes from the baked glb 'station' node). A
+// single accent matching the reference's glowing station — NOT bloom everywhere.
+export function buildStation(manifest) {
+  const { SCALE, VSCALE, vOffset } = manifest.scale;
   const grp = new THREE.Group();
-  const wx = 0, wz = (0 - 0.3) * SCALE, wy = terrainHeight(0, 0) * VSCALE;
-  const box = new THREE.Mesh(
-    new THREE.BoxGeometry(0.9, 0.55, 0.5),
-    new THREE.MeshBasicMaterial({ color: 0xe8edf4 }),
-  );
-  box.position.set(wx, wy + 0.275, wz);
-  grp.add(box);
+  const s = manifest.station;
+  if (!s) return grp;
+  const wx = s.u * SCALE, wz = (s.v - vOffset) * SCALE, wy = (s.h || 0) * VSCALE;
 
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const gx = c.getContext('2d'); const gr = gx.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -27,19 +23,21 @@ export function buildStation({ SCALE = 6, VSCALE = 5 } = {}) {
   return grp;
 }
 
-// JR Chuo Line: crisp bright double track + a faint center line, lifted and
-// drawn on top so it reads as a sharp horizontal axis.
-export function buildRailway({ SCALE = 6, VSCALE = 5, LIFT = 0.014 } = {}) {
+// JR Chuo Line: crisp bright double track + a faint center line, built from the
+// manifest's horizontal chuo polyline, lifted and drawn on top so it reads as a
+// sharp horizontal axis.
+export function buildRailway(manifest, { lift = 0.014, gauge = 0.017 } = {}) {
+  const { SCALE, VSCALE, vOffset } = manifest.scale;
   const grp = new THREE.Group();
-  const mkLine = (vv, op, ro) => {
-    const pts = [];
-    for (let k = 0; k <= 60; k++) { const u = -1.75 + 3.5 * (k / 60); pts.push(new THREE.Vector3(u * SCALE, (terrainHeight(u, vv) + LIFT) * VSCALE, (vv - 0.3) * SCALE)); }
-    const g = new THREE.BufferGeometry().setFromPoints(pts);
-    const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: op, depthTest: false }));
+  const chuo = manifest.roads.find((r) => r.name === 'chuo');
+  if (!chuo) return grp;
+  const mk = (dv, op, ro) => {
+    const pts = chuo.points.map(([u, v, h]) => new THREE.Vector3(u * SCALE, (h + lift) * VSCALE, (v + dv - vOffset) * SCALE));
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: op, depthTest: false }));
     l.renderOrder = ro; return l;
   };
-  grp.add(mkLine(-0.118, 0.95, 12));
-  grp.add(mkLine(-0.152, 0.95, 12));
-  grp.add(mkLine(-0.135, 0.22, 11));
+  grp.add(mk(-gauge, 0.95, 12));
+  grp.add(mk(gauge, 0.95, 12));
+  grp.add(mk(0, 0.22, 11));
   return grp;
 }

@@ -1,21 +1,19 @@
 import * as THREE from '../vendor/three.module.js';
-import { terrainHeight, AVENUES } from './geo.js';
 
-// Bright primary roads, slightly lifted off the terrain and rendered last
-// (depthTest off) so they never get buried by the carpet — 国立の象徴.
-export function buildAvenues({ SCALE = 6, VSCALE = 5, LIFT = 0.012 } = {}) {
+// Bright primary roads built from the baked manifest polylines ([u,v,h], height
+// baked so they hug the DEM), lifted slightly and rendered last (depthTest off)
+// so they never get buried by the carpet — 国立の象徴.
+export function buildAvenues(manifest, { lift = 0.012 } = {}) {
+  const { SCALE, VSCALE, vOffset } = manifest.scale;
   const group = new THREE.Group();
-  for (const a of AVENUES) {
-    if (a.name === 'chuo') continue; // railway is drawn by station.js (crisp double track)
-    const pts = [];
-    const N = 40;
-    for (let k = 0; k <= N; k++) {
-      const t = k / N, u = a.ax + (a.bx - a.ax) * t, v = a.av + (a.bv - a.av) * t;
-      pts.push(new THREE.Vector3(u * SCALE, (terrainHeight(u, v) + LIFT) * VSCALE, (v - 0.3) * SCALE));
-    }
+  for (const r of manifest.roads) {
+    if (!r.primary || r.name === 'chuo') continue; // chuo is the railway (station.js)
+    const pts = r.points.map(([u, v, h]) => new THREE.Vector3(u * SCALE, (h + lift) * VSCALE, (v - vOffset) * SCALE));
+    if (pts.length < 2) continue;
     const g = new THREE.BufferGeometry().setFromPoints(pts);
-    const m = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: a.bright, depthTest: false });
-    const line = new THREE.Line(g, m); line.renderOrder = 10;
+    const op = r.name.includes('大学通り') ? 0.95 : 0.9;
+    const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: op, depthTest: false }));
+    line.renderOrder = 10;
     group.add(line);
   }
   return group;
