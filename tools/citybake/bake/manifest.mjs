@@ -50,6 +50,6 @@ export function buildManifest({ osm, projector, planHeight = () => 0, perBuildin
     buildings: perBuilding.map((b) => ({ revealKey: b.revealKey, type: b.type, vStart: b.vStart, vCount: b.vCount })),
     landmarkNode: 'landmark',
     station,
-    attribution: ['© OpenStreetMap contributors', '地理院タイル（標高タイル）を加工して作成'],
+    attribution: ['© OpenStreetMap contributors', '地理院タイル（標高タイル）を加工して作成', '3D都市モデル（Project PLATEAU／国土交通省）'],
   };
 }

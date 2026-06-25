@@ -22,8 +22,8 @@ const VEXAG = +process.env.VEXAG || 2.5;       // DEM vertical exaggeration
 const RAYS = +process.env.RAYS || 20;          // AO hemisphere rays / vertex
 const RADIUS = +process.env.RADIUS || 0.4;     // AO ray length (world units)
 const AO_STRENGTH = +process.env.AOSTR || 0.55; // soft contact shadow (reference touch), not heavy darkening
-const BOUNDS = { u0: -1.85, u1: 1.72, v0: -0.42, v1: 1.3 };
-const NX = 120, NV = 80, SCALE = 6, VSCALE = 5, vOffset = 0.3;
+const BOUNDS = { u0: -4.8, u1: 3.1, v0: -1.2, v1: 7.4 }; // 国立市全域（南=谷保天満宮まで延伸・北=中央線少し北で切る）
+const NX = 200, NV = 170, SCALE = 6, VSCALE = 5, vOffset = 0.3; // 広域化に合わせ地形メッシュを密に
 // Greys are gamma-encoded (linear→sRGB) on output, so keep terrain near-black
 // (reference = black ground + white linework) and buildings a bright white carpet.
 const BASE_GREY = { terrain: 0.022, generic: 1.0, landmark: 1.15, station: 0.75 };
