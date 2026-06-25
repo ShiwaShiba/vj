@@ -21,7 +21,9 @@ function applyCamera() {
 
 scene.add(buildTerrain());
 scene.add(buildTerrainGrid());
-scene.add(buildBuildings());
+const city = buildBuildings();
+scene.add(city.solid);
+scene.add(city.wire);
 scene.add(buildAvenues());
 
 function resize() {
