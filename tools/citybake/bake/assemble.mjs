@@ -137,9 +137,14 @@ export function assembleCity({ osm, projector, planHeight, params }) {
   let landmark = null;
   if (osm.landmark) {
     const lSoup = emptySoup();
-    const lm = osm.landmark.ring
-      ? extrudeBuilding(lSoup, { ...osm.landmark, heightM: Math.max(osm.landmark.heightM, 9) }, projector, planHeight, P)
-      : pointBox(lSoup, osm.landmark.point, projector, planHeight, P, 14, 9);
+    let lm = null;
+    if (osm.landmark.ring) {                          // idealize the footprint into a legible gabled monument
+      const ring2d = osm.landmark.ring.map((p) => projector.toPlan(p.lat, p.lon));
+      const c = planCentroid(ring2d);
+      if (inBounds(c, P.bounds)) lm = buildLandmarkGable(lSoup, ring2d, planHeight(c.u, c.v) * P.VSCALE, P, { heightM: Math.max(osm.landmark.heightM, 9) });
+    } else {
+      lm = pointBox(lSoup, osm.landmark.point, projector, planHeight, P, 14, 9);
+    }
     if (lm) { lm.type = 'landmark'; landmark = { ...finalize(lSoup), perBuilding: [lm] }; }
   }
 
@@ -151,6 +156,88 @@ export function assembleCity({ osm, projector, planHeight, params }) {
   }
 
   return { terrain, terrainGrid, buildings, landmark, station };
+}
+
+// Tuning knobs for the landmark gable (env, with readable defaults). The baker is a
+// CLI tool; unset env ⇒ deterministic defaults, so assembleCity stays test-pure.
+// Defaults chosen by eye (CPU-rasterized previews at the ①hero framing): a tall, steep,
+// south-facing gable reads as the iconic 1926 三角屋根 even when small in frame, and stands
+// above its neighbours as the monument. Overridable per-bake via env for further tuning.
+function gableTuning() {
+  return {
+    hScale: +process.env.LM_HSCALE || 2.2,                          // ridge-height boost for prominence
+    eaveFrac: process.env.LM_EAVE != null ? +process.env.LM_EAVE : 0.30, // wall top as a fraction of total H (low walls, tall roof)
+    peakFrac: process.env.LM_PEAK != null ? +process.env.LM_PEAK : 1.0,  // ridge as a fraction of total H
+    ridgeAxis: process.env.RIDGE_AXIS === 'long' ? 'long' : 'short',      // gable END faces the ① camera (south) by default
+  };
+}
+
+// Idealize the 旧国立駅舎 footprint into a clean gabled monument: a PCA-oriented
+// rectangular box (walls baseY→eaveY) capped by a triangular roof that rises to a
+// ridge along the long axis. Gives the 1926 三角屋根 a legible silhouette at the
+// ①hero framing, where the raw OSM polygon would just read as a flat box. Same single
+// material (AO-shaded later); geometry only. Deterministic (no RNG). Returns a
+// perBuilding entry of the same shape extrudeBuilding/pointBox produce.
+export function buildLandmarkGable(soup, ring2d, baseY, params, opts = {}) {
+  const { SCALE, VSCALE, vOffset, mpu } = params;
+  const T = gableTuning();
+
+  // --- PCA: centroid + 2×2 covariance → larger-eigenvalue eigenvector = long axis ---
+  let cu = 0, cv = 0;
+  for (const p of ring2d) { cu += p.u; cv += p.v; }
+  cu /= ring2d.length; cv /= ring2d.length;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const p of ring2d) { const du = p.u - cu, dv = p.v - cv; sxx += du * du; sxy += du * dv; syy += dv * dv; }
+  const tr = sxx + syy, disc = Math.sqrt(Math.max(0, tr * tr / 4 - (sxx * syy - sxy * sxy)));
+  const lam = tr / 2 + disc;                       // larger eigenvalue
+  let e1u, e1v;
+  if (Math.abs(sxy) > 1e-12) { e1u = lam - syy; e1v = sxy; }
+  else { e1u = sxx >= syy ? 1 : 0; e1v = sxx >= syy ? 0 : 1; }
+  const eL = Math.hypot(e1u, e1v) || 1; e1u /= eL; e1v /= eL;
+  if (e1u < 0 || (e1u === 0 && e1v < 0)) { e1u = -e1u; e1v = -e1v; } // sign canonicalization (deterministic)
+  let e2u = -e1v, e2v = e1u;
+
+  // half-extents along the two axes (oriented bounding box)
+  let L = 0, Wd = 0;
+  for (const p of ring2d) {
+    const du = p.u - cu, dv = p.v - cv;
+    L = Math.max(L, Math.abs(du * e1u + dv * e1v));
+    Wd = Math.max(Wd, Math.abs(du * e2u + dv * e2v));
+  }
+  if (T.ridgeAxis === 'short') { [e1u, e2u] = [e2u, e1u]; [e1v, e2v] = [e2v, e1v]; [L, Wd] = [Wd, L]; }
+
+  // --- heights: walls to eave, roof to ridge ---
+  const H = (Math.max(opts.heightM ?? 9, 9) / mpu) * VSCALE * T.hScale;
+  const eaveY = baseY + H * T.eaveFrac;
+  const ridgeY = baseY + H * T.peakFrac;
+
+  // plan corners (e1,e2 frame) + world projector
+  const cor = (s1, s2) => ({ u: cu + s1 * L * e1u + s2 * Wd * e2u, v: cv + s1 * L * e1v + s2 * Wd * e2v });
+  const A = cor(-1, -1), B = cor(+1, -1), C = cor(+1, +1), D = cor(-1, +1);
+  const R0 = { u: cu - L * e1u, v: cv - L * e1v }, R1 = { u: cu + L * e1u, v: cv + L * e1v };
+  const W = (p, y) => ({ x: p.u * SCALE, y, z: (p.v - vOffset) * SCALE });
+  const Aw = W(A, eaveY), Bw = W(B, eaveY), Cw = W(C, eaveY), Dw = W(D, eaveY);
+  const R0w = W(R0, ridgeY), R1w = W(R1, ridgeY);
+
+  const vStart = soup.positions.length / 3;
+  // walls: reuse the box extruder (its eave-height top cap sits hidden under the roof)
+  extrude(soup, [A, B, C, D], baseY, eaveY, SCALE, vOffset);
+
+  // roof: push each tri with the winding that makes its flat normal point outward
+  const face = (P0, P1, P2, nx, ny, nz) => {
+    const ux = P1.x - P0.x, uy = P1.y - P0.y, uz = P1.z - P0.z;
+    const vx = P2.x - P0.x, vy = P2.y - P0.y, vz = P2.z - P0.z;
+    const gx = uy * vz - uz * vy, gy = uz * vx - ux * vz, gz = ux * vy - uy * vx;
+    const ccw = gx * nx + gy * ny + gz * nz >= 0;
+    const Q = ccw ? P1 : P2, R = ccw ? P2 : P1;
+    pushTri(soup, P0.x, P0.y, P0.z, Q.x, Q.y, Q.z, R.x, R.y, R.z);
+  };
+  face(Cw, Dw, R0w, e2u, 0.5, e2v); face(Cw, R0w, R1w, e2u, 0.5, e2v);   // +e2 slope
+  face(Bw, Aw, R0w, -e2u, 0.5, -e2v); face(Bw, R0w, R1w, -e2u, 0.5, -e2v); // -e2 slope
+  face(Bw, Cw, R1w, e1u, 0, e1v);                                          // +e1 gable end
+  face(Aw, Dw, R0w, -e1u, 0, -e1v);                                        // -e1 gable end
+
+  return { u: cu, v: cv, height: (ridgeY - baseY) / VSCALE, revealKey: Math.hypot(cu, cv), vStart, vCount: soup.positions.length / 3 - vStart };
 }
 
 // A small distinct block at a point (footprint-less station/landmark nodes).

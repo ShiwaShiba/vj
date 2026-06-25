@@ -12,7 +12,9 @@ const sq = (lat, lon, d) => [
   { lat: lat - d, lon: lon + d }, { lat: lat - d, lon: lon - d },
 ];
 const minY = (pos) => { let m = Infinity; for (let i = 1; i < pos.length; i += 3) m = Math.min(m, pos[i]); return m; };
+const maxY = (pos) => { let m = -Infinity; for (let i = 1; i < pos.length; i += 3) m = Math.max(m, pos[i]); return m; };
 const maxAbsY = (pos) => { let m = 0; for (let i = 1; i < pos.length; i += 3) m = Math.max(m, Math.abs(pos[i])); return m; };
+const hasYNear = (pos, y, eps) => { for (let i = 1; i < pos.length; i += 3) if (Math.abs(pos[i] - y) < eps) return true; return false; };
 
 test('earClip triangulates a concave (L-shaped) polygon into n-2 triangles', () => {
   const L = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 2 }, { x: 0, y: 2 }];
@@ -57,4 +59,32 @@ test('landmark and station become distinct nodes', () => {
   const out = assembleCity({ osm, projector, planHeight: flat, params: PARAMS });
   assert.ok(out.landmark && out.landmark.positions.length > 0, 'landmark node present');
   assert.ok(out.station && out.station.positions.length > 0, 'station node present');
+});
+
+test('landmark is gabled: roof rises to a ridge above a distinct eave', () => {
+  const osm = {
+    footprints: [], roads: [], rails: [], green: [],
+    landmark: { ring: sq(35.6988, 139.4462, 0.0004), heightM: 9, levels: 2, name: '旧国立駅舎', tags: { historic: 'building' } },
+    station: null,
+  };
+  const out = assembleCity({ osm, projector, planHeight: flat, params: PARAMS });
+  const pos = out.landmark.positions;
+  // total H = max(9,9)/420*5*hScale (baseY 0 on the flat DEM); eave = eaveFrac·H, ridge = peakFrac·H
+  const H = (9 / 420) * 5 * 2.2, eaveY = H * 0.30, ridgeY = H; // matches gableTuning() defaults
+  assert.ok(Math.abs(maxY(pos) - ridgeY) < 1e-4, `ridge at ~${ridgeY.toFixed(4)}, got ${maxY(pos).toFixed(4)}`);
+  assert.ok(hasYNear(pos, eaveY, 1e-4), 'walls top out at a distinct eave height below the ridge');
+  assert.ok(Math.abs(minY(pos)) < 1e-6, 'base sits on the flat DEM');
+  assert.ok(pos.length / 3 > 36, `more verts than a plain box (walls+roof), got ${pos.length / 3}`);
+  for (const k of ['u', 'v', 'height', 'revealKey', 'type', 'vStart', 'vCount'])
+    assert.ok(k in out.landmark.perBuilding[0], `landmark perBuilding missing ${k}`);
+});
+
+test('landmark gable is deterministic (byte-identical across calls)', () => {
+  const osm = () => ({
+    footprints: [], roads: [], rails: [], green: [], station: null,
+    landmark: { ring: sq(35.6988, 139.4470, 0.0005), heightM: 11, levels: 2, name: '旧国立駅舎', tags: { historic: 'building' } },
+  });
+  const a = assembleCity({ osm: osm(), projector, planHeight: flat, params: PARAMS }).landmark.positions;
+  const b = assembleCity({ osm: osm(), projector, planHeight: flat, params: PARAMS }).landmark.positions;
+  assert.deepStrictEqual([...a], [...b]);
 });
