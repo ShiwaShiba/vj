@@ -6,6 +6,7 @@ import { terrainHeight, AVENUES } from './geo.js';
 export function buildAvenues({ SCALE = 6, VSCALE = 5, LIFT = 0.012 } = {}) {
   const group = new THREE.Group();
   for (const a of AVENUES) {
+    if (a.name === 'chuo') continue; // railway is drawn by station.js (crisp double track)
     const pts = [];
     const N = 40;
     for (let k = 0; k <= N; k++) {

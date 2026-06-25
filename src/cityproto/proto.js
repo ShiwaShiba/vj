@@ -3,6 +3,7 @@ import { buildTerrain, buildTerrainGrid } from './terrain.js';
 import { buildBuildings } from './buildings.js';
 import { buildAvenues } from './avenues.js';
 import { makeOverlay } from './overlay.js';
+import { buildStation, buildRailway } from './station.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
@@ -25,6 +26,8 @@ const city = buildBuildings();
 scene.add(city.solid);
 scene.add(city.wire);
 scene.add(buildAvenues());
+scene.add(buildRailway());
+scene.add(buildStation());
 
 function resize() {
   const w = innerWidth, h = innerHeight;
