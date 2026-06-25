@@ -8,39 +8,40 @@ const within = (u, v, b) => u > b.u0 - 0.2 && u < b.u1 + 0.2 && v > b.v0 - 0.2 &
 
 function median(arr) { const s = [...arr].sort((a, b) => a - b); const n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : 0; }
 
-export function buildManifest({ osm, projector, perBuilding, params }) {
+export function buildManifest({ osm, projector, planHeight = () => 0, perBuilding, params }) {
   const { SCALE, VSCALE, vexag, bounds, bbox, vOffset } = params;
-  const toUV = (p) => { const { u, v } = projector.toPlan(p.lat, p.lon); return [u, v]; };
+  // [u, v, h] — height baked in so the runtime can hug roads to the DEM surface.
+  const toUVH = (p) => { const { u, v } = projector.toPlan(p.lat, p.lon); return [u, v, planHeight(u, v)]; };
 
   // primary avenues (drop ones fully outside the frame)
   const roads = [];
   for (const r of osm.roads) {
     if (!r.primary) continue;
-    const points = r.points.map(toUV);
+    const points = r.points.map(toUVH);
     if (points.some(([u, v]) => within(u, v, bounds))) roads.push({ name: r.name, primary: true, points });
   }
 
   // chuo railway: collapse the (dead-straight) 中央 line to one horizontal segment
   const railPts = [];
-  for (const rail of osm.rails) if (CHUO_RE.test(rail.name)) for (const p of rail.points) railPts.push(toUV(p));
+  for (const rail of osm.rails) if (CHUO_RE.test(rail.name)) for (const p of rail.points) railPts.push(toUVH(p));
   if (railPts.length) {
     const us = railPts.map((p) => p[0]).filter((u) => Number.isFinite(u));
     const vMed = median(railPts.map((p) => p[1]));
     const uMin = Math.max(bounds.u0, Math.min(...us)), uMax = Math.min(bounds.u1, Math.max(...us));
-    roads.push({ name: 'chuo', primary: true, points: [[uMin, vMed], [uMax, vMed]] });
+    roads.push({ name: 'chuo', primary: true, points: [[uMin, vMed, planHeight(uMin, vMed)], [uMax, vMed, planHeight(uMax, vMed)]] });
   }
 
   // green as plan-space AABB rects
   const green = [];
   for (const g of osm.green) {
-    const uv = g.ring.map(toUV);
+    const uv = g.ring.map(toUVH);
     const us = uv.map((p) => p[0]), vs = uv.map((p) => p[1]);
     const rect = [Math.min(...us), Math.min(...vs), Math.max(...us), Math.max(...vs)];
     if (within((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2, bounds)) green.push(rect);
   }
 
   const station = osm.station && osm.station.point
-    ? (([u, v]) => ({ u, v }))(toUV(osm.station.point)) : null;
+    ? (([u, v, h]) => ({ u, v, h }))(toUVH(osm.station.point)) : null;
 
   return {
     bbox, origin: { lat: projector.origin.lat, lon: projector.origin.lon },

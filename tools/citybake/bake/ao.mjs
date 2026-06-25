@@ -41,7 +41,7 @@ function buildGrid(positions, indices, cell) {
 }
 
 export function bakeAO(soup, opts = {}) {
-  const { rays = 24, radius = 1.0, seed = 1, ambient = 0.35 } = opts;
+  const { rays = 24, radius = 1.0, seed = 1, ambient = 0.35, aoStrength = 1 } = opts;
   const baseGreyOpt = opts.baseGrey ?? 0.8;
   const { positions, indices, normals } = soup;
   const nv = positions.length / 3;
@@ -83,7 +83,7 @@ export function bakeAO(soup, opts = {}) {
           if (rc.intersectObject(mesh, false).length) occ++;
         }
       }
-      const ao = 1 - occ / rays;
+      const ao = 1 - aoStrength * (occ / rays); // aoStrength < 1 → soft contact shadow, not heavy darkening
       const light = ambient + (1 - ambient) * Math.max(0, n.x * Lx + n.y * Ly + n.z * Lz);
       const grey = Math.max(0, Math.min(1, greyOf(i) * light * ao));
       colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = grey;

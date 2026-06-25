@@ -19,9 +19,12 @@ const MPU = +process.env.MPU || 420;          // metres per plan unit (frames th
 const VEXAG = +process.env.VEXAG || 2.5;       // DEM vertical exaggeration
 const RAYS = +process.env.RAYS || 20;          // AO hemisphere rays / vertex
 const RADIUS = +process.env.RADIUS || 0.4;     // AO ray length (world units)
+const AO_STRENGTH = +process.env.AOSTR || 0.55; // soft contact shadow (reference touch), not heavy darkening
 const BOUNDS = { u0: -1.85, u1: 1.72, v0: -0.42, v1: 1.3 };
 const NX = 120, NV = 80, SCALE = 6, VSCALE = 5, vOffset = 0.3;
-const BASE_GREY = { terrain: 0.12, generic: 0.85, landmark: 1.0, station: 0.70 }; // terrain = dark quiet base
+// Greys are gamma-encoded (linear→sRGB) on output, so keep terrain near-black
+// (reference = black ground + white linework) and buildings a bright white carpet.
+const BASE_GREY = { terrain: 0.022, generic: 1.0, landmark: 1.15, station: 0.75 };
 
 // --- load fixtures -------------------------------------------------------
 const meta = JSON.parse(readFileSync(join(FIX, 'meta.json'), 'utf8'));
@@ -75,7 +78,7 @@ for (const t of triNodes) {
 }
 
 const t0 = Date.now();
-const colors = bakeAO({ positions, indices, normals }, { rays: RAYS, radius: RADIUS, seed: 1, baseGrey });
+const colors = bakeAO({ positions, indices, normals }, { rays: RAYS, radius: RADIUS, seed: 1, baseGrey, aoStrength: AO_STRENGTH });
 console.log(`AO bake ${((Date.now() - t0) / 1000).toFixed(1)}s  (${NP / 3} verts, ${NI / 3} tris, ${RAYS} rays r=${RADIUS})`);
 
 // --- glb nodes -----------------------------------------------------------
@@ -92,7 +95,7 @@ mkdirSync(DIST, { recursive: true });
 const glb = writeGlb({ nodes: glbNodes });
 writeFileSync(join(DIST, 'city.glb'), glb);
 
-const manifest = buildManifest({ osm, projector, perBuilding: city.buildings.perBuilding, params: { SCALE, VSCALE, vexag: VEXAG, bounds: BOUNDS, bbox: meta.bbox, vOffset } });
+const manifest = buildManifest({ osm, projector, planHeight, perBuilding: city.buildings.perBuilding, params: { SCALE, VSCALE, vexag: VEXAG, bounds: BOUNDS, bbox: meta.bbox, vOffset } });
 writeFileSync(join(DIST, 'city.manifest.json'), JSON.stringify(manifest));
 
 console.log(`✓ city.glb ${(glb.length / 1024).toFixed(0)}KB  | buildings ${city.buildings.perBuilding.length} | grid segs ${gN / 2} | thetaDeg ${thetaDeg.toFixed(2)} | primary roads ${manifest.roads.length}`);

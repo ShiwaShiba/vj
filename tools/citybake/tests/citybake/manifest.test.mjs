@@ -34,9 +34,10 @@ test('manifest carries the required shape', () => {
 });
 
 test('roads include the primary avenue and a horizontal chuo polyline', () => {
-  const m = buildManifest({ osm, projector, perBuilding, params });
+  const m = buildManifest({ osm, projector, planHeight: (u, v) => 0.02 * v, perBuilding, params });
   const daigaku = m.roads.find((r) => r.name === '大学通り');
   assert.ok(daigaku && daigaku.primary && daigaku.points.length >= 2);
+  assert.strictEqual(daigaku.points[0].length, 3, 'road points carry [u,v,h]');
   // due-south avenue → ~vertical (Δu ≈ 0, Δv large)
   const du = Math.abs(daigaku.points[0][0] - daigaku.points[1][0]);
   assert.ok(du < 1e-3, `daigaku should be vertical, du=${du}`);
