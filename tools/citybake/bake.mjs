@@ -2,12 +2,14 @@
 // OSM/GSI fixtures and emits dist/city.glb + dist/city.manifest.json — the asset
 // the proto renderer loads. No network. Tunables via env (MPU/VEXAG/RAYS/RADIUS).
 //   node tools/citybake/bake.mjs
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseDemTxt, stitchTiles, makeDemSampler, makePlanHeight } from './geo/dem.mjs';
 import { makeProjector } from './geo/project.mjs';
 import { parseOsm } from './geo/osm.mjs';
+import { parsePlateau, dropNear } from './geo/plateau.mjs';
 import { assembleCity } from './bake/assemble.mjs';
 import { bakeAO } from './bake/ao.mjs';
 import { writeGlb } from './bake/glb.mjs';
@@ -52,6 +54,21 @@ const planHeight = makePlanHeight({ sampler, projector, refElevation, vexag: VEX
 
 // --- assemble + AO bake --------------------------------------------------
 const osm = parseOsm(osmData, { origin: meta.origin });
+
+// --- swap generic buildings: OSM → PLATEAU LOD1（実フットプリント＋実測高さ）---------
+// 道路/線路/旧駅舎/現駅/緑地は OSM 継続。建物だけ PLATEAU に替える。fixtures は生CityGMLの
+// gzip（出所忠実）。gunzip → txml パース → lod0RoofEdge + measuredHeight。
+const bbox = { s: meta.bbox[0], w: meta.bbox[1], n: meta.bbox[2], e: meta.bbox[3] };
+const plDir = join(FIX, 'plateau');
+const plFoot = [];
+for (const f of readdirSync(plDir).filter((f) => f.endsWith('.gml.gz')).sort()) // sort＝決定論
+  plFoot.push(...parsePlateau(gunzipSync(readFileSync(join(plDir, f))).toString('utf8'), { bbox }).footprints);
+const guards = [];
+if (osm.landmark && osm.landmark.centroid) guards.push(osm.landmark.centroid);
+if (osm.station && osm.station.point) guards.push(osm.station.point);
+osm.footprints = dropNear(plFoot, guards, 25); // 旧駅舎/現駅近傍を落として埋没・重複を防ぐ
+console.log(`PLATEAU buildings: ${plFoot.length} parsed → ${osm.footprints.length} after dedup (was OSM 976)`);
+
 const params = { SCALE, VSCALE, NX, NV, vOffset, gridStep: 0.06, bounds: BOUNDS };
 const city = assembleCity({ osm, projector, planHeight, params });
 
