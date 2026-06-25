@@ -1,0 +1,25 @@
+{
+  "dataset": "plateau-13215-kunitachi-shi-2023",
+  "spec": "v4",
+  "source": "https://assets.cms.plateau.reearth.io/assets/fe/8aa8a6-0d53-4d20-bcb9-c0a1299b0536/13215_kunitachi-shi_pref_2023_citygml_2_op.zip",
+  "crs": "EPSG:6697 (JGD2011 lat/lon + T.P. height)",
+  "bbox": [
+    35.69,
+    139.435,
+    35.705,
+    139.458
+  ],
+  "meshCodes": [
+    "53394324",
+    "53394325",
+    "53394326",
+    "53394334",
+    "53394335",
+    "53394336",
+    "53394344",
+    "53394345",
+    "53394346"
+  ],
+  "fetchedAt": "2026-06-25T04:39:37.667Z",
+  "license": "Project PLATEAU site policy（商用可）／出典表示: 国土交通省"
+}
