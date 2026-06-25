@@ -20,7 +20,7 @@ export function buildBuildings({ SCALE = 6, VSCALE = 5, HSCALE = 1.0 } = {}) {
     const C = [[x0, y0, zc0], [x1, y0, zc0], [x1, y0, zc1], [x0, y0, zc1],
               [x0, y1, zc0], [x1, y1, zc0], [x1, y1, zc1], [x0, y1, zc1]];
     for (const c of C) pos.push(c[0], c[1], c[2]);
-    const wall = topG * (0.5 - 0.18 * cl), baseG = wall * 0.5, top = topG;
+    const wall = topG * (0.5 - 0.18 * cl), baseG = wall * 0.3, top = topG;
     const cAt = (i) => i >= 4 ? top : baseG;
     for (let i = 0; i < 8; i++) { const g = cAt(i); col.push(g, g, g); }
     const F = [[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7],[4,5,6,7]];
@@ -43,7 +43,7 @@ export function buildBuildings({ SCALE = 6, VSCALE = 5, HSCALE = 1.0 } = {}) {
       const spine = 1 + 0.55 * Math.exp(-Math.abs(cu) * 6.5);
       const h = (0.020 + 0.052 * cl * cl) * spine * (0.7 + 0.6 * r()) * HSCALE;
       const topG = 0.62 + 0.30 * Math.min(1, h * 8);
-      pushBox(cu, cv, 0.019 * (0.7 + 0.6 * r()), 0.016 * (0.7 + 0.6 * r()), h, topG, cl);
+      pushBox(cu, cv, 0.014 * (0.7 + 0.6 * r()), 0.012 * (0.7 + 0.6 * r()), h, topG, cl);
     }
   }
   const g = new THREE.BufferGeometry();

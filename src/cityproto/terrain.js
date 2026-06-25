@@ -22,7 +22,7 @@ export function buildTerrain({ SCALE = 6, VSCALE = 5, NX = 120, NV = 80 } = {}) 
       const gv = (H(u, v + D) - H(u, v - D)) / (2 * D) * K;
       const nx = -gu, ny = 1, nz = -gv, nl = Math.hypot(nx, ny, nz);
       const sh = Math.max(0, (nx * Lx + ny * Ly + nz * Lz) / nl / LL);
-      const ao = THREE.MathUtils.clamp(0.045 + 0.13 * sh, 0.035, 0.19);
+      const ao = THREE.MathUtils.clamp(0.018 + 0.05 * sh, 0.012, 0.075);
       col.push(ao, ao, ao);
     }
   }
@@ -40,7 +40,7 @@ export function buildTerrain({ SCALE = 6, VSCALE = 5, NX = 120, NV = 80 } = {}) 
 
 // Thin grid overlay so the terrain reads as an undulating lattice (reveal layer 1).
 export function buildTerrainGrid({ SCALE = 6, VSCALE = 5 } = {}) {
-  const pts = [], step = 0.085;
+  const pts = [], step = 0.06;
   const seg = (a0, b0, a1, b1, n) => {
     for (let k = 0; k < n; k++) {
       const t0 = k / n, t1 = (k + 1) / n;
@@ -54,5 +54,5 @@ export function buildTerrainGrid({ SCALE = 6, VSCALE = 5 } = {}) {
   for (let v = -0.4; v <= 1.28; v += step) seg(-1.82, v, 1.72, v, 40);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xb0b8c4, transparent: true, opacity: 0.12 }));
+  return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xc2cad6, transparent: true, opacity: 0.16 }));
 }
