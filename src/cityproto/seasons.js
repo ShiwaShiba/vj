@@ -28,15 +28,51 @@ export const MONO_SETTLED = [
   { scale: 0.82, density: 0.42, toneLo: 0.11, toneHi: 0.40, shimmer: 0.02, snow: 0.7 }, // 冬: sparse, snow crown
 ];
 
-// Season hues for the step-6 colour mode. [r,g,b] in 0..1 LINEAR — these feed GLSL
-// vec3 uniforms directly (NOT the 0..255 helpers in lib/math.js). Unused while
-// uMode=0 (the monochrome default).
-export const COLOR_PALETTE = [
-  [0.95, 0.62, 0.72], // 春 sakura pink
-  [0.36, 0.58, 0.30], // 夏 leaf green
-  [0.85, 0.50, 0.18], // 秋 amber
-  [0.80, 0.86, 0.95], // 冬 icy white-blue
-];
+// --- step 6: seasonal colour mode (the `C`-key uMode opt-in) ---
+// Season hues for chroma mode. [r,g,b] in 0..1 LINEAR — fed straight into GLSL vec3
+// uniforms (NOT the 0..255 helpers in lib/math.js). Dead while uMode=0 (the monochrome
+// default, 守る線). Three named registers so the look can be picked by eye (固定カメラ
+// スクショ比較) WITHOUT touching the shader: `current` (saturated baseline), `muted`
+// (low-chroma, dimmed — closest to the minimal/Ikeda register), `mid` (between). The
+// chosen register is then baked as DEFAULT_CHROMA below.
+export const CHROMA_VARIANTS = {
+  current: [
+    [0.95, 0.62, 0.72], // 春 sakura pink
+    [0.36, 0.58, 0.30], // 夏 leaf green
+    [0.85, 0.50, 0.18], // 秋 amber
+    [0.80, 0.86, 0.95], // 冬 icy white-blue
+  ],
+  muted: [
+    [0.62, 0.52, 0.55], // 春 greyed rose
+    [0.40, 0.46, 0.38], // 夏 sage grey
+    [0.56, 0.47, 0.37], // 秋 greyed tan
+    [0.70, 0.73, 0.78], // 冬 cool grey
+  ],
+  mid: [
+    [0.80, 0.57, 0.63], // 春 soft rose
+    [0.38, 0.52, 0.34], // 夏 muted leaf
+    [0.72, 0.49, 0.27], // 秋 dim amber
+    [0.75, 0.80, 0.87], // 冬 pale ice
+  ],
+};
+
+// The active canopy palette. Swappable live via setChromaVariant() for the look-pick;
+// reads route through chromaCanopy/chromaParticle so a swap re-colours canopy AND
+// particles in lockstep. Particle chroma derives from the canopy — petals/leaves track
+// the canopy hue, snow is the achromatic exception (always white, 守る線).
+const DEFAULT_CHROMA = 'current';
+let _chroma = CHROMA_VARIANTS[DEFAULT_CHROMA];
+export function setChromaVariant(name) {
+  if (CHROMA_VARIANTS[name]) _chroma = CHROMA_VARIANTS[name];
+  return _chroma;
+}
+const wrap4 = (i) => ((i % 4) + 4) % 4;
+const chromaCanopy = (i) => _chroma[wrap4(i)];
+const chromaParticle = (i) => (wrap4(i) === 3 ? [1.0, 1.0, 1.0] : _chroma[wrap4(i)]);
+
+// Back-compat named export = the default register. COLOR_PALETTE must equal the default
+// _chroma so endpoint colours match it at the uMode default (seasons.test relies on this).
+export const COLOR_PALETTE = CHROMA_VARIANTS[DEFAULT_CHROMA];
 
 // The two ends of this frame's blend: prev = where instances start (= last cycle's
 // settled look), cur = where they arrive by prog=1. The wrap is continuous because
@@ -46,7 +82,7 @@ export function seasonEndpoints(index) {
   const p = (i + 3) % 4;
   return {
     prev: MONO_SETTLED[p], cur: MONO_SETTLED[i],
-    colorPrev: COLOR_PALETTE[p], colorCur: COLOR_PALETTE[i],
+    colorPrev: chromaCanopy(p), colorCur: chromaCanopy(i),
   };
 }
 
@@ -69,9 +105,10 @@ export const PARTICLE = [
   { amount: 1.00, size: 0.042, sway: 0.12, fall: 0.95, grey: 0.92, spin: 0.4 }, // 冬 雪: small, dense, near-white
 ];
 
-// Particle chroma for the step-6 uMode. Petals/leaves track their canopy hue (reuse
-// COLOR_PALETTE), but snow is the achromatic exception — winter particle stays WHITE in
-// BOTH modes (守る線: snow is white). 0..1 linear, fed straight into vec3 uniforms.
+// Particle chroma for the step-6 uMode — derived from the active canopy register via
+// chromaParticle(): petals/leaves track their canopy hue, but snow is the achromatic
+// exception — winter particle stays WHITE in BOTH modes and in EVERY variant (守る線:
+// snow is white). Back-compat export reflects the default register.
 export const PARTICLE_COLOR = [
   COLOR_PALETTE[0], COLOR_PALETTE[1], COLOR_PALETTE[2], [1.0, 1.0, 1.0],
 ];
@@ -83,6 +120,6 @@ export function particleEndpoints(index) {
   const p = (i + 3) % 4;
   return {
     prev: PARTICLE[p], cur: PARTICLE[i],
-    colorPrev: PARTICLE_COLOR[p], colorCur: PARTICLE_COLOR[i],
+    colorPrev: chromaParticle(p), colorCur: chromaParticle(i),
   };
 }

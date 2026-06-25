@@ -4,6 +4,7 @@ import { makeOverlay } from './overlay.js';
 import { buildStation, buildRailway } from './station.js';
 import { planLayout, buildTrees } from './trees.js';
 import { planEmit, buildParticles } from './particles.js';
+import { setChromaVariant } from './seasons.js';
 import { loadCity } from './cityasset.js';
 import { makeKeyframes } from './camrig.js';
 import { createDirector } from './director.js';
@@ -46,6 +47,17 @@ let particles = null;    // falling petals/leaves/snow along the 並木 (buildPa
 let mode = 0;            // 0 = monochrome (step-4 default); 1 = chroma (step-6 C key)
 let strobeEnabled = false; // 冬 white strobe gate (S key). Default OFF (光感受性 safety)
 
+// Live-tuning state (step 6). Initial values reproduce the current look EXACTLY — they
+// only move when a window.__proto setter fires (no on-screen HUD yet; that lands at
+// SceneManager integration). Kept at module scope so the rebuild helpers can reach them.
+let terrainRef = null;     // DEM mesh, kept for particle rebuilds (setPetals)
+let manifestRef = null;    // baked manifest, kept for the rebuilds
+let kfInputs = null;       // {full,landmark,station} snapshot for keyframe rebuilds
+let petalOpts = { perColumn: 7, stride: 1 }; // emit density (live via setPetals)
+let framingOpts = {};      // camrig DEF overrides (live via setFraming); {} = DEF
+let timingOpts = {};       // director DEFAULTS overrides (live via setTiming); {} = DEFAULTS
+const fallDist = 0.32;     // canopy-height fall distance (step5 visual tune)
+
 const drawOverlay = makeOverlay(document.getElementById('ov'));
 function loop(now) {
   if (director) {
@@ -71,16 +83,43 @@ window.__proto = {
   seek: (t) => { tSec = Math.max(0, t); },          // jump the director clock (seconds)
   setPaused: (b) => { paused = !!b; },
   setParallax: (b) => { parallax = !!b; },
-  setMode: (b) => { mode = b ? 1 : 0; },            // 0 mono / 1 chroma (sanity-check the 並木 colour path)
+  setMode: (b) => { mode = b ? 1 : 0; },            // 0 mono / 1 chroma (also the C key)
   setStrobe: (b) => { strobeEnabled = !!b; },        // 冬 white strobe gate (also the S key)
+  // step 6 live-tuning knobs (no HUD yet). Initial state == the current look.
+  setChromaVariant: (name) => setChromaVariant(name),         // swap chroma register (look-pick)
+  setStrobeRate: (hz) => { if (trees) trees.uniforms.uStrobeRate.value = Math.max(0, Math.min(3, hz)); }, // ≤3Hz (守る線)
+  setPetals: (partial) => { Object.assign(petalOpts, partial); rebuildParticles(); },   // particle emit density
+  setTiming: (partial) => { Object.assign(timingOpts, partial); rebuildDirector(); },   // director 緩急 overrides
+  setFraming: (partial) => { Object.assign(framingOpts, partial); rebuildDirector(); }, // camrig framing overrides
   state: () => ({ tSec, paused, parallax, mode, strobeEnabled }),
 };
+
+// Rebuild helpers for the live knobs. Both reuse the pure planners + THREE builders and
+// neither resets the director clock (tSec), so tuning is seamless. No-op until the city loads.
+function rebuildParticles() {
+  if (!particles || !terrainRef || !manifestRef) return;
+  scene.remove(particles.points);
+  particles.points.geometry.dispose();
+  particles.points.material.dispose();
+  const { avenue } = planLayout(manifestRef);
+  particles = buildParticles(planEmit(avenue, petalOpts), terrainRef, manifestRef, { renderer, fallDist });
+  scene.add(particles.points);
+  window.__proto.particles = particles;
+}
+function rebuildDirector() {
+  if (!kfInputs) return;
+  const keyframes = makeKeyframes(kfInputs, framingOpts);
+  director = createDirector({ keyframes, tuning: timingOpts });
+  window.__proto.director = director;
+  window.__proto.keyframes = keyframes;
+}
 
 // Swap the procedural city for the baked OSM/DEM/AO asset. Layers are added in
 // reveal order (terrain → roads → buildings → trees) so Plan 3's reveal anim
 // can drive them.
 loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.json').then((city) => {
   const { terrain, terrainGrid, buildings, landmark, station, manifest } = city;
+  terrainRef = terrain; manifestRef = manifest;    // keep for the live-tuning rebuilds (setPetals/setFraming/setTiming)
   if (terrain) scene.add(terrain);                 // 1. terrain (DEM relief) — always visible (the stage)
   if (terrainGrid) scene.add(terrainGrid);         //    fine lattice baked onto the DEM (reveals in)
   const avenuesGroup = buildAvenues(manifest); scene.add(avenuesGroup); // 2. roads (manifest polylines)
@@ -93,7 +132,7 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
   if (terrain) { trees = buildTrees(manifest, terrain); scene.add(trees.group); } // 4. 木々 (green zones + 大学通り 並木, seasonal)
   if (terrain) {                                    // 5. falling particles along the 並木 (reuse the avenue layout)
     const { avenue } = planLayout(manifest);        // pure + deterministic → byte-identical to buildTrees' avenue
-    particles = buildParticles(planEmit(avenue, { perColumn: 7, stride: 1 }), terrain, manifest, { renderer, fallDist: 0.32 });
+    particles = buildParticles(planEmit(avenue, petalOpts), terrain, manifest, { renderer, fallDist });
     scene.add(particles.points);
   }
 
@@ -107,8 +146,8 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
     const c = new THREE.Box3().setFromObject(landmark).getCenter(new THREE.Vector3());
     landmarkW = { x: c.x, y: c.y, z: c.z };
   }
-  const keyframes = makeKeyframes({ full: { ...params }, landmark: landmarkW, station: stationW });
-  director = createDirector({ keyframes });
+  kfInputs = { full: { ...params }, landmark: landmarkW, station: stationW }; // snapshot ④ before the loop mutates params
+  rebuildDirector();                               // builds keyframes + director from kfInputs / framingOpts / timingOpts
 
   // Intro reveals: the 格子 lattice fades up, then the roads electrify (the symbolic
   // white avenues + 中央線 lead, the grey network fills behind them).
@@ -122,10 +161,8 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
   window.__proto.trees = trees;
   window.__proto.particles = particles;
   window.__proto.manifest = manifest;
-  window.__proto.director = director;
   window.__proto.reveal = reveal;
   window.__proto.intro = intro;
-  window.__proto.keyframes = keyframes;
 }).catch((e) => console.error('city load failed', e));
 
 // Tuning controls (city-proto stage): dial 緩急 by looking. Later → ControlPanel.
@@ -134,5 +171,6 @@ addEventListener('keydown', (e) => {
   else if (e.key === '[') { tSec = Math.max(0, tSec - 1.0); }        // scrub back 1s
   else if (e.key === ']') { tSec += 1.0; }                            // scrub forward 1s
   else if (e.key === 'p' || e.key === 'P') { parallax = !parallax; } // straight dolly ↔ micro-parallax
+  else if (e.key === 'c' || e.key === 'C') { mode = mode ? 0 : 1; }  // mono ↔ chroma 季節色 (step 6; ~0.6s ease)
   else if (e.key === 's' || e.key === 'S') { strobeEnabled = !strobeEnabled; } // 冬 white strobe (default off)
 });

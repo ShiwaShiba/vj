@@ -4,6 +4,7 @@ import { SEASON_NAMES as DIRECTOR_NAMES } from '../../src/cityproto/director.js'
 import {
   SEASON_NAMES, MONO_SETTLED, COLOR_PALETTE, GRAD, seasonEndpoints,
   PARTICLE, PARTICLE_COLOR, particleEndpoints,
+  CHROMA_VARIANTS, setChromaVariant,
 } from '../../src/cityproto/seasons.js';
 
 test('SEASON_NAMES is the single source re-exported from director', () => {
@@ -117,5 +118,62 @@ test('particle continuity invariant: endpoints(i).cur === endpoints(i+1).prev (s
     assert.deepStrictEqual(particleEndpoints(i).cur, particleEndpoints(next).prev,
       `prog=1 of particle season ${i} must equal prog=0 baseline of season ${next}`);
     assert.deepStrictEqual(particleEndpoints(i).colorCur, particleEndpoints(next).colorPrev);
+  }
+});
+
+// --- step 6: swappable chroma registers (the C-key colour mode, look-pick) ---
+
+test('CHROMA_VARIANTS: default register `current` exists, every variant is 4×rgb in 0..1', () => {
+  assert.ok(CHROMA_VARIANTS.current, 'default register `current` present');
+  assert.ok(Object.keys(CHROMA_VARIANTS).length >= 2, 'at least two registers to pick between');
+  for (const [name, pal] of Object.entries(CHROMA_VARIANTS)) {
+    assert.strictEqual(pal.length, 4, `${name} has 4 seasons`);
+    for (const c of pal) {
+      assert.strictEqual(c.length, 3, `${name} hue is rgb`);
+      for (const ch of c) assert.ok(ch >= 0 && ch <= 1, `${name} channel in 0..1`);
+    }
+  }
+});
+
+test('back-compat exports track the default register', () => {
+  assert.deepStrictEqual(COLOR_PALETTE, CHROMA_VARIANTS.current, 'COLOR_PALETTE == default register');
+  assert.deepStrictEqual(PARTICLE_COLOR,
+    [CHROMA_VARIANTS.current[0], CHROMA_VARIANTS.current[1], CHROMA_VARIANTS.current[2], [1.0, 1.0, 1.0]]);
+});
+
+test('setChromaVariant swaps the active register; unknown name is a no-op', () => {
+  try {
+    setChromaVariant('muted');
+    assert.deepStrictEqual(seasonEndpoints(0).colorCur, CHROMA_VARIANTS.muted[0], 'canopy follows muted');
+    assert.deepStrictEqual(particleEndpoints(0).colorCur, CHROMA_VARIANTS.muted[0], 'particle follows muted');
+    setChromaVariant('no-such-variant');
+    assert.deepStrictEqual(seasonEndpoints(0).colorCur, CHROMA_VARIANTS.muted[0], 'unknown name leaves active unchanged');
+  } finally {
+    setChromaVariant('current'); // reset module state for the rest of the suite
+  }
+});
+
+test('守る線: winter particle chroma is white in EVERY register', () => {
+  try {
+    for (const name of Object.keys(CHROMA_VARIANTS)) {
+      setChromaVariant(name);
+      assert.deepStrictEqual(particleEndpoints(3).colorCur, [1.0, 1.0, 1.0], `snow white under ${name}`);
+      assert.deepStrictEqual(particleEndpoints(0).colorPrev, [1.0, 1.0, 1.0], `winter→spring prev white under ${name}`);
+    }
+  } finally {
+    setChromaVariant('current');
+  }
+});
+
+test('chroma continuity holds after a register swap (no colour pop at the wrap)', () => {
+  try {
+    setChromaVariant('mid');
+    for (let i = 0; i < 4; i++) {
+      const next = (i + 1) % 4;
+      assert.deepStrictEqual(seasonEndpoints(i).colorCur, seasonEndpoints(next).colorPrev, `canopy ${i}→${next}`);
+      assert.deepStrictEqual(particleEndpoints(i).colorCur, particleEndpoints(next).colorPrev, `particle ${i}→${next}`);
+    }
+  } finally {
+    setChromaVariant('current');
   }
 });
