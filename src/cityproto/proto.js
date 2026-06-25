@@ -2,7 +2,8 @@ import * as THREE from '../vendor/three.module.js';
 import { buildAvenues } from './avenues.js';
 import { makeOverlay } from './overlay.js';
 import { buildStation, buildRailway } from './station.js';
-import { buildTrees } from './trees.js';
+import { planLayout, buildTrees } from './trees.js';
+import { planEmit, buildParticles } from './particles.js';
 import { loadCity } from './cityasset.js';
 import { makeKeyframes } from './camrig.js';
 import { createDirector } from './director.js';
@@ -41,7 +42,9 @@ let last = null;         // perf timestamp of the previous frame
 let paused = false;      // freeze the clock to inspect a framing
 let parallax = false;    // straight dolly (false) vs micro-parallax (true), A/B by looking
 let trees = null;        // seasonal 並木 controller (buildTrees → {group, update, setMode})
+let particles = null;    // falling petals/leaves/snow along the 並木 (buildParticles → {points, update})
 let mode = 0;            // 0 = monochrome (step-4 default); 1 = chroma (step-6 C key)
+let strobeEnabled = false; // 冬 white strobe gate (S key). Default OFF (光感受性 safety)
 
 const drawOverlay = makeOverlay(document.getElementById('ov'));
 function loop(now) {
@@ -54,7 +57,8 @@ function loop(now) {
     applyCamera();
     if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
     if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
-    if (trees) trees.update(f.season, mode, dt);     // 並木 monochrome seasons (染め sweeps the avenue)
+    if (trees) trees.update(f.season, mode, dt, { strobe: strobeEnabled }); // 並木 seasons + 冬 strobe
+    if (particles) particles.update(f.season, mode, dt); // 花びら/落ち葉/雪 (GPU fall, sweep-synced)
   }
   renderer.render(scene, camera);
   drawOverlay();
@@ -68,7 +72,8 @@ window.__proto = {
   setPaused: (b) => { paused = !!b; },
   setParallax: (b) => { parallax = !!b; },
   setMode: (b) => { mode = b ? 1 : 0; },            // 0 mono / 1 chroma (sanity-check the 並木 colour path)
-  state: () => ({ tSec, paused, parallax, mode }),
+  setStrobe: (b) => { strobeEnabled = !!b; },        // 冬 white strobe gate (also the S key)
+  state: () => ({ tSec, paused, parallax, mode, strobeEnabled }),
 };
 
 // Swap the procedural city for the baked OSM/DEM/AO asset. Layers are added in
@@ -86,6 +91,11 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
   if (station) scene.add(station);
   scene.add(buildStation(manifest));               // station glow accent (runtime canvas texture)
   if (terrain) { trees = buildTrees(manifest, terrain); scene.add(trees.group); } // 4. 木々 (green zones + 大学通り 並木, seasonal)
+  if (terrain) {                                    // 5. falling particles along the 並木 (reuse the avenue layout)
+    const { avenue } = planLayout(manifest);        // pure + deterministic → byte-identical to buildTrees' avenue
+    particles = buildParticles(planEmit(avenue, { perColumn: 7, stride: 1 }), terrain, manifest, { renderer, fallDist: 0.32 });
+    scene.add(particles.points);
+  }
 
   // Keyframes: ④ = the current full-city params; ① is the 旧駅舎 (landmark) hero.
   const { SCALE, VSCALE, vOffset } = manifest.scale;
@@ -110,6 +120,7 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
 
   window.__proto.city = city;
   window.__proto.trees = trees;
+  window.__proto.particles = particles;
   window.__proto.manifest = manifest;
   window.__proto.director = director;
   window.__proto.reveal = reveal;
@@ -123,4 +134,5 @@ addEventListener('keydown', (e) => {
   else if (e.key === '[') { tSec = Math.max(0, tSec - 1.0); }        // scrub back 1s
   else if (e.key === ']') { tSec += 1.0; }                            // scrub forward 1s
   else if (e.key === 'p' || e.key === 'P') { parallax = !parallax; } // straight dolly ↔ micro-parallax
+  else if (e.key === 's' || e.key === 'S') { strobeEnabled = !strobeEnabled; } // 冬 white strobe (default off)
 });

@@ -16,6 +16,10 @@ import { GRAD, seasonEndpoints } from './seasons.js';
 // avenue's v-extent normalized to [0,1] (the染め sweep axis); scatter aPhase is 0.
 export function planLayout(manifest, opts = {}) {
   const bounds = opts.bounds || { u0: -1.85, u1: 1.72, v0: -0.42, v1: 1.3 };
+  // The avenue gets its OWN (taller) v-bound so the 並木 reaches the 大学通り terminus
+  // (manifest road runs to v≈3.53) WITHOUT admitting more green-zone scatter — raising the
+  // shared bounds.v1 would also spawn scatter between v=1.3..3.55. Independent by design.
+  const avenueBounds = opts.avenueBounds || { ...bounds, v1: 3.55 };
   const cell = opts.cell ?? 0.028;          // ~12 m thinning grid (prevents clumping)
   const avenueOffset = opts.avenueOffset ?? 0.022;
 
@@ -23,10 +27,10 @@ export function planLayout(manifest, opts = {}) {
   let s = 0x2545f491 >>> 0;
   const rnd = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
 
-  const inB = (u, v) => u > bounds.u0 && u < bounds.u1 && v > bounds.v0 && v < bounds.v1;
+  const inB = (b, u, v) => u > b.u0 && u < b.u1 && v > b.v0 && v < b.v1;
   const taken = new Set();                   // grid-thin shared across both lists
-  const plant = (u, v, arr) => {
-    if (!inB(u, v)) return;
+  const plant = (u, v, arr, b) => {
+    if (!inB(b, u, v)) return;
     const k = Math.floor(u / cell) + ',' + Math.floor(v / cell);
     if (taken.has(k)) return;
     taken.add(k);
@@ -40,7 +44,7 @@ export function planLayout(manifest, opts = {}) {
     const u0 = Math.min(a0, a1), v0 = Math.min(b0, b1);
     const du = Math.abs(a1 - a0), dv = Math.abs(b1 - b0);
     const n = Math.min(240, Math.max(6, Math.round((du * dv) / (cell * cell) * 3)));
-    for (let i = 0; i < n; i++) plant(u0 + rnd() * du, v0 + rnd() * dv, scatter);
+    for (let i = 0; i < n; i++) plant(u0 + rnd() * du, v0 + rnd() * dv, scatter, bounds);
   }
 
   const avenue = [];
@@ -54,8 +58,8 @@ export function planLayout(manifest, opts = {}) {
       let px = -(bv - av), py = (bu - au); const pl = Math.hypot(px, py) || 1; px /= pl; py /= pl;
       for (let k = 0; k < steps; k++) {
         const t = k / steps, cu = au + (bu - au) * t, cv = av + (bv - av) * t;
-        plant(cu + px * avenueOffset, cv + py * avenueOffset, avenue);
-        plant(cu - px * avenueOffset, cv - py * avenueOffset, avenue);
+        plant(cu + px * avenueOffset, cv + py * avenueOffset, avenue, avenueBounds);
+        plant(cu - px * avenueOffset, cv - py * avenueOffset, avenue, avenueBounds);
       }
     }
   }
@@ -92,6 +96,9 @@ function makeUniforms() {
     uBand: { value: 0.3 },
     uGradBase: { value: GRAD.base },                   // single-source gradient recovery
     uGradSpan: { value: GRAD.span },
+    uStrobe: { value: 0 },                             // 0..1 envelope (eased; winter + S-gated; default off)
+    uStrobeRate: { value: 2.5 },                       // Hz of the traveling white pulse — ≤3 (光感受性)
+    uStrobeSpan: { value: 1.0 },                       // how far down-avenue the pulse phase travels
   };
 }
 
@@ -111,7 +118,8 @@ uniform float uStagger;
 uniform float uBand;
 uniform float uDamp;
 varying float vProgI;
-varying float vSeed;`)
+varying float vSeed;
+varying float vPhase;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 float _pStart = min(aPhase * uStagger, 1.0 - uBand);
 float progI = smoothstep(_pStart, _pStart + uBand, uProg);
@@ -121,7 +129,8 @@ float sScale = mix(uScale.x, uScale.y, progI) * uDamp;
 transformed *= sScale * keep;
 transformed.y -= 999.0 * (1.0 - keep);
 vProgI = progI;
-vSeed = aSeed;`);
+vSeed = aSeed;
+vPhase = aPhase;`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 uniform vec2 uToneLo;
@@ -134,15 +143,25 @@ uniform float uMode;
 uniform float uTime;
 uniform float uGradBase;
 uniform float uGradSpan;
+uniform float uStrobe;
+uniform float uStrobeRate;
+uniform float uStrobeSpan;
 varying float vProgI;
-varying float vSeed;`)
+varying float vSeed;
+varying float vPhase;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 float gradT = clamp((diffuseColor.r - uGradBase) / uGradSpan, 0.0, 1.0);
 float grey = mix(mix(uToneLo.x, uToneLo.y, vProgI), mix(uToneHi.x, uToneHi.y, vProgI), gradT);
 grey += mix(uShimmer.x, uShimmer.y, vProgI) * 0.06 * (sin(uTime * 1.7 + vSeed * 43.0) * 0.5 + 0.5);
 grey = mix(grey, 0.85, mix(uSnow.x, uSnow.y, vProgI) * smoothstep(0.45, 1.0, gradT));
 vec3 seasonC = mix(uColor0, uColor1, vProgI) * (0.45 + 0.55 * gradT);
-diffuseColor.rgb = mix(vec3(grey), seasonC, uMode);`);
+diffuseColor.rgb = mix(vec3(grey), seasonC, uMode);
+// 冬 christmas-light strobe: a white pulse that travels DOWN the avenue (vPhase offset).
+// White only (守る線), ≤3Hz (uStrobeRate), soft in/out window (no hard square). The whole
+// term is gated by the uStrobe envelope (winter + S-key, eased; default 0 = invisible).
+float flashPhase = fract(uTime * uStrobeRate - vPhase * uStrobeSpan);
+float pulse = smoothstep(0.0, 0.18, flashPhase) * (1.0 - smoothstep(0.32, 0.5, flashPhase));
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), uStrobe * pulse);`);
   };
   mat.needsUpdate = true;
 }
@@ -217,7 +236,7 @@ export function buildTrees(manifest, terrain, opts = {}) {
   if (scatter.length) group.add(buildMesh(scatter, baseGeo, U, 0.45, radius, groundY, SCALE, vOffset));
 
   let modeTarget = 0;
-  function update(season, mode, dt) {
+  function update(season, mode, dt, opts = {}) {
     const ep = seasonEndpoints(season.index);
     U.uScale.value.set(ep.prev.scale, ep.cur.scale);
     U.uDensity.value.set(ep.prev.density, ep.cur.density);
@@ -231,6 +250,11 @@ export function buildTrees(manifest, terrain, opts = {}) {
     U.uTime.value += dt || 0;
     if (mode != null) modeTarget = mode ? 1 : 0;
     U.uMode.value += (modeTarget - U.uMode.value) * Math.min(1, (dt || 0) * 4); // ~0.6s crossfade
+    // Winter strobe: only season 3, only when the S-key gate is on, ramped via uStrobe so
+    // onset/offset are smooth (no abrupt full-rate flash). Default gate off ⇒ eases to 0.
+    const gate = opts.strobe ? 1 : 0;
+    const strobeTarget = (season.index === 3 ? season.prog : 0) * gate;
+    U.uStrobe.value += (strobeTarget - U.uStrobe.value) * Math.min(1, (dt || 0) * 3); // ~1s ramp
   }
   function setMode(mode) { modeTarget = mode ? 1 : 0; }
 

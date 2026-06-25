@@ -65,6 +65,34 @@ test('missing 大学通り → avenue:[] without throwing, scatter still populat
   assert.ok(scatter.length > 0);
 });
 
+// --- step 5 / avenue extension: avenue plants to its own (taller) v-bound, independent
+// of the scatter bounds, so the 並木 reaches the 大学通り terminus without growing scatter. ---
+
+// A 大学通り that runs well past the old clip (v1=1.3), up to v=3.0.
+const TALL = () => {
+  const m = FIX();
+  m.roads = [{ name: '大学通り', points: [[0.0, 0.20, 0], [0.0, 1.50, 0], [0.0, 3.00, 0]] }];
+  return m;
+};
+
+test('default avenueBounds extends the 並木 past the old v=1.3 clip', () => {
+  const { avenue } = planLayout(TALL());
+  const maxV = Math.max(...avenue.map((p) => p.v));
+  assert.ok(maxV > 1.3, `avenue reaches past old clip (got maxV=${maxV})`);
+});
+
+test('opts.avenueBounds clips the avenue (the knob works)', () => {
+  const clipped = planLayout(TALL(), { avenueBounds: { u0: -1.85, u1: 1.72, v0: -0.42, v1: 1.0 } });
+  const maxV = Math.max(...clipped.avenue.map((p) => p.v));
+  assert.ok(maxV <= 1.0, `avenue clipped to v<=1.0 (got maxV=${maxV})`);
+});
+
+test('extending the avenue does NOT change scatter (bounds are independent)', () => {
+  const tallScatter = planLayout(TALL()).scatter.length;
+  const shortScatter = planLayout(TALL(), { avenueBounds: { u0: -1.85, u1: 1.72, v0: -0.42, v1: 1.0 } }).scatter.length;
+  assert.strictEqual(tallScatter, shortScatter, 'scatter count is independent of avenue extent');
+});
+
 test('degenerate avenue (constant v, V1===V0) → aPhase 0, no NaN', () => {
   // Short vertical segment: both-sides offset lands in u, so every planted tree
   // shares v=0.50 → V1===V0 → the div-by-zero guard must yield aPhase 0.

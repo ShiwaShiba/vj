@@ -49,3 +49,40 @@ export function seasonEndpoints(index) {
     colorPrev: COLOR_PALETTE[p], colorCur: COLOR_PALETTE[i],
   };
 }
+
+// --- step 5: falling particles (one reused THREE.Points system) ---
+// petals (春) / leaves (秋) / snow (冬) are all the SAME points; the per-season FIELDS
+// below are what make them read differently:
+//   amount = emission strength 0..1 (scales per-particle alpha; 0 = nothing falls)
+//   size   = point world-radius for size-attenuation (snow small/dense, leaves large)
+//   sway   = horizontal drift amplitude (world units) — leaves flutter, snow barely drifts
+//   fall   = ground-reach factor: drop = clamp(frac*fall,0,1)·fallDist. >1 lands early then
+//            rests on the ground; <1 never quite settles (snow blows). petals ~1, leaves fast.
+//   grey   = mono brightness (snow near-white, leaves mid grey) — achromatic by default
+//   spin   = sway frequency multiplier (leaves tumble fast, petals lazy)
+// summer amount=0 so petals fade fully out before 新緑; the prev→cur blend (particleEndpoints)
+// carries the SAME continuity invariant as seasonEndpoints, so the 4-cycle wrap is seamless.
+export const PARTICLE = [
+  { amount: 0.85, size: 0.060, sway: 0.22, fall: 1.00, grey: 0.78, spin: 0.6 }, // 春 桜吹雪: slow, broad, bright
+  { amount: 0.00, size: 0.045, sway: 0.10, fall: 1.00, grey: 0.30, spin: 1.0 }, // 夏: (almost) none
+  { amount: 0.70, size: 0.075, sway: 0.34, fall: 1.40, grey: 0.42, spin: 1.6 }, // 秋 落葉: large, fast flutter
+  { amount: 1.00, size: 0.042, sway: 0.12, fall: 0.95, grey: 0.92, spin: 0.4 }, // 冬 雪: small, dense, near-white
+];
+
+// Particle chroma for the step-6 uMode. Petals/leaves track their canopy hue (reuse
+// COLOR_PALETTE), but snow is the achromatic exception — winter particle stays WHITE in
+// BOTH modes (守る線: snow is white). 0..1 linear, fed straight into vec3 uniforms.
+export const PARTICLE_COLOR = [
+  COLOR_PALETTE[0], COLOR_PALETTE[1], COLOR_PALETTE[2], [1.0, 1.0, 1.0],
+];
+
+// Mirror of seasonEndpoints for the particle look — same wrap construction, so emission
+// amount/size/sway/fall blend continuously across the season boundary (no burst/stop pop).
+export function particleEndpoints(index) {
+  const i = ((index % 4) + 4) % 4;
+  const p = (i + 3) % 4;
+  return {
+    prev: PARTICLE[p], cur: PARTICLE[i],
+    colorPrev: PARTICLE_COLOR[p], colorCur: PARTICLE_COLOR[i],
+  };
+}
