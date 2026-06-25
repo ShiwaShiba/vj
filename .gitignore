@@ -6,3 +6,6 @@ node_modules/
 HANDOFF.md
 .superpowers/
 tools/citybake/.plateau-tmp/
+
+# local screenshot previews (served at :8125/shots, not for commit)
+shots/

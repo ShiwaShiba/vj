@@ -11,7 +11,7 @@ renderer.setClearColor(0x07080a, 1);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-const params = { camX: 0, camY: 12, camZ: 8, fov: 47, lookX: 0, lookY: 0, lookV: 0.5 };
+const params = { camX: -5.1, camY: 55.3, camZ: 50, fov: 50, lookX: -5.1, lookY: 0, lookV: 16.8 }; // 国立市全域フレーミング（南=谷保まで・北=中央線で切る）
 function applyCamera() {
   camera.fov = params.fov;
   camera.position.set(params.camX, params.camY, params.camZ);

@@ -94,25 +94,35 @@ for (const t of triNodes) {
   po += t.node.positions.length; io += t.node.indices.length; vb += vcount;
 }
 
-const t0 = Date.now();
-const colors = bakeAO({ positions, indices, normals }, { rays: RAYS, radius: RADIUS, seed: 1, baseGrey, aoStrength: AO_STRENGTH });
-console.log(`AO bake ${((Date.now() - t0) / 1000).toFixed(1)}s  (${NP / 3} verts, ${NI / 3} tris, ${RAYS} rays r=${RADIUS})`);
+// MANIFEST_ONLY=1 regenerates dist/city.manifest.json only (e.g. when road
+// classification changes) — skips the ~32-min AO bake and leaves the committed
+// RAYS=20 city.glb byte-for-byte untouched. Roads live only in the manifest.
+const MANIFEST_ONLY = !!process.env.MANIFEST_ONLY;
+if (!MANIFEST_ONLY) {
+  const t0 = Date.now();
+  const colors = bakeAO({ positions, indices, normals }, { rays: RAYS, radius: RADIUS, seed: 1, baseGrey, aoStrength: AO_STRENGTH });
+  console.log(`AO bake ${((Date.now() - t0) / 1000).toFixed(1)}s  (${NP / 3} verts, ${NI / 3} tris, ${RAYS} rays r=${RADIUS})`);
 
-// --- glb nodes -----------------------------------------------------------
-const glbNodes = [];
-for (const t of triNodes) {
-  const c = colors.subarray(t.range.start * 3, (t.range.start + t.range.count) * 3);
-  glbNodes.push({ name: t.name, positions: t.node.positions, colors: new Float32Array(c), indices: t.node.indices });
+  // --- glb nodes ---------------------------------------------------------
+  const glbNodes = [];
+  for (const t of triNodes) {
+    const c = colors.subarray(t.range.start * 3, (t.range.start + t.range.count) * 3);
+    glbNodes.push({ name: t.name, positions: t.node.positions, colors: new Float32Array(c), indices: t.node.indices });
+  }
+  // terrain grid as a LINES node (pair-stored vertices → identity indices)
+  const gN = city.terrainGrid.positions.length / 3;
+  glbNodes.splice(1, 0, { name: 'terrainGrid', mode: 1, positions: city.terrainGrid.positions, indices: Uint32Array.from({ length: gN }, (_, i) => i) });
+
+  mkdirSync(DIST, { recursive: true });
+  const glb = writeGlb({ nodes: glbNodes });
+  writeFileSync(join(DIST, 'city.glb'), glb);
+  console.log(`✓ city.glb ${(glb.length / 1024).toFixed(0)}KB  | grid segs ${gN / 2} | thetaDeg ${thetaDeg.toFixed(2)}`);
 }
-// terrain grid as a LINES node (pair-stored vertices → identity indices)
-const gN = city.terrainGrid.positions.length / 3;
-glbNodes.splice(1, 0, { name: 'terrainGrid', mode: 1, positions: city.terrainGrid.positions, indices: Uint32Array.from({ length: gN }, (_, i) => i) });
 
 mkdirSync(DIST, { recursive: true });
-const glb = writeGlb({ nodes: glbNodes });
-writeFileSync(join(DIST, 'city.glb'), glb);
-
 const manifest = buildManifest({ osm, projector, planHeight, perBuilding: city.buildings.perBuilding, params: { SCALE, VSCALE, vexag: VEXAG, bounds: BOUNDS, bbox: meta.bbox, vOffset } });
 writeFileSync(join(DIST, 'city.manifest.json'), JSON.stringify(manifest));
 
-console.log(`✓ city.glb ${(glb.length / 1024).toFixed(0)}KB  | buildings ${city.buildings.perBuilding.length} | grid segs ${gN / 2} | thetaDeg ${thetaDeg.toFixed(2)} | primary roads ${manifest.roads.length}`);
+const nPrim = manifest.roads.filter((r) => r.primary).length;
+const nSec = manifest.roads.filter((r) => !r.primary && r.name !== 'chuo').length;
+console.log(`✓ city.manifest.json  | buildings ${city.buildings.perBuilding.length} | primary roads ${nPrim} | secondary roads ${nSec}`);

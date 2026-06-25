@@ -1,7 +1,12 @@
 // Overpass JSON → typed city features (footprints, roads, rails, green, the
 // 旧駅舎 landmark, the functional station). Pure: lat/lon in, no projection.
 const LEVEL_M = 3.2;
-const PRIMARY_NAMES = ['大学通り', '富士見通り', '旭通り']; // the home-plate fan (学園通り excluded)
+// Avenue-name candidates. The home-plate fan (大学/富士見/旭) + 国立停車場谷保線
+// (大学通り's southward continuation to 谷保). さくら通り stays in the secondary
+// (grey) tier per user direction. Same-named roads elsewhere (e.g. a far 富士見通り
+// in 谷保) are pruned later in manifest.mjs by the station-connectivity gate, so
+// listing a name here is only a candidacy, not a guarantee of primary.
+const PRIMARY_NAMES = ['大学通り', '富士見通り', '旭通り', '国立停車場谷保線'];
 const GREEN_LANDUSE = new Set(['grass', 'forest', 'recreation_ground', 'cemetery', 'meadow']);
 
 function rng(seed) {
