@@ -22,6 +22,8 @@ const VEXAG = +process.env.VEXAG || 2.5;       // DEM vertical exaggeration
 const RAYS = +process.env.RAYS || 20;          // AO hemisphere rays / vertex
 const RADIUS = +process.env.RADIUS || 0.4;     // AO ray length (world units)
 const AO_STRENGTH = +process.env.AOSTR || 0.55; // soft contact shadow (reference touch), not heavy darkening
+const CONTACT_STRENGTH = process.env.CONTACT_STRENGTH !== undefined ? +process.env.CONTACT_STRENGTH : 0; // TODO Task4: 中庸default after montage
+const CONTACT_RADIUS = process.env.CONTACT_RADIUS !== undefined ? +process.env.CONTACT_RADIUS : RADIUS * 0.3; // short-radius contact occlusion (world units)
 const BOUNDS = { u0: -4.8, u1: 3.1, v0: -1.2, v1: 7.4 }; // 国立市全域（南=谷保天満宮まで延伸・北=中央線少し北で切る）
 const NX = 200, NV = 170, SCALE = 6, VSCALE = 5, vOffset = 0.3; // 広域化に合わせ地形メッシュを密に
 // Greys are gamma-encoded (linear→sRGB) on output, so keep terrain near-black
@@ -82,7 +84,7 @@ const triNodes = [
 // merge into one occluder soup (track per-node vertex ranges) + per-vertex base grey
 let NP = 0, NI = 0;
 for (const t of triNodes) { NP += t.node.positions.length; NI += t.node.indices.length; }
-const positions = new Float32Array(NP), normals = new Float32Array(NP), indices = new Uint32Array(NI), baseGrey = new Float32Array(NP / 3);
+const positions = new Float32Array(NP), normals = new Float32Array(NP), indices = new Uint32Array(NI), baseGrey = new Float32Array(NP / 3), contactMask = new Float32Array(NP / 3);
 let po = 0, io = 0, vb = 0;
 for (const t of triNodes) {
   positions.set(t.node.positions, po); normals.set(t.node.normals, po);
@@ -90,6 +92,8 @@ for (const t of triNodes) {
   const vcount = t.node.positions.length / 3;
   // per-building type can override (landmark/station nodes are single-type here)
   baseGrey.fill(BASE_GREY[t.type] ?? 0.8, vb, vb + vcount);
+  // contact AO is gated to generic buildings only — landmark/station/terrain stay unchanged
+  if (t.type === 'generic') contactMask.fill(1, vb, vb + vcount);
   t.range = { start: vb, count: vcount };
   po += t.node.positions.length; io += t.node.indices.length; vb += vcount;
 }
@@ -100,8 +104,9 @@ for (const t of triNodes) {
 const MANIFEST_ONLY = !!process.env.MANIFEST_ONLY;
 if (!MANIFEST_ONLY) {
   const t0 = Date.now();
-  const colors = bakeAO({ positions, indices, normals }, { rays: RAYS, radius: RADIUS, seed: 1, baseGrey, aoStrength: AO_STRENGTH });
-  console.log(`AO bake ${((Date.now() - t0) / 1000).toFixed(1)}s  (${NP / 3} verts, ${NI / 3} tris, ${RAYS} rays r=${RADIUS})`);
+  const colors = bakeAO({ positions, indices, normals }, { rays: RAYS, radius: RADIUS, seed: 1, baseGrey, aoStrength: AO_STRENGTH, contactStrength: CONTACT_STRENGTH, contactRadius: CONTACT_RADIUS, contactMask });
+  let genVerts = 0; for (let i = 0; i < contactMask.length; i++) if (contactMask[i]) genVerts++;
+  console.log(`AO bake ${((Date.now() - t0) / 1000).toFixed(1)}s  (${NP / 3} verts, ${NI / 3} tris, ${RAYS} rays r=${RADIUS}, contact=${CONTACT_STRENGTH}@${CONTACT_RADIUS.toFixed(3)} on ${genVerts} generic verts)`);
 
   // --- glb nodes ---------------------------------------------------------
   const glbNodes = [];
