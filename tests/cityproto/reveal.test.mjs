@@ -65,6 +65,36 @@ test('clusterRevealKeys is deterministic and transitive across a chain of overla
   assert.deepStrictEqual([...a], [1.5, 1.5, 1.5], 'transitive cluster → shared min');
 });
 
+test('clusterRevealKeys: a wide footprint at QUANTIZED scale does not overflow the grid Map', () => {
+  // Runtime regression guard. installReveal feeds RAW KHR_mesh_quantization positions
+  // (range ~0..65535), NOT world units. The old fixed world-scale cell (Math.min(4,…)) made
+  // a single wide footprint span (extent/cell)² ≈ 10^8 grid cells at that scale, blowing the
+  // Map past V8's ~16.7M limit ("Map maximum size exceeded") and failing the entire city
+  // load. The span-relative cell keeps the grid to ~n buckets at any scale. With the OLD
+  // code this call throws; it must simply complete and return the building's own key.
+  const wide = [[0, 0], [40000, 0], [40000, 40000], [0, 40000]]; // 40000-unit (quantized) footprint
+  const perBuilding = [{ vStart: 0, vCount: 4, revealKey: 1.0 }];
+  const keys = clusterRevealKeys(perBuilding, (i) => wide[i][0], (i) => wide[i][1], 0.5);
+  assert.deepStrictEqual([...keys], [1.0], 'completes without overflow; lone building keeps its key');
+});
+
+test('clusterRevealKeys: overlap detection is scale-invariant (overlapping pair clusters at quantized scale)', () => {
+  // Same geometry as the world-scale tests but translated/scaled into the quantized range:
+  // an overlapping pair near map centre + a building in a far corner. The pair must share the
+  // cluster MIN; the distant one stays independent. (Node scale is uniform-sign per axis, so
+  // the overlap-area fraction is preserved → clustering matches the world-scale result.)
+  const pairA = square(32000, 32000, 60), pairB = square(32010, 32000, 60); // ~120-unit footprints overlapping
+  const far = square(8000, 60000, 60);                                       // far corner, no overlap
+  const fp = [...pairA, ...pairB, ...far];
+  const perBuilding = [
+    { vStart: 0, vCount: 4, revealKey: 4.0 },
+    { vStart: 4, vCount: 4, revealKey: 1.5 },
+    { vStart: 8, vCount: 4, revealKey: 7.0 },
+  ];
+  const keys = clusterRevealKeys(perBuilding, (i) => fp[i][0], (i) => fp[i][1], 0.5);
+  assert.deepStrictEqual([...keys], [1.5, 1.5, 7.0], 'pair → shared min; distant → own key');
+});
+
 test('buildRevealAttributes applies clustering when getX/getZ are supplied (opt-in, back-compat without)', () => {
   const fp = [...square(0, 0), ...square(0, 0)];
   const perBuilding = [

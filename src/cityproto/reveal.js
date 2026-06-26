@@ -24,7 +24,7 @@
 export function clusterRevealKeys(perBuilding, getX, getZ, overlapFrac = 0.5) {
   const n = perBuilding.length;
   const x0 = new Float64Array(n), z0 = new Float64Array(n), x1 = new Float64Array(n), z1 = new Float64Array(n), area = new Float64Array(n);
-  let extSum = 0;
+  let gx0 = Infinity, gz0 = Infinity, gx1 = -Infinity, gz1 = -Infinity; // global XZ bounds (for cell sizing)
   for (let b = 0; b < n; b++) {
     const pb = perBuilding[b], end = pb.vStart + pb.vCount;
     let ax0 = Infinity, az0 = Infinity, ax1 = -Infinity, az1 = -Infinity;
@@ -35,10 +35,19 @@ export function clusterRevealKeys(perBuilding, getX, getZ, overlapFrac = 0.5) {
     }
     x0[b] = ax0; z0[b] = az0; x1[b] = ax1; z1[b] = az1;
     area[b] = Math.max(0, ax1 - ax0) * Math.max(0, az1 - az0);
-    extSum += Math.max(ax1 - ax0, az1 - az0);
+    if (ax0 < gx0) gx0 = ax0; if (ax1 > gx1) gx1 = ax1;
+    if (az0 < gz0) gz0 = az0; if (az1 > gz1) gz1 = az1;
   }
-  // grid cell ~ mean building extent so an AABB spans only a handful of cells.
-  const cell = Math.min(4, Math.max(0.25, extSum / Math.max(1, n)));
+  // Cell sized from the OVERALL coordinate span → the hash holds ~n buckets and each AABB
+  // spans only a handful of cells, REGARDLESS of coordinate scale. Load-bearing: installReveal
+  // feeds RAW KHR_mesh_quantization positions (range ~0..65535, not world units). A fixed
+  // world-scale cell (the old Math.min(4,…)) made AABBs span millions of cells at that scale,
+  // blowing the Map past V8's ~16.7M limit ("Map maximum size exceeded") and failing the load.
+  // span/√n is scale-invariant: quantized OR world both yield ~n cells. Clustering itself is
+  // cell-size-independent (two overlapping AABBs always share a covered cell), so only the
+  // grid memory changes, not the result.
+  const span = Math.max(gx1 - gx0, gz1 - gz0);
+  const cell = span > 0 ? span / Math.sqrt(n) : 1;
   const grid = new Map();
   const key = (gx, gz) => gx * 73856093 ^ gz * 19349663; // pair-hash into one bucket map
   for (let b = 0; b < n; b++) {
