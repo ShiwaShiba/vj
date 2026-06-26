@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.module.js';
 import { GRAD, seasonEndpoints } from './seasons.js';
+import { makeGroundSampler } from './groundSampler.js';
 
 // Plan 3 step 4 — the 大学通り 並木 carry the seasons (monochrome). Two instanced
 // canopies: avenueMesh (大学通り both sides = the seasonal star) and scatterMesh
@@ -99,7 +100,10 @@ export function planVacant(buildingPositions, manifest, opts = {}) {
   const NEAR = opts.vacantNearMin ?? 6;      // ≥ this many built cells within R ⇒ interior gap
   const jitterF = opts.vacantJitter ?? 0.8;  // lattice jitter as a fraction of STEP
 
-  const ckey = (cu, cv) => cu + ',' + cv;
+  // Pack a cell (cu,cv) into one Number key (bijective for cells in [-32768,32767]) — a
+  // string-concat key here was a large startup cost (51.7万頂点 occ build + 81 lookups/格子点).
+  const KOFF = 32768;
+  const ckey = (cu, cv) => (cu + KOFF) * 65536 + (cv + KOFF);
   const occ = new Set();
   let U0 = Infinity, U1 = -Infinity, V0 = Infinity, V1 = -Infinity;
   for (let i = 0; i < buildingPositions.length; i += 3) {
@@ -109,7 +113,7 @@ export function planVacant(buildingPositions, manifest, opts = {}) {
   }
   // dilate occ by 1 cell so footprint interiors read as occupied (no trees on rooftops)
   const occD = new Set(occ);
-  for (const k of occ) { const [cu, cv] = k.split(',').map(Number); for (let du = -1; du <= 1; du++) for (let dv = -1; dv <= 1; dv++) occD.add(ckey(cu + du, cv + dv)); }
+  for (const k of occ) { const cu = Math.floor(k / 65536) - KOFF, cv = (k % 65536) - KOFF; for (let du = -1; du <= 1; du++) for (let dv = -1; dv <= 1; dv++) occD.add(ckey(cu + du, cv + dv)); }
   const isOcc = (u, v) => occD.has(ckey(Math.floor(u / OCC), Math.floor(v / OCC)));
   const nearBuilt = (u, v) => { let c = 0; const cu = Math.floor(u / OCC), cv = Math.floor(v / OCC); for (let du = -R; du <= R; du++) for (let dv = -R; dv <= R; dv++) if (occ.has(ckey(cu + du, cv + dv))) { c++; if (c >= NEAR) return true; } return false; };
 
@@ -283,10 +287,10 @@ export function buildTrees(manifest, terrain, opts = {}) {
   group.userData.type = 'trees';
   const U = makeUniforms();
 
-  // sit each canopy on the DEM via a downward raycast against the terrain mesh
-  const ray = new THREE.Raycaster();
-  const down = new THREE.Vector3(0, -1, 0), fromV = new THREE.Vector3();
-  const groundY = (wx, wz) => { fromV.set(wx, 60, wz); ray.set(fromV, down); const h = ray.intersectObject(terrain, false); return h.length ? h[0].point.y : 0; };
+  // sit each canopy on the DEM. groundY samples the terrain heightfield via a one-time
+  // xz triangle grid (groundSampler.js) — same height as a downward raycast, O(1)/query
+  // instead of O(68k tris)/query (the old per-tree raycast dominated startup).
+  const groundY = makeGroundSampler(terrain);
 
   const baseGeo = makeCanopyGeo(radius);
   if (avenue.length) group.add(buildMesh(avenue, baseGeo, U, 1.0, radius, groundY, SCALE, vOffset));

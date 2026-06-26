@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.module.js';
 import { particleEndpoints } from './seasons.js';
+import { makeGroundSampler } from './groundSampler.js';
 
 // Plan 3 step 5 — the falling particles (花びら / 落ち葉 / 雪) along the 大学通り 並木.
 // ONE THREE.Points system, reused across the four seasons: the per-season look comes
@@ -126,10 +127,9 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
   const renderer = opts.renderer || null;    // for size-attenuation (drawing-buffer height)
   const n = emit.length;
 
-  // raycast ground once per emitter (reuse the trees.js groundY idiom)
-  const ray = new THREE.Raycaster();
-  const down = new THREE.Vector3(0, -1, 0), from = new THREE.Vector3();
-  const groundY = (wx, wz) => { from.set(wx, 60, wz); ray.set(from, down); const h = ray.intersectObject(terrain, false); return h.length ? h[0].point.y : 0; };
+  // ground height per emitter via the shared heightfield sampler (reuse the trees.js
+  // groundY idiom) — one xz triangle grid, O(1)/query instead of a full-mesh raycast.
+  const groundY = makeGroundSampler(terrain);
 
   const aOrigin = new Float32Array(n * 3);   // spawn top: x, gy+fallDist, z (also base xz)
   const aGround = new Float32Array(n);
