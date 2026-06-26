@@ -89,5 +89,7 @@ export function createLiveDriver() {
     get knobs() { return knobs; },
     get modeConfig() { return cfg; },
     get started() { return started; },
+    get feat() { return feat; },   // smoothed features (drop-detection inputs) — for the live tuning HUD
+    get ps() { return ps; },       // phase-machine state (armed/lastDropT/season) — for the live tuning HUD
   };
 }

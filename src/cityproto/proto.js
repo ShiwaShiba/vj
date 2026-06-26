@@ -47,6 +47,7 @@ let trees = null;        // seasonal 並木 controller (buildTrees → {group, u
 let particles = null;    // falling petals/leaves/snow along the 並木 (buildParticles → {points, update})
 let mode = 0;            // 0 = monochrome (step-4 default); 1 = chroma (step-6 C key)
 let strobeEnabled = false; // 冬 white strobe gate (S key). Default OFF (光感受性 safety)
+let debug = false;       // live-tuning readout overlay (D key). Default OFF → shipped look unchanged
 
 // Live-tuning state (step 6). Initial values reproduce the current look EXACTLY — they
 // only move when a window.__proto setter fires (no on-screen HUD yet; that lands at
@@ -71,6 +72,31 @@ const drawOverlay = makeOverlay(
   () => manifestRef && manifestRef.attribution,
   () => liveOverlayI,
 );
+// --- live-tuning readout (D key) — a dev instrument for the audio-reactive session. Default
+// OFF so the shipped look is untouched; when on it prints the raw mic bands, the drop-detection
+// inputs (so a "no reaction" is instantly attributable to gain vs threshold), and the eased knobs.
+const dbgEl = document.createElement('pre');
+dbgEl.style.cssText = 'position:fixed;left:8px;top:8px;z-index:20;margin:0;pointer-events:none;'
+  + 'font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(194,202,214,0.82);'
+  + 'background:rgba(7,8,10,0.55);padding:7px 9px;border-radius:4px;white-space:pre;display:none';
+document.body.appendChild(dbgEl);
+const f3 = (x) => (x == null ? '—' : x.toFixed(3));
+function drawDebug() {
+  if (!debug) return;
+  const a = driver.audio.state, ft = driver.feat, ps = driver.ps, k = driver.knobs, c = driver.modeConfig;
+  const dropL = (ft.level - ft.levelSlow), dropB = (ft.bass - ft.bassSlow);
+  const armedL = dropL > c.dropThresh, armedB = dropB > c.bassJump;       // both must hold to fire a drop
+  const sinceDrop = ps.clk - ps.lastDropT;
+  dbgEl.textContent =
+    `phase  ${driver.phase}${driver.started ? '' : '   (mic off — visuals on clock)'}\n`
+    + `audio  L ${f3(a.level)}  bass ${f3(a.bass)}  mid ${f3(a.mid)}  treb ${f3(a.treble)}\n`
+    + `beat   ${a.beat ? '●' : '·'}  bpm ${a.bpm ? a.bpm.toFixed(0) : '—'}  sens ${f3(driver.audio.sensitivity)}\n`
+    + `drop   ΔL ${f3(dropL)}${armedL ? '✓' : ' '}>thr${c.dropThresh}   ΔB ${f3(dropB)}${armedB ? '✓' : ' '}>${c.bassJump}`
+    + `   ${sinceDrop < 9e8 ? sinceDrop.toFixed(1) + 's ago' : 'never'}\n`
+    + `knobs  breath ${f3(k.camBreath)}  petals ${f3(k.petalDensity)}  chroma ${f3(k.chromaMix)}\n`
+    + `       overlay ${f3(k.overlayIntensity)}  season ${k.seasonIndex}  strobe ${f3(k.strobeRate)}  mode ${c.colorMode}`;
+}
+
 function loop(now) {
   if (director) {
     if (last === null) last = now;
@@ -97,6 +123,7 @@ function loop(now) {
   }
   renderer.render(scene, camera);
   drawOverlay();
+  drawDebug();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -113,6 +140,10 @@ else addEventListener('pointerdown', beginAudio, { once: true });
 window.__proto = {
   THREE, scene, camera, renderer, params, applyCamera,
   seek: (t) => { tSec = Math.max(0, t); },          // jump the director clock (seconds)
+  // Tuning shortcut: jump straight into the audio-reactive LIVE phase (skip the ~76s intro).
+  // Lands just inside the winter hold4 window so the next frame's `past` fallback hands off
+  // with the camera parked cleanly at ④ (no need to make a sound to trigger the handoff).
+  goLive: () => { const c = driver.modeConfig; tSec = c.winterCycleStart + c.hold4Start + c.hold4Dur - 0.05; },
   setPaused: (b) => { paused = !!b; },
   setParallax: (b) => { parallax = !!b; },
   setMode: (b) => { mode = b ? 1 : 0; },            // 0 mono / 1 chroma (also the C key)
@@ -203,9 +234,20 @@ addEventListener('keydown', (e) => {
   else if (e.key === '[') { tSec = Math.max(0, tSec - 1.0); }        // scrub back 1s
   else if (e.key === ']') { tSec += 1.0; }                            // scrub forward 1s
   else if (e.key === 'p' || e.key === 'P') { parallax = !parallax; } // straight dolly ↔ micro-parallax
-  else if (e.key === 'c' || e.key === 'C') { mode = mode ? 0 : 1; }  // mono ↔ chroma 季節色 (step 6; ~0.6s ease)
+  else if (e.key === 'c' || e.key === 'C') {
+    // LIVE: the audio reactor owns color, so a manual toggle must override it via the reactor's
+    // 'manual' colorMode (mono ↔ 季節色). INTRO: the director owns color → toggle the local mode.
+    if (driver.isLive()) { const c = driver.modeConfig; driver.setColorMode('manual'); c.manualChromaMix = c.manualChromaMix > 0 ? 0 : 1; }
+    else { mode = mode ? 0 : 1; }
+  }
+  else if (e.key === 'n' || e.key === 'N') { // LIVE: 季節送り 春→夏→秋→冬 (forces manual + 色ON so the pick is visible)
+    const c = driver.modeConfig; driver.setColorMode('manual'); c.manualSeason = (c.manualSeason + 1) % 4; c.manualChromaMix = 1;
+  }
+  else if (e.key === 'b' || e.key === 'B') { driver.setColorMode('burst'); } // LIVE: hand color back to the audio reactor
   else if (e.key === 's' || e.key === 'S') { strobeEnabled = !strobeEnabled; } // 冬 white strobe (default off)
   else if (e.key === 'm' || e.key === 'M') { console.log('colorMode →', driver.cycleColorMode()); } // LIVE 色モード循環 (burst/advance/manual)
+  else if (e.key === 'd' || e.key === 'D') { debug = !debug; dbgEl.style.display = debug ? 'block' : 'none'; } // live-tuning readout
+  else if (e.key === 'l' || e.key === 'L') { window.__proto.goLive(); } // jump straight to the audio-reactive LIVE phase
 });
 
 window.__proto.driver = driver;  // expose the audio-reactive driver for live inspection
