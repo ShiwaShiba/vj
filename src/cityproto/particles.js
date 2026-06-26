@@ -59,6 +59,7 @@ uniform float uProg;
 uniform float uStagger;        // MUST match the canopy (0.7)
 uniform float uBand;           // MUST match the canopy (0.3)
 uniform float uEmitMul;        // live emission multiplier (audio LIVE density; default 1)
+uniform float uAppear;         // reveal gate (0→1) — petals appear WITH the 並木 (after buildings)
 varying float vAlpha;
 varying float vProgI;
 void main() {
@@ -93,7 +94,7 @@ void main() {
 
   float fadeIn = smoothstep(0.0, 0.08, frac);
   float fadeOut = 1.0 - smoothstep(0.85, 1.0, frac);
-  vAlpha = fadeIn * fadeOut * progI * emit * uEmitMul;
+  vAlpha = fadeIn * fadeOut * progI * emit * uEmitMul * uAppear;
   vProgI = progI;
 }`;
 
@@ -168,6 +169,7 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
     uStagger: { value: 0.7 },                 // match canopy sweep
     uBand: { value: 0.3 },
     uEmitMul: { value: 1 },                   // live density (audio LIVE); 1 = authored look
+    uAppear: { value: 1 },                    // reveal gate (0→1) — petals appear with the 並木
 
     uGrey: { value: new THREE.Vector2(0.8, 0.8) },
     uColor0: { value: new THREE.Vector3(1, 1, 1) },

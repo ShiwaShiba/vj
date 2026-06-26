@@ -18,7 +18,10 @@ export const SEASON_NAMES = ['spring', 'summer', 'autumn', 'winter'];
 const DEFAULTS = {
   hold1: 1.2, out12: 2.5, hold2: 1.0, out23: 3.0, holdMid: 5.0, out34: 2.5, hold4: 1.2, reverse: 4.0,
   parallaxAmt: 1.0,
-  terrainWin: [0.0, 2.5], roadWin: [1.2, 4.7], buildWin: [4.7, 9.0],
+  // Staged reveal order = terrain → roads → buildings → 木々. buildWin slowed a touch; treeWin
+  // starts AFTER the buildings finish so the 並木 (and its petals) grow in last, not before the
+  // city. Both complete inside the ③ showpiece hold (7.7–12.7s) so the reveal settles on screen.
+  terrainWin: [0.0, 2.5], roadWin: [1.2, 4.7], buildWin: [4.7, 10.0], treeWin: [10.0, 12.0],
 };
 
 export function createDirector({ keyframes, tuning = {}, parallax = false }) {
@@ -60,6 +63,7 @@ export function createDirector({ keyframes, tuning = {}, parallax = false }) {
       terrain: smoothstep(T.terrainWin[0], T.terrainWin[1], tSec),
       roads: smoothstep(T.roadWin[0], T.roadWin[1], tSec),
       buildings: smoothstep(T.buildWin[0], T.buildWin[1], tSec),
+      trees: smoothstep(T.treeWin[0], T.treeWin[1], tSec),
     };
 
     const index = ((Math.floor(tSec / cycleDur) % 4) + 4) % 4;

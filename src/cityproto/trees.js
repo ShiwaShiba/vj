@@ -82,6 +82,7 @@ const TONE_HI = GRAD.base + GRAD.span;
 function makeUniforms() {
   return {
     uProg: { value: 0 },
+    uAppear: { value: 1 },                             // reveal gate (0→1) — 木々 grow in AFTER the buildings
     uScale: { value: new THREE.Vector2(1, 1) },        // prev, cur canopy scale
     uDensity: { value: new THREE.Vector2(1, 1) },      // prev, cur fraction kept
     uToneLo: { value: new THREE.Vector2(GRAD.base, GRAD.base) },
@@ -112,6 +113,7 @@ function installSeasonShader(mat, U, uDampValue) {
 attribute float aPhase;
 attribute float aSeed;
 uniform float uProg;
+uniform float uAppear;
 uniform vec2 uScale;
 uniform vec2 uDensity;
 uniform float uStagger;
@@ -126,7 +128,7 @@ float progI = smoothstep(_pStart, _pStart + uBand, uProg);
 float dens = mix(uDensity.x, uDensity.y, progI);
 float keep = 1.0 - smoothstep(dens - 0.06, dens, aSeed);
 float sScale = mix(uScale.x, uScale.y, progI) * uDamp;
-transformed *= sScale * keep;
+transformed *= sScale * keep * uAppear;            // uAppear scales the canopy in (reveal gate)
 transformed.y -= 999.0 * (1.0 - keep);
 vProgI = progI;
 vSeed = aSeed;

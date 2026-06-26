@@ -125,8 +125,16 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
     shader.uniforms.uReveal = uReveal;
     shader.uniforms.uBand = uBand;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aReveal;\nattribute float aBaseY;\nuniform float uReveal;\nuniform float uBand;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nfloat _rv = smoothstep(aReveal - uBand, aReveal, uReveal);\ntransformed.y = mix(aBaseY, transformed.y, _rv);');
+      .replace('#include <common>', '#include <common>\nattribute float aReveal;\nattribute float aBaseY;\nuniform float uReveal;\nuniform float uBand;\nvarying float vReveal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nfloat _rv = smoothstep(aReveal - uBand, aReveal, uReveal);\nvReveal = _rv;\ntransformed.y = mix(aBaseY, transformed.y, _rv);');
+    // Hide a building until the sweep actually reaches it. Before reveal it is collapsed to its
+    // floor (aBaseY) — a flat AO-shaded cap lying on the terrain — which read as grey "shards"
+    // across the whole un-revealed ring. Discarding while _rv≈0 means un-reached buildings show
+    // nothing (bare terrain); each then sprouts from the ground as the wavefront passes. The
+    // settled state (_rv=1) is untouched, so the final/approved look is byte-identical.
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vReveal;')
+      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vReveal < 0.03) discard;');
   };
   mat.needsUpdate = true; // force a recompile if the material already compiled
 

@@ -110,8 +110,8 @@ function loop(now) {
       applyCamera();
       if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
       if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
-      if (trees) trees.update(f.season, mode, dt, { strobe: strobeEnabled }); // 並木 seasons + 冬 strobe
-      if (particles) particles.update(f.season, mode, dt); // 花びら/落ち葉/雪 (GPU fall, sweep-synced)
+      if (trees) { trees.update(f.season, mode, dt, { strobe: strobeEnabled }); trees.uniforms.uAppear.value = f.reveal.trees; } // 並木 seasons + 冬 strobe + reveal-in after buildings
+      if (particles) { particles.update(f.season, mode, dt); particles.uniforms.uAppear.value = f.reveal.trees; } // 花びら/落ち葉/雪 (GPU fall, sweep-synced) + reveal with the trees
     }
     // The driver layers audio accents in INTRO, and OWNS camera/season/uMode/density in LIVE
     // (where the authored writes above are suppressed). tSec is frozen at handoff (no advance).
@@ -132,7 +132,8 @@ requestAnimationFrame(loop);
 // scene keeps running silently (mirrors main.js's non-blocking start).
 const startEl = document.getElementById('start');
 function beginAudio() {
-  driver.start().finally(() => { if (startEl) startEl.style.display = 'none'; });
+  if (startEl) startEl.style.display = 'none'; // hide immediately on tap (don't wait on the mic promise)
+  driver.start();
 }
 if (startEl) startEl.addEventListener('pointerdown', beginAudio, { once: true });
 else addEventListener('pointerdown', beginAudio, { once: true });
