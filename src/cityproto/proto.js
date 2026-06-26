@@ -193,7 +193,20 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
   if (landmark) scene.add(landmark);
   if (station) scene.add(station);
   scene.add(buildStation(manifest));               // station glow accent (runtime canvas texture)
-  if (terrain) { trees = buildTrees(manifest, terrain); scene.add(trees.group); } // 4. 木々 (green zones + 大学通り 並木, seasonal)
+  if (terrain) {                                   // 4. 木々 (green zones + 大学通り 並木 + 空き地, seasonal)
+    // 空き地の木: hand planLayout the building vertex WORLD positions so it can find the
+    // building carpet's interior gaps (vacant lots) and plant damped greenery there.
+    // KHR-quantized geometry → world via matrixWorld. Cost is a one-time load-pass.
+    let buildingPositions = null;
+    if (buildings) {
+      buildings.updateWorldMatrix(true, false);
+      const bp = buildings.geometry.attributes.position, _v = new THREE.Vector3();
+      buildingPositions = new Float32Array(bp.count * 3);
+      for (let i = 0; i < bp.count; i++) { _v.fromBufferAttribute(bp, i).applyMatrix4(buildings.matrixWorld); buildingPositions[i * 3] = _v.x; buildingPositions[i * 3 + 1] = _v.y; buildingPositions[i * 3 + 2] = _v.z; }
+    }
+    trees = buildTrees(manifest, terrain, { vacantDensity: 0.26, buildingPositions });
+    scene.add(trees.group);
+  }
   if (terrain) {                                    // 5. falling particles along the 並木 (reuse the avenue layout)
     const { avenue } = planLayout(manifest);        // pure + deterministic → byte-identical to buildTrees' avenue
     particles = buildParticles(planEmit(avenue, petalOpts), terrain, manifest, { renderer, fallDist });

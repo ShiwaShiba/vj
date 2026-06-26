@@ -72,7 +72,61 @@ export function planLayout(manifest, opts = {}) {
   for (const p of avenue) p.aPhase = span > 1e-9 ? (p.v - V0) / span : 0;
   for (const p of scatter) p.aPhase = 0;     // sweep is avenue-only
 
-  return { avenue, scatter };
+  // 空き地の木: greenery in the building carpet's INTERIOR gaps (vacant lots), returned as
+  // its OWN list so buildTrees can give it a distinct canopy size (uDamp) from the green-zone
+  // scatter. Off unless BOTH a density and the building vertex world-positions are supplied
+  // (proto.js extracts them from the loaded buildings mesh). avenue + scatter are untouched,
+  // so the particles' planLayout(manifest) call (no buildingPositions) stays byte-identical.
+  const vacant = ((opts.vacantDensity ?? 0) > 0 && opts.buildingPositions)
+    ? planVacant(opts.buildingPositions, manifest, opts) : [];
+
+  return { avenue, scatter, vacant };
+}
+
+// PURE: plant trees in the city's vacant interior lots — gaps in the building carpet
+// that are still surrounded by buildings (excludes the open outer field). buildingPositions
+// is a flat Float32Array of building vertex WORLD positions [x,y,z, x,y,z, …]; converted to
+// (u,v) via manifest.scale, exactly mirroring the approved scratchpad prototype. Returns
+// [{u,v,seed,aPhase:0}]. Deterministic: an xorshift drives placement, a SECOND independent
+// xorshift draws per-instance seeds so adding seed variety never shifts the placement stream.
+export function planVacant(buildingPositions, manifest, opts = {}) {
+  const density = opts.vacantDensity ?? 0;
+  if (density <= 0 || !buildingPositions || !buildingPositions.length) return [];
+  const { SCALE, vOffset } = manifest.scale;
+  const OCC = opts.vacantOcc ?? 0.012;       // ~5 m occupancy cell (UV)
+  const STEP = opts.vacantStep ?? 0.022;     // ~9 m planting lattice
+  const R = opts.vacantNearR ?? 4;           // nearBuilt search radius (cells)
+  const NEAR = opts.vacantNearMin ?? 6;      // ≥ this many built cells within R ⇒ interior gap
+  const jitterF = opts.vacantJitter ?? 0.8;  // lattice jitter as a fraction of STEP
+
+  const ckey = (cu, cv) => cu + ',' + cv;
+  const occ = new Set();
+  let U0 = Infinity, U1 = -Infinity, V0 = Infinity, V1 = -Infinity;
+  for (let i = 0; i < buildingPositions.length; i += 3) {
+    const u = buildingPositions[i] / SCALE, v = buildingPositions[i + 2] / SCALE + vOffset;
+    occ.add(ckey(Math.floor(u / OCC), Math.floor(v / OCC)));
+    if (u < U0) U0 = u; if (u > U1) U1 = u; if (v < V0) V0 = v; if (v > V1) V1 = v;
+  }
+  // dilate occ by 1 cell so footprint interiors read as occupied (no trees on rooftops)
+  const occD = new Set(occ);
+  for (const k of occ) { const [cu, cv] = k.split(',').map(Number); for (let du = -1; du <= 1; du++) for (let dv = -1; dv <= 1; dv++) occD.add(ckey(cu + du, cv + dv)); }
+  const isOcc = (u, v) => occD.has(ckey(Math.floor(u / OCC), Math.floor(v / OCC)));
+  const nearBuilt = (u, v) => { let c = 0; const cu = Math.floor(u / OCC), cv = Math.floor(v / OCC); for (let du = -R; du <= R; du++) for (let dv = -R; dv <= R; dv++) if (occ.has(ckey(cu + du, cv + dv))) { c++; if (c >= NEAR) return true; } return false; };
+
+  let s = 0x6d2b79f5 >>> 0;                   // placement stream (jitter + accept) — own seed
+  const rnd = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+  let s2 = 0x85ebca6b >>> 0;                  // seed stream (canopy size variety), independent
+  const rnd2 = () => { s2 ^= s2 << 13; s2 ^= s2 >>> 17; s2 ^= s2 << 5; s2 >>>= 0; return s2 / 4294967296; };
+
+  const out = [];
+  for (let u = U0; u <= U1; u += STEP) for (let v = V0; v <= V1; v += STEP) {
+    const ju = u + (rnd() - 0.5) * STEP * jitterF, jv = v + (rnd() - 0.5) * STEP * jitterF;
+    if (isOcc(ju, jv)) continue;             // a building stands here
+    if (!nearBuilt(ju, jv)) continue;        // open field / outer void → skip (interior gaps only)
+    if (rnd() > density) continue;
+    out.push({ u: ju, v: jv, seed: rnd2(), aPhase: 0 });
+  }
+  return out;
 }
 
 const TONE_HI = GRAD.base + GRAD.span;
@@ -222,7 +276,8 @@ function buildMesh(list, baseGeo, U, uDamp, radius, groundY, SCALE, vOffset) {
 export function buildTrees(manifest, terrain, opts = {}) {
   const { SCALE, vOffset } = manifest.scale;
   const radius = opts.radius ?? 0.072;       // canopy radius in world units (~5 m)
-  const { avenue, scatter } = planLayout(manifest, opts);
+  const { avenue, scatter, vacant } = planLayout(manifest, opts);
+  const vacantDamp = opts.vacantDamp ?? 0.65;   // canopy size of the 空き地 trees (user-chosen)
 
   const group = new THREE.Group();
   group.userData.type = 'trees';
@@ -236,6 +291,7 @@ export function buildTrees(manifest, terrain, opts = {}) {
   const baseGeo = makeCanopyGeo(radius);
   if (avenue.length) group.add(buildMesh(avenue, baseGeo, U, 1.0, radius, groundY, SCALE, vOffset));
   if (scatter.length) group.add(buildMesh(scatter, baseGeo, U, 0.45, radius, groundY, SCALE, vOffset));
+  if (vacant.length) group.add(buildMesh(vacant, baseGeo, U, vacantDamp, radius, groundY, SCALE, vOffset)); // 空き地の木
 
   let modeTarget = 0;
   function update(season, mode, dt, opts = {}) {
