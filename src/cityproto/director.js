@@ -16,11 +16,17 @@ export const SEASON_NAMES = ['spring', 'summer', 'autumn', 'winter'];
 // Durations in seconds + reveal windows (absolute seconds, during cycle 0). All
 // tunable live via window.__proto.director.tuning — 緩急 is dialed by looking.
 const DEFAULTS = {
-  hold1: 1.2, out12: 2.5, hold2: 1.0, out23: 3.0, holdMid: 5.0, out34: 2.5, hold4: 1.2, reverse: 4.0,
+  // ① 駅前アップ(hold1) と ③ 市街の見せ場(holdMid) を長くして、旧駅舎の寄りと 並木の落下粒子
+  // (桜/落ち葉/雪) をしっかり見せる尺に。cycleDur = 26.2s。
+  hold1: 3.0, out12: 2.5, hold2: 1.0, out23: 3.0, holdMid: 9.0, out34: 2.5, hold4: 1.2, reverse: 4.0,
   parallaxAmt: 1.0,
+  // 季節の染め(並木の色＋落下粒子のブルーム)が見せ場のどこで満開になるか。1.0=見せ場の終端
+  // (＝カメラが引く瞬間に満開=遅すぎ)。0.45=見せ場の序盤で満開→残り約5秒を満開のまま見せられる。
+  seasonRampFrac: 0.45,
   // Staged reveal order = terrain → roads → buildings → 木々. buildWin slowed a touch; treeWin
   // starts AFTER the buildings finish so the 並木 (and its petals) grow in last, not before the
-  // city. Both complete inside the ③ showpiece hold (7.7–12.7s) so the reveal settles on screen.
+  // city. With the longer hold1 the ③ showpiece now runs 9.5–18.5s: buildings finish at its head
+  // and the 並木(+petals) reveal 10–12s, so the petals stay fully visible for ~6.5s of the hold.
   terrainWin: [0.0, 2.5], roadWin: [1.2, 4.7], buildWin: [4.7, 10.0], treeWin: [10.0, 12.0],
 };
 
@@ -41,8 +47,10 @@ export function createDirector({ keyframes, tuning = {}, parallax = false }) {
     { name: 'reverse', dur: T.reverse, from: k4, to: k1, ease: 'easeInOutSine' },
   ];
   const cycleDur = segments.reduce((a, s) => a + s.dur, 0);
-  // Season completes its arc by the time we leave ③ (the long hold = the 見せ場).
-  const seasonRampEnd = T.hold1 + T.out12 + T.hold2 + T.out23 + T.holdMid;
+  // Season染め peaks PART-WAY into ③ (not at its exit), so the 並木の色 and falling petals reach
+  // full bloom with hold left to watch them before the camera dollies back. seasonRampFrac dials it.
+  const showStart = T.hold1 + T.out12 + T.hold2 + T.out23;
+  const seasonRampEnd = showStart + T.holdMid * T.seasonRampFrac;
 
   function activeSegment(local) {
     let acc = 0;
