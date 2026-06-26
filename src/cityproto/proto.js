@@ -10,6 +10,7 @@ import { makeKeyframes } from './camrig.js';
 import { createDirector } from './director.js';
 import { installReveal } from './reveal.js';
 import { installIntroLayers } from './intro.js';
+import { createLiveDriver } from './liveDriver.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
@@ -58,25 +59,56 @@ let framingOpts = {};      // camrig DEF overrides (live via setFraming); {} = D
 let timingOpts = {};       // director DEFAULTS overrides (live via setTiming); {} = DEFAULTS
 const fallDist = 0.32;     // canopy-height fall distance (step5 visual tune)
 
-const drawOverlay = makeOverlay(document.getElementById('ov'));
+// Audio-reactive LIVE driver (owns the mic + the pure live.js reactor). Mic is started
+// from a tap gesture (see #start below); until then visuals run on the internal clock.
+const driver = createLiveDriver();
+let liveOverlayI = null;                          // overlay grain intensity, set by the driver
+
+// credits read the baked manifest live (set on load) — never hardcoded.
+// grain intensity rides the music in LIVE (null = resting 0.05 look).
+const drawOverlay = makeOverlay(
+  document.getElementById('ov'),
+  () => manifestRef && manifestRef.attribution,
+  () => liveOverlayI,
+);
 function loop(now) {
   if (director) {
     if (last === null) last = now;
     const dt = Math.min((now - last) / 1000, 0.05); last = now;
-    if (!paused) tSec += dt;
     const f = director.update(tSec, { parallax });
-    Object.assign(params, f.cam);
-    applyCamera();
-    if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
-    if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
-    if (trees) trees.update(f.season, mode, dt, { strobe: strobeEnabled }); // 並木 seasons + 冬 strobe
-    if (particles) particles.update(f.season, mode, dt); // 花びら/落ち葉/雪 (GPU fall, sweep-synced)
+    const live = driver.isLive();
+    if (!live) {
+      // Phase 1 INTRO: the authored staged-zoom seasonal reveal owns camera/season/reveal.
+      if (!paused) tSec += dt;
+      Object.assign(params, f.cam);
+      applyCamera();
+      if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
+      if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
+      if (trees) trees.update(f.season, mode, dt, { strobe: strobeEnabled }); // 並木 seasons + 冬 strobe
+      if (particles) particles.update(f.season, mode, dt); // 花びら/落ち葉/雪 (GPU fall, sweep-synced)
+    }
+    // The driver layers audio accents in INTRO, and OWNS camera/season/uMode/density in LIVE
+    // (where the authored writes above are suppressed). tSec is frozen at handoff (no advance).
+    driver.frame(dt, now, {
+      director, directorCam: f.cam, tSec, trees, particles, params, applyCamera,
+      setOverlayIntensity: (v) => { liveOverlayI = v; },
+      strobe: strobeEnabled,
+    });
   }
   renderer.render(scene, camera);
   drawOverlay();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+// Mic needs a user gesture (iOS). Tap the start affordance once to enable; on denial the
+// scene keeps running silently (mirrors main.js's non-blocking start).
+const startEl = document.getElementById('start');
+function beginAudio() {
+  driver.start().finally(() => { if (startEl) startEl.style.display = 'none'; });
+}
+if (startEl) startEl.addEventListener('pointerdown', beginAudio, { once: true });
+else addEventListener('pointerdown', beginAudio, { once: true });
 
 window.__proto = {
   THREE, scene, camera, renderer, params, applyCamera,
@@ -173,4 +205,7 @@ addEventListener('keydown', (e) => {
   else if (e.key === 'p' || e.key === 'P') { parallax = !parallax; } // straight dolly ↔ micro-parallax
   else if (e.key === 'c' || e.key === 'C') { mode = mode ? 0 : 1; }  // mono ↔ chroma 季節色 (step 6; ~0.6s ease)
   else if (e.key === 's' || e.key === 'S') { strobeEnabled = !strobeEnabled; } // 冬 white strobe (default off)
+  else if (e.key === 'm' || e.key === 'M') { console.log('colorMode →', driver.cycleColorMode()); } // LIVE 色モード循環 (burst/advance/manual)
 });
+
+window.__proto.driver = driver;  // expose the audio-reactive driver for live inspection

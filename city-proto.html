@@ -6,9 +6,15 @@
   html,body{margin:0;height:100%;background:#07080a;overflow:hidden}
   #gl,#ov{position:fixed;inset:0;width:100vw;height:100vh;display:block}
   #ov{pointer-events:none}
+  /* one-time tap affordance: the mic needs a user gesture (iOS). Dismissed on tap. */
+  #start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    z-index:10;background:rgba(7,8,10,0.0);color:rgba(194,202,214,0.5);
+    font:14px/1.5 -apple-system,"Helvetica Neue",Arial,sans-serif;letter-spacing:0.08em;
+    -webkit-user-select:none;user-select:none;cursor:pointer}
 </style>
 <canvas id="gl"></canvas>
 <canvas id="ov"></canvas>
+<div id="start">TAP TO START&nbsp;·&nbsp;マイクを許可</div>
 <script type="importmap">
 { "imports": {
   "three": "./src/vendor/three.module.js",

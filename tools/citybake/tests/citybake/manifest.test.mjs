@@ -31,8 +31,11 @@ test('manifest carries the required shape', () => {
   assert.ok(m.station && typeof m.station.u === 'number' && typeof m.station.v === 'number');
   assert.deepStrictEqual(m.buildings, perBuilding.map((b) => ({ revealKey: b.revealKey, type: b.type, vStart: b.vStart, vCount: b.vCount })));
   assert.ok(Array.isArray(m.green) && m.green.length === 1 && m.green[0].length === 4);
+  // all three data sources must be credited — the runtime overlay reads this array
+  // verbatim (single source of truth), and OSM(ODbL)/GSI/PLATEAU each require notice.
   assert.ok(m.attribution.includes('© OpenStreetMap contributors'));
   assert.ok(m.attribution.some((a) => a.includes('地理院')));
+  assert.ok(m.attribution.some((a) => a.includes('PLATEAU')), 'PLATEAU (3D都市モデル) must be credited');
 });
 
 test('roads include the primary avenue and a horizontal chuo polyline', () => {

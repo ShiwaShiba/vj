@@ -58,6 +58,7 @@ uniform vec2 uFall;
 uniform float uProg;
 uniform float uStagger;        // MUST match the canopy (0.7)
 uniform float uBand;           // MUST match the canopy (0.3)
+uniform float uEmitMul;        // live emission multiplier (audio LIVE density; default 1)
 varying float vAlpha;
 varying float vProgI;
 void main() {
@@ -92,7 +93,7 @@ void main() {
 
   float fadeIn = smoothstep(0.0, 0.08, frac);
   float fadeOut = 1.0 - smoothstep(0.85, 1.0, frac);
-  vAlpha = fadeIn * fadeOut * progI * emit;
+  vAlpha = fadeIn * fadeOut * progI * emit * uEmitMul;
   vProgI = progI;
 }`;
 
@@ -166,6 +167,8 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
     uProg: { value: 0 },
     uStagger: { value: 0.7 },                 // match canopy sweep
     uBand: { value: 0.3 },
+    uEmitMul: { value: 1 },                   // live density (audio LIVE); 1 = authored look
+
     uGrey: { value: new THREE.Vector2(0.8, 0.8) },
     uColor0: { value: new THREE.Vector3(1, 1, 1) },
     uColor1: { value: new THREE.Vector3(1, 1, 1) },
