@@ -43,6 +43,9 @@ function buildGrid(positions, indices, cell) {
 export function bakeAO(soup, opts = {}) {
   const { rays = 24, radius = 1.0, seed = 1, ambient = 0.35, aoStrength = 1 } = opts;
   const baseGreyOpt = opts.baseGrey ?? 0.8;
+  const contactStrength = opts.contactStrength ?? 0;
+  const contactRadius = Math.min(opts.contactRadius ?? radius * 0.3, radius);
+  const contactMask = opts.contactMask ?? null;
   const { positions, indices, normals } = soup;
   const nv = positions.length / 3;
   const cell = radius;
@@ -72,7 +75,7 @@ export function bakeAO(soup, opts = {}) {
     }
     for (const i of v) {
       n.set(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
-      let occ = 0;
+      let occ = 0, occContact = 0;
       if (mesh) {
         origin.set(positions[i * 3] + n.x * eps, positions[i * 3 + 1] + n.y * eps, positions[i * 3 + 2] + n.z * eps);
         for (let s = 0; s < rays; s++) {
@@ -80,10 +83,21 @@ export function bakeAO(soup, opts = {}) {
           const u2 = (radicalInverse2(s + 1) + hash01(i, seed)) % 1;
           hemisphereDir(n, u1, u2, dir);
           rc.set(origin, dir);
-          if (rc.intersectObject(mesh, false).length) occ++;
+          const hits = rc.intersectObject(mesh, false); // sorted ascending by distance
+          if (hits.length) {
+            occ++;
+            // soft falloff: nearer occluders weigh more; beyond contactRadius → 0.
+            const w = 1 - hits[0].distance / contactRadius;
+            if (w > 0) occContact += w;
+          }
         }
       }
-      const ao = 1 - aoStrength * (occ / rays); // aoStrength < 1 → soft contact shadow, not heavy darkening
+      // Two-scale AO: wide ambient (unchanged) × short-radius contact, gated to
+      // generic buildings via contactMask. contactStrength=0 → contactAO=1 → ao===ambientAO.
+      const cmask = contactMask ? contactMask[i] : 1;
+      const ambientAO = 1 - aoStrength * (occ / rays); // aoStrength < 1 → soft contact shadow, not heavy darkening
+      const contactAO = 1 - contactStrength * cmask * (occContact / rays);
+      const ao = ambientAO * contactAO;
       const light = ambient + (1 - ambient) * Math.max(0, n.x * Lx + n.y * Ly + n.z * Lz);
       const grey = Math.max(0, Math.min(1, greyOf(i) * light * ao));
       colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = grey;
