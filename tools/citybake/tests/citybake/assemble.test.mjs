@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { assembleCity, earClip } from '../../bake/assemble.mjs';
+import { assembleCity, earClip, ST_REF } from '../../bake/assemble.mjs';
 import { makeProjector } from '../../geo/project.mjs';
 
 const projector = makeProjector({ origin: { lat: 35.6991, lon: 139.4462 }, metersPerUnit: 420 });
@@ -80,6 +80,31 @@ test('landmark is the asymmetric 旧駅舎: a tall main gable over a distinctly 
   assert.ok(pos.length / 3 > 80, `multi-volume mesh (main + wing + canopy), got ${pos.length / 3} verts`);
   for (const k of ['u', 'v', 'height', 'revealKey', 'type', 'vStart', 'vCount'])
     assert.ok(k in out.landmark.perBuilding[0], `landmark perBuilding missing ${k}`);
+});
+
+test('south facade arch window has a recessed semicircular crown above the spring line', () => {
+  const osm = {
+    footprints: [], roads: [], rails: [], green: [],
+    landmark: { ring: sq(35.6988, 139.4462, 0.0004), heightM: 9, levels: 2, name: '旧国立駅舎', tags: { historic: 'building' } },
+    station: null,
+  };
+  const out = assembleCity({ osm, projector, planHeight: flat, params: PARAMS });
+  const pos = out.landmark.positions;
+  const M = 2.0, HZ = M * 0.175;                       // LM_SCALE / LM_PITCH defaults
+  const wr = 0.020, wz1 = 0.312, zr = wr / 0.175, depth = 0.022; // arch defaults (== LM_ARCH_* / LM_WIN_DEPTH)
+  const springY = wz1 * HZ, apexY = (wz1 + zr) * HZ;
+  const archCx = out.landmark.perBuilding[0].u * PARAMS.SCALE + (0 - ST_REF.mu) * M; // arch is at plan-u 0
+  // facade front plane at the arch centreline (above sill/canopy, below the eave roof)
+  let zFront = -Infinity;
+  for (let i = 0; i < pos.length; i += 3)
+    if (Math.abs(pos[i] - archCx) < wr * M * 1.2 && pos[i + 1] > 0.20 * HZ && pos[i + 1] < 0.45 * HZ) zFront = Math.max(zFront, pos[i + 2]);
+  // verts recessed north of that plane, in the crown band, near the centreline = the half-circle crown
+  let crownRecessed = 0;
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+    if (Math.abs(x - archCx) < wr * M * 1.2 && y > springY * 1.02 && y < apexY * 0.98 && z < zFront - depth * 0.5) crownRecessed++;
+  }
+  assert.ok(crownRecessed > 20, `the arch window recesses above the spring line into a crown (got ${crownRecessed} verts)`);
 });
 
 test('landmark gable is deterministic (byte-identical across calls)', () => {

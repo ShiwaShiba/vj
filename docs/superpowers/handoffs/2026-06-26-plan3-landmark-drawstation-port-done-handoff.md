@@ -51,8 +51,16 @@
 ## 5. コミット
 `assemble.mjs` ＋ `assemble.test.mjs` ＋ `dist/city.glb`（RAYS=20）＋本ハンドオフ。`dist/city.manifest.json` は差分無し。
 
-## 6. 次（残り・任意）
-- アーチ窓は現状**矩形近似**（①heroで~15pxのため半円との差は微小）。半円トップにしたい時は `addSouthFacade` の WIN を段階narrowで近似 or 円弧 strip 追加。
+## 6. 追補（2026-06-26）— 南妻面アーチ窓を半円化＋20%縮小
+
+`addSouthFacade` を一般化し、矩形近似だったアーチ窓を `_drawStation` 同様の**真の半円アーチ**へ：
+- 窓を `{ c, hB, hT, half(h) }`（半幅プロファイル）化。アーチは `half(h)=h<=wz1?wr:wr*sqrt(1-((h-wz1)/zr)^2)`、`zr=wr/0.175`（baker縦横比0.175を打ち消し world で真円）。冠は **8 ファセット**（角度等分サンプルを strip 境界 `hbs` へ）。
+- facade strip カッターを**傾斜エッジ**対応（各窓の左右を h0/h1 で別々に＝台形）、recess を**プロファイル沿いバンド**（背面パネル＋傾斜リム、頂点で三角収束）へ。矩形窓は `half` 一定で従来挙動に縮退。
+- ノブ追加: `LM_ARCH_R/SPRING/SILL/SEG`。**ユーザー要望で 0.8 倍に縮小（中心固定）**＝既定 `wr=0.020, sill=0.216, spring=0.312, seg=8`（env なしで最終再現）。
+- test 追加（`assemble.test.mjs`）: 「起拱線より上に凹んだ半円冠が存在」（archCx=`perBuilding.u*SCALE+(0-ST_REF.mu)*M`、`ST_REF` を export）。**citybake 35 / 全体 95 green**・決定論維持。
+- RAYS=20 最終ベイク（1837s, 1585056 verts）。CPU ラスタライザで南正面検証＝半円アーチが滑らかな凹みで読める・段差/背高窓/canopy/周辺は不変。**manifest byte 不変**。
+
+## 7. 次（残り・任意）
 - 小屋斜面の**半円ドーマー**は未移植（最小・任意）。
 - spec仕上げの **perf系（LOD/quality退避＋FXAA）は iPad実機計測が要る別セッション**。
 

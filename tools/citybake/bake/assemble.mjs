@@ -167,6 +167,10 @@ function gableTuning() {
     pitchRatio: num('LM_PITCH', 0.175),// vertical:horizontal unit ratio (reference hsc/S → ~51° main gable)
     winDepth: num('LM_WIN_DEPTH', 0.022), // south-facade window recess depth (world)
     winOn: process.env.LM_WIN !== '0', // build the recessed south-facade windows
+    archR: num('LM_ARCH_R', 0.020),    // iconic arch window half-width (ref plan-units; _drawStation 0.025 scaled 0.8)
+    archSpring: num('LM_ARCH_SPRING', 0.312), // spring line: vertical shaft below, semicircle crown above (wz1)
+    archSill: num('LM_ARCH_SILL', 0.216),     // arch window sill height (wz0); window shrunk 0.8 about its centre
+    archSeg: Math.max(2, Math.round(num('LM_ARCH_SEG', 8))), // crown facets (matches _drawStation's 8)
   };
 }
 
@@ -175,38 +179,73 @@ function gableTuning() {
 // big semicircular-arch window at the eave line + three tall windows high in the gable.
 // The facade is a stack of trapezoid strips that follow the gable slope (silhouette stays
 // clean); window columns are left open and a blind recess (back panel + inward rim) sits
-// behind each. (uE symmetric: uW=−uE.) Replaces ST_REF faces 0 (S wall) + 4 (S gable).
+// behind each. Windows carry a half-width profile half(h), so the arch's crown narrows to
+// a point (a true half-circle), while rectangular windows keep a constant width. Replaces
+// ST_REF faces 0 (S wall) + 4 (S gable).
 function addSouthFacade(soup, C) {
-  const { Cx, Cz, baseY, M, HZ, mu, mv, vS, uE, hW, hR, depth } = C;
+  const { Cx, Cz, baseY, M, HZ, mu, mv, vS, uE, hW, hR, depth, archR, archSpring, archSill, archSeg } = C;
   const zS = Cz + (vS - mv) * M;                       // south plane world z (toward the ① camera)
   const Pf = (a, h, d = 0) => ({ x: Cx + (a - mu) * M, y: baseY + h * HZ, z: zS - d }); // d pushes inward (north)
   const wOf = (h) => (h <= hW ? uE : Math.max(0, uE * (hR - h) / (hR - hW))); // facade half-width at height h
   const Nf = [0, 0, 1];                                // outward (south)
+  const eps = 1e-9;
   const quad = (c0, c1, c2, c3, n) => { faceTri(soup, c0, c1, c2, n[0], n[1], n[2]); faceTri(soup, c0, c2, c3, n[0], n[1], n[2]); };
 
+  // Each window = { c (centre, plan-u), hB, hT (height span), half(h) (half-width at h) };
+  // its opening at height h spans [c−half(h), c+half(h)]. The iconic arch: a vertical shaft
+  // (sill→spring) under a true half-circle crown. zr undoes the baker's 0.175 vertical:
+  // horizontal squash so the crown reads round in world (matches _drawStation wr/wz0/wz1/zr).
+  const wr = archR, wz0 = archSill, wz1 = archSpring, zr = wr / 0.175;
+  const archHalf = (h) => {
+    if (h <= wz1) return wr;
+    const t = (h - wz1) / zr;
+    return t >= 1 ? 0 : wr * Math.sqrt(1 - t * t);
+  };
   const WIN = [
-    [-0.025, 0.025, 0.19, 0.31],                       // iconic arch window (rectangular approx) at the eave
-    [-0.0105, -0.0055, 0.50, 0.59], [-0.0025, 0.0025, 0.50, 0.59], [0.0055, 0.0105, 0.50, 0.59], // three tall windows
+    { c: 0, hB: wz0, hT: wz1 + zr, half: archHalf },                          // iconic semicircular arch
+    { c: -0.008, hB: 0.50, hT: 0.59, half: () => 0.0025 },                    // three tall windows high in the gable
+    { c: 0, hB: 0.50, hT: 0.59, half: () => 0.0025 },
+    { c: 0.008, hB: 0.50, hT: 0.59, half: () => 0.0025 },
   ];
-  const hbsSet = new Set([0, hW, hR]);
-  for (const w of WIN) { hbsSet.add(w[2]); hbsSet.add(w[3]); }
-  const hbs = [...hbsSet].filter((h) => h >= 0 && h <= hR).sort((a, b) => a - b);
 
-  for (let s = 0; s < hbs.length - 1; s++) {           // facade strips, cut into columns around windows
+  // strip boundaries: structural lines + each window's sill/head + the arch-crown facets
+  const hbsSet = new Set([0, hW, hR]);
+  for (const w of WIN) { hbsSet.add(w.hB); hbsSet.add(w.hT); }
+  for (let k = 0; k <= archSeg; k++) hbsSet.add(wz1 + zr * Math.sin((Math.PI / 2) * (k / archSeg)));
+  const sorted = [...hbsSet].filter((h) => h >= -eps && h <= hR + eps).sort((a, b) => a - b);
+  const hbs = [];                                      // merge near-equal heights (avoid sliver strips)
+  for (const h of sorted) if (!hbs.length || h - hbs[hbs.length - 1] > 1e-6) hbs.push(h);
+
+  for (let s = 0; s < hbs.length - 1; s++) {           // facade strips, cut into columns around the window edges
     const h0 = hbs[s], h1 = hbs[s + 1], wb = wOf(h0), wt = wOf(h1);
-    const cols = WIN.filter((w) => w[2] <= h0 + 1e-9 && w[3] >= h1 - 1e-9).map((w) => [w[0], w[1]]).sort((a, b) => a[0] - b[0]);
+    const cols = WIN.filter((w) => w.hB <= h0 + eps && w.hT >= h1 - eps).sort((a, b) => a.c - b.c)
+      .map((w) => ({ L0: w.c - w.half(h0), L1: w.c - w.half(h1), R0: w.c + w.half(h0), R1: w.c + w.half(h1) }));
     if (cols.length === 0) { quad(Pf(-wb, h0), Pf(wb, h0), Pf(wt, h1), Pf(-wt, h1), Nf); continue; }
-    quad(Pf(-wb, h0), Pf(cols[0][0], h0), Pf(cols[0][0], h1), Pf(-wt, h1), Nf);                 // left outer column
+    quad(Pf(-wb, h0), Pf(cols[0].L0, h0), Pf(cols[0].L1, h1), Pf(-wt, h1), Nf);                 // left outer column
     for (let i = 0; i < cols.length - 1; i++)                                                   // columns between windows
-      quad(Pf(cols[i][1], h0), Pf(cols[i + 1][0], h0), Pf(cols[i + 1][0], h1), Pf(cols[i][1], h1), Nf);
-    quad(Pf(cols[cols.length - 1][1], h0), Pf(wb, h0), Pf(wt, h1), Pf(cols[cols.length - 1][1], h1), Nf); // right outer column
+      quad(Pf(cols[i].R0, h0), Pf(cols[i + 1].L0, h0), Pf(cols[i + 1].L1, h1), Pf(cols[i].R1, h1), Nf);
+    const last = cols[cols.length - 1];
+    quad(Pf(last.R0, h0), Pf(wb, h0), Pf(wt, h1), Pf(last.R1, h1), Nf);                         // right outer column
   }
-  for (const [aL, aR, hB, hT] of WIN) {                // blind recess behind each window
-    quad(Pf(aL, hB, depth), Pf(aR, hB, depth), Pf(aR, hT, depth), Pf(aL, hT, depth), Nf);      // back panel
-    quad(Pf(aL, hT, 0), Pf(aR, hT, 0), Pf(aR, hT, depth), Pf(aL, hT, depth), [0, -1, 0]);      // top rim (faces down)
-    quad(Pf(aL, hB, 0), Pf(aR, hB, 0), Pf(aR, hB, depth), Pf(aL, hB, depth), [0, 1, 0]);       // bottom rim (faces up)
-    quad(Pf(aL, hB, 0), Pf(aL, hT, 0), Pf(aL, hT, depth), Pf(aL, hB, depth), [1, 0, 0]);       // left rim
-    quad(Pf(aR, hB, 0), Pf(aR, hT, 0), Pf(aR, hT, depth), Pf(aR, hB, depth), [-1, 0, 0]);      // right rim
+
+  for (const w of WIN) {                               // blind recess behind each window, banded along its profile
+    const hs = hbs.filter((h) => h >= w.hB - eps && h <= w.hT + eps);
+    for (let k = 0; k < hs.length - 1; k++) {
+      const h0 = hs[k], h1 = hs[k + 1];
+      const l0 = w.c - w.half(h0), r0 = w.c + w.half(h0), l1 = w.c - w.half(h1), r1 = w.c + w.half(h1);
+      if (Math.abs(r1 - l1) < eps) faceTri(soup, Pf(l0, h0, depth), Pf(r0, h0, depth), Pf(w.c, h1, depth), Nf[0], Nf[1], Nf[2]);
+      else quad(Pf(l0, h0, depth), Pf(r0, h0, depth), Pf(r1, h1, depth), Pf(l1, h1, depth), Nf); // back panel
+      const lx = (h1 - h0) * HZ, ly = -(l1 - l0) * M, ln = lx >= 0 ? [lx, ly, 0] : [-lx, -ly, 0]; // left rim normal (toward +u)
+      quad(Pf(l0, h0, 0), Pf(l1, h1, 0), Pf(l1, h1, depth), Pf(l0, h0, depth), ln);              // left rim
+      const rx = (h1 - h0) * HZ, ry = -(r1 - r0) * M, rn = rx <= 0 ? [rx, ry, 0] : [-rx, -ry, 0]; // right rim normal (toward −u)
+      quad(Pf(r0, h0, 0), Pf(r1, h1, 0), Pf(r1, h1, depth), Pf(r0, h0, depth), rn);              // right rim
+    }
+    const lB = w.c - w.half(w.hB), rB = w.c + w.half(w.hB);
+    quad(Pf(lB, w.hB, 0), Pf(rB, w.hB, 0), Pf(rB, w.hB, depth), Pf(lB, w.hB, depth), [0, 1, 0]); // bottom rim (faces up)
+    if (w.half(w.hT) > eps) {                                                                    // flat head (rect windows): top rim
+      const lT = w.c - w.half(w.hT), rT = w.c + w.half(w.hT);
+      quad(Pf(lT, w.hT, 0), Pf(rT, w.hT, 0), Pf(rT, w.hT, depth), Pf(lT, w.hT, depth), [0, -1, 0]); // top rim (faces down)
+    }
   }
 }
 
@@ -225,7 +264,7 @@ function faceTri(soup, P0, P1, P2, nx, ny, nz) {
 // identity is a tall steep MAIN gable facing south (the ① camera) over a LOWER west
 // cross-wing (its E-W ridge inserts into the main hall → step + valley), plus a low
 // south entrance canopy. Measured ratios; +u east, +v south, +z up.
-const ST_REF = (() => {
+export const ST_REF = (() => {
   const uW = -0.060, uE = 0.060, vS = 0.065, vN = -0.037, hW = 0.26, hR = 0.683;        // MAIN gable (~51°)
   const wuW = -0.140, wuE = -0.050, wvS = 0.058, wvN = -0.026, wRv = 0.016, whW = 0.17, whR = 0.40; // LEFT low gable
   const cuW = -0.062, cuE = 0.062, cvN = 0.065, cvS = 0.118, cb = 0.12, ct = 0.175;     // south canopy
@@ -283,7 +322,7 @@ export function buildLandmarkGable(soup, ring2d, baseY, params, opts = {}) {
     for (let j = 1; j < P.length - 1; j++) faceTri(soup, P[0], P[j], P[j + 1], nx, ny, nz); // fan-triangulate the polygon
     for (const p of P) if (p.y > maxY) maxY = p.y;
   }
-  if (T.winOn) addSouthFacade(soup, { Cx, Cz, baseY, M, HZ, mu: ST_REF.mu, mv: ST_REF.mv, vS: ST_REF.vS, uE: ST_REF.uE, hW: ST_REF.hW, hR: ST_REF.hR, depth: T.winDepth });
+  if (T.winOn) addSouthFacade(soup, { Cx, Cz, baseY, M, HZ, mu: ST_REF.mu, mv: ST_REF.mv, vS: ST_REF.vS, uE: ST_REF.uE, hW: ST_REF.hW, hR: ST_REF.hR, depth: T.winDepth, archR: T.archR, archSpring: T.archSpring, archSill: T.archSill, archSeg: T.archSeg });
 
   return { u: cu, v: cv, height: (maxY - baseY) / VSCALE, revealKey: Math.hypot(cu, cv), vStart, vCount: soup.positions.length / 3 - vStart };
 }
