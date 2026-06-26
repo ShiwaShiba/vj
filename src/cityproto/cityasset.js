@@ -5,10 +5,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // material is swapped to the proto's unlit monochrome MeshBasicMaterial (the
 // baked AO×light is already in the vertex colours); the terrain-grid lines get
 // the Plan-1 lattice style. Reveal metadata rides on userData for Plan 3.
-export async function loadCity(glbUrl, manifestUrl) {
+// onProgress (optional) receives the glb download ProgressEvent ({lengthComputable,
+// loaded, total}) so callers can drive a load bar — the glb is the heavy payload.
+export async function loadCity(glbUrl, manifestUrl, onProgress) {
   const loader = new GLTFLoader();
   const [gltf, manifest] = await Promise.all([
-    loader.loadAsync(glbUrl),
+    loader.loadAsync(glbUrl, onProgress),
     fetch(manifestUrl).then((r) => r.json()),
   ]);
 

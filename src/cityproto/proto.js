@@ -181,7 +181,16 @@ function rebuildDirector() {
 // Swap the procedural city for the baked OSM/DEM/AO asset. Layers are added in
 // reveal order (terrain → roads → buildings → trees) so Plan 3's reveal anim
 // can drive them.
-loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.json').then((city) => {
+// Load-bar wiring: fill #loadfill with the glb download %, then fade the veil and
+// reveal TAP TO START once the scene is ready. Falls back to the pulsing indeterminate
+// bar when the response length is unknown (e.g. gzip transport → no Content-Length).
+const loadingEl = document.getElementById('loading'), loadFill = document.getElementById('loadfill');
+const onLoadProgress = (e) => {
+  if (!loadingEl) return;
+  if (e && e.lengthComputable && e.total) { loadingEl.classList.remove('indet'); loadFill.style.width = `${Math.round((e.loaded / e.total) * 100)}%`; }
+  else loadingEl.classList.add('indet');
+};
+loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.json', onLoadProgress).then((city) => {
   const { terrain, terrainGrid, buildings, landmark, station, manifest } = city;
   terrainRef = terrain; manifestRef = manifest;    // keep for the live-tuning rebuilds (setPetals/setFraming/setTiming)
   if (terrain) scene.add(terrain);                 // 1. terrain (DEM relief) — always visible (the stage)
@@ -240,7 +249,14 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
   window.__proto.manifest = manifest;
   window.__proto.reveal = reveal;
   window.__proto.intro = intro;
-}).catch((e) => console.error('city load failed', e));
+
+  // Scene is ready: fill the bar, fade the veil out, reveal the TAP TO START gate.
+  if (loadingEl) { loadFill.style.width = '100%'; loadingEl.classList.add('done'); setTimeout(() => { loadingEl.style.display = 'none'; }, 600); }
+  if (startEl) startEl.style.display = 'flex';
+}).catch((e) => {
+  console.error('city load failed', e);
+  if (loadingEl) { const l = document.getElementById('loadlabel'); if (l) l.textContent = '読み込みに失敗しました'; loadingEl.classList.remove('indet'); }
+});
 
 // Tuning controls (city-proto stage): dial 緩急 by looking. Later → ControlPanel.
 addEventListener('keydown', (e) => {

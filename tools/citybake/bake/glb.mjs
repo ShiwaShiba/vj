@@ -9,6 +9,17 @@ const GLB_MAGIC = 0x46546c67, JSON_TYPE = 0x4e4f534a, BIN_TYPE = 0x004e4942;
 const USHORT = 5123, UBYTE = 5121, UINT = 5125, ARRAY_BUFFER = 34962, ELEMENT_ARRAY = 34963;
 const QMAX = 65535;
 
+// A primitive whose index buffer is exactly 0,1,2,…,n-1 (and n === vertex count)
+// gains nothing from being indexed — three draws it non-indexed just the same.
+// Dropping it saves 4 bytes/vertex (the buildings carpet alone pushes 1.55M fresh
+// per-triangle vertices, i.e. ~6 MB of pure 0..n redundancy). terrain's grid is a
+// real shared-vertex mesh (34k verts → 204k indices) and is kept indexed.
+function isSequential(indices, vcount) {
+  if (!indices || indices.length !== vcount) return false;
+  for (let i = 0; i < indices.length; i++) if (indices[i] !== i) return false;
+  return true;
+}
+
 function vec3MinMax(arr) {
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < arr.length; i += 3) for (let k = 0; k < 3; k++) { const v = arr[i + k]; if (v < min[k]) min[k] = v; if (v > max[k]) max[k] = v; }
@@ -67,10 +78,13 @@ export function writeGlb({ nodes }) {
       accessors.push({ bufferView: colView, componentType: UBYTE, normalized: true, count: node.colors.length / 3, type: 'VEC4' });
       attributes.COLOR_0 = accessors.length - 1;
     }
-    const idxView = addView(node.indices, ELEMENT_ARRAY);
-    const indices = accessors.length;
-    accessors.push({ bufferView: idxView, componentType: UINT, count: node.indices.length, type: 'SCALAR' });
-    meshes.push({ name: node.name, primitives: [{ attributes, indices, material: 0, mode: node.mode ?? 4 }] });
+    const primitive = { attributes, material: 0, mode: node.mode ?? 4 };
+    if (!isSequential(node.indices, q.length / 3)) {        // keep the index buffer only when it actually reuses vertices
+      const idxView = addView(node.indices, ELEMENT_ARRAY);
+      accessors.push({ bufferView: idxView, componentType: UINT, count: node.indices.length, type: 'SCALAR' });
+      primitive.indices = accessors.length - 1;
+    }
+    meshes.push({ name: node.name, primitives: [primitive] });
     gltfNodes.push({ name: node.name, mesh: meshes.length - 1, translation, scale });
   }
 

@@ -14,13 +14,16 @@ function parseGlb(bytes) {
   return { magic, version, length, chunks };
 }
 
+// A node whose indices genuinely reuse vertices (a quad: 4 verts, 6 indices) keeps
+// its index buffer; the LINES grid here also reuses vertex 1 across both segments.
 test('writes a valid 2-chunk glb with POSITION+COLOR_0+indices and a LINES node', () => {
-  const tri = {
-    name: 'tri', positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 1]),
-    colors: new Float32Array([0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.3]), indices: new Uint32Array([0, 1, 2]),
+  const quad = {
+    name: 'quad', positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    colors: new Float32Array([0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.4, 0.4, 0.4]),
+    indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
   };
-  const line = { name: 'terrainGrid', mode: 1, positions: new Float32Array([0, 0, 0, 1, 1, 1]), indices: new Uint32Array([0, 1]) };
-  const bytes = writeGlb({ nodes: [tri, line] });
+  const line = { name: 'terrainGrid', mode: 1, positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), indices: new Uint32Array([0, 1, 1, 2]) };
+  const bytes = writeGlb({ nodes: [quad, line] });
   const { magic, version, chunks } = parseGlb(bytes);
 
   assert.strictEqual(magic, 0x46546c67, 'glTF magic');
@@ -36,21 +39,39 @@ test('writes a valid 2-chunk glb with POSITION+COLOR_0+indices and a LINES node'
   assert.strictEqual(json.scenes[0].nodes.length, 2);
   assert.strictEqual(json.nodes.length, 2);
 
-  const triMesh = json.meshes[json.nodes.find((n) => n.name === 'tri').mesh];
-  const prim = triMesh.primitives[0];
+  const quadMesh = json.meshes[json.nodes.find((n) => n.name === 'quad').mesh];
+  const prim = quadMesh.primitives[0];
   assert.ok(Number.isInteger(prim.attributes.POSITION));
   assert.ok(Number.isInteger(prim.attributes.COLOR_0));
-  assert.ok(Number.isInteger(prim.indices));
-  assert.strictEqual(json.accessors[prim.attributes.POSITION].count, 3);
+  assert.ok(Number.isInteger(prim.indices), 'vertex-reusing node keeps its index buffer');
+  assert.strictEqual(json.accessors[prim.attributes.POSITION].count, 4);
   assert.strictEqual(json.accessors[prim.attributes.POSITION].type, 'VEC3');
   assert.ok(json.accessors[prim.attributes.POSITION].min && json.accessors[prim.attributes.POSITION].max);
-  assert.strictEqual(json.accessors[prim.indices].count, 3);
+  assert.strictEqual(json.accessors[prim.indices].count, 6);
 
   const lineMesh = json.meshes[json.nodes.find((n) => n.name === 'terrainGrid').mesh];
   assert.strictEqual(lineMesh.primitives[0].mode, 1, 'LINES mode');
+  assert.ok(Number.isInteger(lineMesh.primitives[0].indices), 'reusing LINES node keeps indices');
   assert.strictEqual(lineMesh.primitives[0].attributes.COLOR_0, undefined, 'line node has no colours');
 
   assert.strictEqual(chunks[1].data.length, json.buffers[0].byteLength, 'BIN length matches buffer');
+});
+
+// A primitive whose indices are exactly 0,1,…,n-1 (n === vertex count) is emitted
+// NON-indexed — the index buffer is pure redundancy. This is the buildings carpet's
+// case (every triangle pushes 3 fresh vertices), worth ~6 MB on the real asset.
+test('drops a fully-sequential index buffer (non-indexed primitive)', () => {
+  const tri = {
+    name: 'tri', positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 1]),
+    colors: new Float32Array([0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.3]), indices: new Uint32Array([0, 1, 2]),
+  };
+  const json = JSON.parse(new TextDecoder().decode(parseGlb(writeGlb({ nodes: [tri] })).chunks[0].data));
+  const prim = json.meshes[json.nodes[0].mesh].primitives[0];
+  assert.strictEqual(prim.indices, undefined, 'no index accessor for a sequential buffer');
+  assert.ok(Number.isInteger(prim.attributes.POSITION), 'POSITION still present');
+  assert.ok(Number.isInteger(prim.attributes.COLOR_0), 'COLOR_0 still present');
+  assert.strictEqual(json.accessors.length, 2, 'only POSITION + COLOR_0 accessors (no index)');
+  assert.strictEqual(json.accessors[prim.attributes.POSITION].count, 3, 'all 3 vertices kept');
 });
 
 test('quantizes POSITION (ushort + node TRS) and COLOR_0 (ubyte VEC4), roundtrips within tolerance', () => {
