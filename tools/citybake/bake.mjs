@@ -22,7 +22,7 @@ const VEXAG = +process.env.VEXAG || 2.5;       // DEM vertical exaggeration
 const RAYS = +process.env.RAYS || 20;          // AO hemisphere rays / vertex
 const RADIUS = +process.env.RADIUS || 0.4;     // AO ray length (world units)
 const AO_STRENGTH = +process.env.AOSTR || 0.55; // soft contact shadow (reference touch), not heavy darkening
-const CONTACT_STRENGTH = process.env.CONTACT_STRENGTH !== undefined ? +process.env.CONTACT_STRENGTH : 0; // TODO Task4: 中庸default after montage
+const CONTACT_STRENGTH = process.env.CONTACT_STRENGTH !== undefined ? +process.env.CONTACT_STRENGTH : 0.3; // 中庸: generic建物足元の接触影 (CONTACT_STRENGTH=0で旧アセット再現)
 const CONTACT_RADIUS = process.env.CONTACT_RADIUS !== undefined ? +process.env.CONTACT_RADIUS : RADIUS * 0.3; // short-radius contact occlusion (world units)
 const BOUNDS = { u0: -4.8, u1: 3.1, v0: -1.2, v1: 7.4 }; // 国立市全域（南=谷保天満宮まで延伸・北=中央線少し北で切る）
 const NX = 200, NV = 170, SCALE = 6, VSCALE = 5, vOffset = 0.3; // 広域化に合わせ地形メッシュを密に
