@@ -171,6 +171,12 @@ function gableTuning() {
     archSpring: num('LM_ARCH_SPRING', 0.312), // spring line: vertical shaft below, semicircle crown above (wz1)
     archSill: num('LM_ARCH_SILL', 0.216),     // arch window sill height (wz0); window shrunk 0.8 about its centre
     archSeg: Math.max(2, Math.round(num('LM_ARCH_SEG', 8))), // crown facets (matches _drawStation's 8)
+    dormerOn: process.env.LM_DORMER !== '0', // build the recessed half-round dormer on the west wing's south slope
+    dormerU: num('LM_DORMER_U', -0.092), // dormer centre (plan-u) on the 小屋 south slope (_drawStation du)
+    dormerR: num('LM_DORMER_R', 0.020),  // dormer half-width in plan-u (_drawStation dr)
+    dormerT: num('LM_DORMER_T', 0.16),   // dormer crown rise along the slope param t (_drawStation dt)
+    dormerT0: num('LM_DORMER_T0', 0.13), // dormer sill position along the slope param t (_drawStation dt0)
+    dormerSeg: Math.max(2, Math.round(num('LM_DORMER_SEG', 8))), // dormer crown facets (matches _drawStation's 10→even-angle)
   };
 }
 
@@ -249,6 +255,70 @@ function addSouthFacade(soup, C) {
   }
 }
 
+// The west cross-wing's south roof slope, rebuilt with the iconic semicircular ドーマー
+// (eyebrow) window recessed into it so the AO bake reads it dark — a faithful port of
+// _drawStation's half-round dormer that sits low on the 小屋 south slope toward the ①
+// camera. The slope is a tilted plane parametrised by (u = plan-u, t = 0 south-eave → 1
+// ridge); the dormer is an upper-half ellipse in (u,t) whose crown narrows to a point over
+// a flat sill. The opening is cut out of the slope and a blind recess (back panel + inward
+// rims) sits behind it. Replaces ST_REF face 11.
+function addWingDormer(soup, C) {
+  const { Cx, Cz, baseY, M, HZ, mu, mv, wuW, wuE, wvS, wRv, whW, whR, du, dr, dt, dt0, seg, depth } = C;
+  const eps = 1e-9;
+  const vAt = (t) => wvS + t * (wRv - wvS);            // plan-v along the slope (south eave → ridge)
+  const zAt = (t) => whW + t * (whR - whW);            // height along the slope
+  // slope outward normal (up & south, toward the ① camera) = cross(û, t̂), t̂ = (0,ty,tz)
+  const ty = (whR - whW) * HZ, tz = (wRv - wvS) * M;
+  const nl = Math.hypot(tz, ty) || 1;
+  const Nout = [0, -tz / nl, ty / nl];                 // −tz>0 (up), ty>0 (south)
+  const inY = -Nout[1], inZ = -Nout[2];                // inward (into the roof: down & north)
+  const SP = (u, t, d = 0) => ({                       // slope point; d pushes into the roof
+    x: Cx + (u - mu) * M,
+    y: baseY + zAt(t) * HZ + d * inY,
+    z: Cz + (vAt(t) - mv) * M + d * inZ,
+  });
+  // dormer half-width in u at slope-param t: an upper-half ellipse (full at the dt0 sill,
+  // narrowing to a point at dt0+dt), zero below the sill.
+  const half = (t) => { const s = (t - dt0) / dt; return s < -eps || s > 1 + eps ? 0 : dr * Math.sqrt(Math.max(0, 1 - s * s)); };
+  const quad = (c0, c1, c2, c3, n) => { faceTri(soup, c0, c1, c2, n[0], n[1], n[2]); faceTri(soup, c0, c2, c3, n[0], n[1], n[2]); };
+  const quadToward = (c0, c1, c2, c3, ref) => {        // recess rim: normal flipped toward the pocket interior
+    const ax = c1.x - c0.x, ay = c1.y - c0.y, az = c1.z - c0.z;
+    const bx = c2.x - c0.x, by = c2.y - c0.y, bz = c2.z - c0.z;
+    let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+    const cx = (c0.x + c1.x + c2.x + c3.x) / 4, cy = (c0.y + c1.y + c2.y + c3.y) / 4, cz = (c0.z + c1.z + c2.z + c3.z) / 4;
+    if ((ref.x - cx) * nx + (ref.y - cy) * ny + (ref.z - cz) * nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    quad(c0, c1, c2, c3, [nx, ny, nz]);
+  };
+
+  // strip boundaries up the slope: eave (0), ridge (1), dormer sill/crown + even-angle facets
+  const tbSet = new Set([0, 1, dt0, dt0 + dt]);
+  for (let k = 0; k <= seg; k++) tbSet.add(dt0 + dt * Math.sin((Math.PI / 2) * (k / seg)));
+  const tsorted = [...tbSet].filter((t) => t >= -eps && t <= 1 + eps).sort((a, b) => a - b);
+  const tb = [];                                       // merge near-equal boundaries (avoid sliver strips)
+  for (const t of tsorted) if (!tb.length || t - tb[tb.length - 1] > 1e-6) tb.push(t);
+
+  for (let s = 0; s < tb.length - 1; s++) {            // slope strips, cut around the dormer opening
+    const t0 = tb[s], t1 = tb[s + 1];
+    if (!(t0 >= dt0 - eps && t1 <= dt0 + dt + eps)) { quad(SP(wuW, t0), SP(wuE, t0), SP(wuE, t1), SP(wuW, t1), Nout); continue; }
+    const l0 = du - half(t0), r0 = du + half(t0), l1 = du - half(t1), r1 = du + half(t1);
+    quad(SP(wuW, t0), SP(l0, t0), SP(l1, t1), SP(wuW, t1), Nout);  // west of the opening
+    quad(SP(r0, t0), SP(wuE, t0), SP(wuE, t1), SP(r1, t1), Nout);  // east of the opening
+  }
+
+  const ctr = SP(du, dt0 + dt * 0.5, depth * 0.5);     // pocket interior (rims face toward it)
+  const arc = tb.filter((t) => t >= dt0 - eps && t <= dt0 + dt + eps);
+  for (let k = 0; k < arc.length - 1; k++) {           // blind recess behind the opening
+    const t0 = arc[k], t1 = arc[k + 1];
+    const l0 = du - half(t0), r0 = du + half(t0), l1 = du - half(t1), r1 = du + half(t1);
+    if (Math.abs(r1 - l1) < eps) faceTri(soup, SP(l0, t0, depth), SP(r0, t0, depth), SP(du, t1, depth), Nout[0], Nout[1], Nout[2]);
+    else quad(SP(l0, t0, depth), SP(r0, t0, depth), SP(r1, t1, depth), SP(l1, t1, depth), Nout); // back panel
+    quadToward(SP(l0, t0, 0), SP(l1, t1, 0), SP(l1, t1, depth), SP(l0, t0, depth), ctr);          // left rim
+    quadToward(SP(r0, t0, 0), SP(r1, t1, 0), SP(r1, t1, depth), SP(r0, t0, depth), ctr);          // right rim
+  }
+  const lB = du - dr, rB = du + dr;                    // flat sill rim at the dormer base
+  quadToward(SP(lB, dt0, 0), SP(rB, dt0, 0), SP(rB, dt0, depth), SP(lB, dt0, depth), ctr);
+}
+
 // push a triangle with the winding that makes its flat normal point along (nx,ny,nz).
 function faceTri(soup, P0, P1, P2, nx, ny, nz) {
   const ux = P1.x - P0.x, uy = P1.y - P0.y, uz = P1.z - P0.z;
@@ -284,7 +354,7 @@ export const ST_REF = (() => {
     [24, 25, 26, 27], [20, 21, 25, 24], [21, 22, 26, 25], [23, 20, 24, 27], // canopy top,S,E,W
   ];
   let mu = 0, mv = 0; for (const r of verts) { mu += r[0]; mv += r[1]; } mu /= verts.length; mv /= verts.length;
-  return { verts, faces, mu, mv, vS, uE, hW, hR };                     // mu,mv = plan centroid; dims for the windowed facade
+  return { verts, faces, mu, mv, vS, uE, hW, hR, wuW, wuE, wvS, wRv, whW, whR }; // mu,mv = plan centroid; dims for the windowed facade + wing dormer slope
 })();
 
 // Build the ported 旧駅舎 at the footprint centroid, scaled to the baker's world. The
@@ -309,6 +379,7 @@ export function buildLandmarkGable(soup, ring2d, baseY, params, opts = {}) {
   let maxY = baseY;
   // the two camera-facing south faces (wall idx0 + gable idx4) are replaced by the windowed facade
   const skip = T.winOn ? new Set([0, 4]) : new Set();
+  if (T.dormerOn) skip.add(11);                  // west-wing south slope (rebuilt with the dormer recess)
   for (let fi = 0; fi < ST_REF.faces.length; fi++) {
     if (skip.has(fi)) continue;
     const id = ST_REF.faces[fi];
@@ -323,6 +394,7 @@ export function buildLandmarkGable(soup, ring2d, baseY, params, opts = {}) {
     for (const p of P) if (p.y > maxY) maxY = p.y;
   }
   if (T.winOn) addSouthFacade(soup, { Cx, Cz, baseY, M, HZ, mu: ST_REF.mu, mv: ST_REF.mv, vS: ST_REF.vS, uE: ST_REF.uE, hW: ST_REF.hW, hR: ST_REF.hR, depth: T.winDepth, archR: T.archR, archSpring: T.archSpring, archSill: T.archSill, archSeg: T.archSeg });
+  if (T.dormerOn) addWingDormer(soup, { Cx, Cz, baseY, M, HZ, mu: ST_REF.mu, mv: ST_REF.mv, wuW: ST_REF.wuW, wuE: ST_REF.wuE, wvS: ST_REF.wvS, wRv: ST_REF.wRv, whW: ST_REF.whW, whR: ST_REF.whR, du: T.dormerU, dr: T.dormerR, dt: T.dormerT, dt0: T.dormerT0, seg: T.dormerSeg, depth: T.winDepth });
 
   return { u: cu, v: cv, height: (maxY - baseY) / VSCALE, revealKey: Math.hypot(cu, cv), vStart, vCount: soup.positions.length / 3 - vStart };
 }

@@ -107,6 +107,34 @@ test('south facade arch window has a recessed semicircular crown above the sprin
   assert.ok(crownRecessed > 20, `the arch window recesses above the spring line into a crown (got ${crownRecessed} verts)`);
 });
 
+test('west wing south slope carries a recessed semicircular dormer (eyebrow) niche', () => {
+  const osm = {
+    footprints: [], roads: [], rails: [], green: [],
+    landmark: { ring: sq(35.6988, 139.4462, 0.0004), heightM: 9, levels: 2, name: '旧国立駅舎', tags: { historic: 'building' } },
+    station: null,
+  };
+  const out = assembleCity({ osm, projector, planHeight: flat, params: PARAMS });
+  const pos = out.landmark.positions;
+  const M = 2.0, HZ = M * 0.175, depth = 0.022;        // LM_SCALE / LM_PITCH / LM_WIN_DEPTH defaults
+  const du = -0.092, dr = 0.020, dt = 0.16, dt0 = 0.13; // LM_DORMER_* defaults
+  const { mu, mv, wvS, wRv, whW, whR } = ST_REF;
+  const Cx = out.landmark.perBuilding[0].u * PARAMS.SCALE;
+  // dormer u-band and height span on the wing's south slope
+  const xL = Cx + (du - dr - mu) * M, xR = Cx + (du + dr - mu) * M;
+  const yLo = (whW + dt0 * (whR - whW)) * HZ, yHi = (whW + (dt0 + dt * 0.5) * (whR - whW)) * HZ;
+  // slope front plane z at the dormer column (max z = nearest the ① camera), then count
+  // verts pushed inward (north, into the roof) by the recess depth = the dormer niche
+  let zFront = -Infinity;
+  for (let i = 0; i < pos.length; i += 3)
+    if (pos[i] > xL && pos[i] < xR && pos[i + 1] > yLo && pos[i + 1] < yHi + 0.01) zFront = Math.max(zFront, pos[i + 2]);
+  let recessed = 0;
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+    if (x > xL - 0.05 && x < xR + 0.05 && y > yLo && y < yHi + 0.01 && z < zFront - depth * 0.4) recessed++;
+  }
+  assert.ok(recessed > 15, `the dormer recesses the wing's south slope into a half-round niche (got ${recessed} verts)`);
+});
+
 test('landmark gable is deterministic (byte-identical across calls)', () => {
   const osm = () => ({
     footprints: [], roads: [], rails: [], green: [], station: null,
