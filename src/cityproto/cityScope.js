@@ -41,6 +41,13 @@ export function defaultScopeConfig() {
     bloomRise: 1.2,           // 崩落→満開までの秒
     dropThresh: 0.25,         // drop 検出（level-levelSlow）
     dropRefractoryS: 2.0,     // drop 不応期（秒）
+    histN: 96,                // radar: 音履歴リングバッファ長
+    histDt: 0.033,            // radar: 履歴サンプル間隔（秒, 時間駆動で frame-rate 非依存）
+    sweepSec: 1.4,            // radar: 外周(c=1)で見せる遅延秒＝進行波の到達時間
+    radarGain: 1.6,           // radar: 履歴エネルギーのコントラスト
+    radarFloor: 0.2,          // radar: 静か帯の下限高さ
+    eqGain: 1.5,              // eq: 帯エネルギーのコントラスト
+    eqFloor: 0.18,            // eq: 無音帯の下限高さ
   };
 }
 
@@ -51,6 +58,21 @@ export function initScopeState() {
 // 音/ビート → 毎フレのスカラ。state.front / state.lastDropT を前進させる（純：入力同一→出力同一）。
 export function frameUniforms(features, dt, cfg, state) {
   state.clk += dt;
+
+  // radar: 音履歴リングバッファ。histDt 秒ごとに energy を1つ push（時間駆動＝frame-rate 非依存・決定論）。
+  // energy は level + bass を畳んだ単一チャンネル（kick で明るい外向きリングが出る）。
+  const histN = Math.max(2, cfg.histN | 0);
+  if (!state.hist || state.hist.length !== histN) { state.hist = new Float32Array(histN); state.histHead = 0; state.acc = 0; }
+  const energy = clamp(0.7 * clamp(features.level || 0, 0, 1) + 0.6 * (features.bass || 0), 0, 1);
+  const histDt = Math.max(1e-3, cfg.histDt);
+  state.acc += dt;
+  let guard = 0;
+  while (state.acc >= histDt && guard < 512) {
+    state.histHead = (state.histHead + 1) % histN;
+    state.hist[state.histHead] = energy;
+    state.acc -= histDt; guard++;
+  }
+
   const beatsFloat = (features.beats || 0) + (features.beatPhase || 0);
   const beatIndex = Math.floor(beatsFloat);
   const level = clamp(features.level || 0, 0, 1);
@@ -71,7 +93,13 @@ export function frameUniforms(features, dt, cfg, state) {
   state.front = Math.min(1, state.front + dt / Math.max(1e-3, cfg.bloomRise));
   const envFloor = clamp(0.15 + (features.levelSlow || 0) * 0.85, 0, 1);
 
-  return { beatsFloat, beatIndex, level, linePos, barPhase2, front: state.front, envFloor };
+  // eq: 周波数3帯（bass/mid/treble）を 0..1 に。
+  const bands = [clamp(features.bass || 0, 0, 1), clamp(features.mid || 0, 0, 1), clamp(features.treble || 0, 0, 1)];
+
+  return {
+    beatsFloat, beatIndex, level, linePos, barPhase2, front: state.front, envFloor,
+    hist: state.hist, histHead: state.histHead, histDt, sweepSec: cfg.sweepSec, bands,
+  };
 }
 
 // 建物ごとの scope を out へ。enabled=false / mix=0 は全 1（＝現状一致）。

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildScopeGeom, defaultScopeConfig, initScopeState, frameUniforms, computeScope, createCityScope } from '../../src/cityproto/cityScope.js';
 
-const feat = (o = {}) => ({ level: 0, levelSlow: 0, bass: 0, beat: false, beats: 0, beatPhase: 0, ...o });
+const feat = (o = {}) => ({ level: 0, levelSlow: 0, bass: 0, mid: 0, treble: 0, beat: false, beats: 0, beatPhase: 0, ...o });
 
 // 3 建物: vStart/vCount/revealKey、worldZ は index で与える合成データ
 const PB = [
@@ -59,6 +59,28 @@ test('frameUniforms: deterministic for same inputs', () => {
   const a = frameUniforms(feat({ level: 0.4, beats: 2, beatPhase: 0.3 }), 0.016, cfg, initScopeState());
   const b = frameUniforms(feat({ level: 0.4, beats: 2, beatPhase: 0.3 }), 0.016, cfg, initScopeState());
   assert.deepEqual(a, b);
+});
+
+test('frameUniforms: ring buffer fills with energy and exposes hist/bands', () => {
+  const cfg = defaultScopeConfig(); cfg.histN = 8; cfg.histDt = 0.05;
+  const s = initScopeState();
+  // 0.2s at dt=0.05 → 4 pushes of energy(level 1, bass 1) ≈ clamp(0.7+0.6)=1
+  let u;
+  for (let i = 0; i < 4; i++) u = frameUniforms(feat({ level: 1, bass: 1, mid: 0.4, treble: 0.7 }), 0.05, cfg, s);
+  assert.equal(u.hist.length, 8);
+  assert.ok(u.hist[u.histHead] > 0.99, 'most-recent slot holds full energy');
+  assert.equal(u.histDt, 0.05);
+  assert.deepEqual(u.bands.map(x => +x.toFixed(2)), [1, 0.4, 0.7]);
+});
+
+test('frameUniforms: ring buffer push count is time-driven (deterministic)', () => {
+  const cfg = defaultScopeConfig(); cfg.histN = 100; cfg.histDt = 0.05;
+  const a = initScopeState(), b = initScopeState();
+  let ua, ub;
+  for (let i = 0; i < 10; i++) { ua = frameUniforms(feat({ level: 0.5, bass: 0.3 }), 0.05, cfg, a); }
+  for (let i = 0; i < 10; i++) { ub = frameUniforms(feat({ level: 0.5, bass: 0.3 }), 0.05, cfg, b); }
+  assert.equal(ua.histHead, ub.histHead);
+  assert.deepEqual([...ua.hist], [...ub.hist]);
 });
 
 test('computeScope OFF or mix=0 → all ones (現状一致)', () => {
