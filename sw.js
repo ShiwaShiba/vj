@@ -1,6 +1,6 @@
 // Cache-first service worker for offline use. Bump CACHE_VERSION on deploy to
 // invalidate. All paths are relative so it works under a GitHub Pages subpath.
-const CACHE_VERSION = 'vj-v14';
+const CACHE_VERSION = 'vj-v15';
 
 const ASSETS = [
   './',
@@ -72,11 +72,14 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  // Network-FIRST: online always serves the latest code, so a normal reload shows new work with
+  // NO manual cache-busting (DevTools/unregister dance gone). Each success refreshes the cache so
+  // the PWA still works offline; only when the network fails do we fall back to cache → index.html.
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+    fetch(e.request).then((res) => {
       const copy = res.clone();
       caches.open(CACHE_VERSION).then((c) => c.put(e.request, copy)).catch(() => {});
       return res;
-    }).catch(() => caches.match('./index.html')))
+    }).catch(() => caches.match(e.request).then((hit) => hit || caches.match('./index.html')))
   );
 });

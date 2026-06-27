@@ -42,12 +42,26 @@ test('the building ripple is a one-shot: 0 at start, latched at 1, never decreas
   assert.strictEqual(d.update(d.cycleDur * 3 + 1).reveal.buildings, 1, 'stays built across cycles');
 });
 
-test('all reveal channels (terrain/roads/buildings) reach 1 and stay', () => {
+test('all reveal channels (terrain/roads/buildings/petals) reach 1 and stay', () => {
   const d = mk();
   const r = d.update(60).reveal;
   assert.strictEqual(r.terrain, 1);
   assert.strictEqual(r.roads, 1);
   assert.strictEqual(r.buildings, 1);
+  assert.strictEqual(r.petals, 1);
+});
+
+test('petals appear on their OWN gentle ramp — wider & later-finishing than the 並木 curtain', () => {
+  // The 「満開で突然散り出す」 fix: petals are decoupled from reveal.trees so they fade in slowly
+  // instead of bursting with the canopy. At the end of the 並木 grow-in the petals must still be
+  // only partway up (a gentle drizzle, NOT a full curtain), and only reach full distinctly later.
+  const d = mk();
+  const T = d.tuning;
+  const treeEnd = T.treeWin[1];                 // canopy fully grown
+  assert.strictEqual(d.update(treeEnd).reveal.trees, 1, 'canopy full at treeWin end');
+  assert.ok(d.update(treeEnd).reveal.petals < 0.4, 'petals still a gentle drizzle when canopy completes');
+  assert.ok(d.update(treeEnd).reveal.petals > 0, 'petals have begun (not empty)');
+  assert.strictEqual(d.update(T.petalWin[1]).reveal.petals, 1, 'petals reach full only at their own (later) window end');
 });
 
 test('seasons cycle 春→夏→秋→冬 then wrap to 春', () => {
@@ -59,6 +73,24 @@ test('seasons cycle 春→夏→秋→冬 then wrap to 春', () => {
   assert.strictEqual(d.update(3 * C + 1).season.index, 3);
   assert.strictEqual(d.update(4 * C + 1).season.index, 0);
   assert.strictEqual(d.update(1).season.name, 'spring');
+});
+
+test('look-lag: progColor/progPetal trail the structural prog so 散り→新緑 overlaps', () => {
+  // The 「散りが薄く尾を引いた上に新芽(緑)が芽吹く」 fix: the canopy COLOR and the petal AMOUNT
+  // ride lagged progs (seasonColorWin/seasonPetalWin) behind the structural prog. Petals must
+  // linger LONGER than the color (a thin tail past the green), and all three must reach 1 and be
+  // boundary-continuous (0 at local 0) so the 4-cycle wrap never pops.
+  const d = mk();
+  const C = d.cycleDur;
+  // sampled mid-transition, color and petals are BEHIND structure; petals are behind color
+  const s = d.update(C + 6).season;   // 6s into the summer cycle (春→夏 transition)
+  assert.ok(s.progColor < s.prog, 'color lags structure');
+  assert.ok(s.progPetal < s.progColor, 'petals lag even the color (longer 余韻 tail)');
+  // all reach 1 well before the wrap, and are 0 at each cycle start (continuous)
+  const late = d.update(C + 20).season;
+  assert.strictEqual(late.prog, 1); assert.strictEqual(late.progColor, 1); assert.strictEqual(late.progPetal, 1);
+  const start = d.update(2 * C).season;     // exact cycle boundary
+  assert.ok(start.prog < 0.05 && start.progColor < 0.05 && start.progPetal < 0.05, 'all ~0 at cycle start');
 });
 
 test('season progress ramps from 0 at cycle start to ~1 by the end of the ③ hold', () => {

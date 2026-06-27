@@ -13,6 +13,12 @@ import {
 
 const COLOR_MODES = ['burst', 'advance', 'manual'];
 
+// 見た目の遅延(intro と同じ「散り→新緑」の自然な重なり)を LIVE でも。seasonProg(構造ramp)から
+// 色と花びらの遅延progを導出＝色は構造に遅れ、花びらは色より更に長く薄く尾を引く。設定値は director
+// の seasonColorWin/seasonPetalWin と同趣旨を [0,1] 正規化したもの。settled(prog=1)では両者1。
+const _ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const seasonLookProgs = (sp) => ({ progColor: _ss(0.15, 0.92, sp), progPetal: _ss(0.28, 1.0, sp) });
+
 export function createLiveDriver() {
   const audio = new AudioEngine();
   const clock = new Clock();
@@ -59,7 +65,7 @@ export function createLiveDriver() {
     if (particles && particles.uniforms.uEmitMul) particles.uniforms.uEmitMul.value = knobs.petalDensity;
 
     if (ps.phase === PHASE.LIVE) {
-      const season = { index: knobs.seasonIndex, prog: knobs.seasonProg };
+      const season = { index: knobs.seasonIndex, prog: knobs.seasonProg, ...seasonLookProgs(knobs.seasonProg) };
       // camera: parked hero framing + a level-driven breath micro-dolly on camZ (no travel)
       if (ps.parkParams && params && applyCamera) {
         const p = ps.parkParams;

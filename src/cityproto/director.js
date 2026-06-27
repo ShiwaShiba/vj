@@ -38,9 +38,20 @@ const DEFAULTS = {
   // 季節の染め(並木の色＋落下粒子のブルーム)を、最初の★近接ホールドの終盤で満開にする。こうすると
   // 往路の近接ショーケースで既に桜が咲き、③でも満開のまま見せられる。下記 seasonRampEnd を参照。
   seasonRampFrac: 0.90,
+  // ★見た目の遅延(春→夏などの遷移を自然に魅せる)。構造(prog: 木の大きさ/密度/咲き込み)は据え置き、
+  // 「色」と「花びらの量」だけを遅らせる＝散りが薄く尾を引いている上に新芽(緑)が後から芽吹いて重なる。
+  // local秒の窓。seasonColorWin=樹冠の色(prev→cur)が入りきる窓、seasonPetalWin=花びらが薄く消えきる窓
+  // (色より長い尾＝緑が満ちた後も最後の花びらが少し残る余韻)。両端 0/1 でサイクル境界は連続(pop無し)。
+  seasonColorWin: [2.0, 13.0],
+  seasonPetalWin: [2.5, 16.0],
   // Staged reveal order = terrain → roads → buildings → 木々. 粒子は uAppear(=trees reveal)で
   // ゲートされるので、最初の★近接ホールド(t≈4.8–11.3s)の中で桜が出始めるよう treeWin を前倒し。
   terrainWin: [0.0, 2.5], roadWin: [1.2, 4.7], buildWin: [4.7, 9.0], treeWin: [9.0, 11.0],
+  // 粒子(花びら)の出現は並木リビール(treeWin)から切り離し、長くゆるやかなランプにする。treeWin と
+  // 同じ t9 開始(木が無い所から花びらは降らせない)だが、2秒で満タンの並木と違い ~7秒かけて薄く湧かせ、
+  // ②→③移動の頃に満開へ。これで「満開停止中に突然散り出す」バーストが消える(cycle0)。定常春は
+  // tSec が大きく petalWin を常に越える＝uAppear=1 で従来どおりホールド中ずっと降る。
+  petalWin: [9.0, 16.0],
 };
 
 export function createDirector({ keyframes, tuning = {}, parallax = false }) {
@@ -92,10 +103,19 @@ export function createDirector({ keyframes, tuning = {}, parallax = false }) {
       roads: smoothstep(T.roadWin[0], T.roadWin[1], tSec),
       buildings: smoothstep(T.buildWin[0], T.buildWin[1], tSec),
       trees: smoothstep(T.treeWin[0], T.treeWin[1], tSec),
+      petals: smoothstep(T.petalWin[0], T.petalWin[1], tSec), // 粒子専用の長くゆるやかな出現(バースト回避)
     };
 
     const index = ((Math.floor(tSec / cycleDur) % 4) + 4) % 4;
-    const season = { index, prog: smoothstep(0, seasonRampEnd, local), name: SEASON_NAMES[index] };
+    // prog = 構造(木の成長/密度/咲き込み)。progColor = 樹冠の色(遅延)。progPetal = 花びらの量(更に長い尾)。
+    // 見た目だけを構造から遅らせて「散り→新緑」を重ねる(seasonColorWin/seasonPetalWin)。
+    const season = {
+      index,
+      prog: smoothstep(0, seasonRampEnd, local),
+      progColor: smoothstep(T.seasonColorWin[0], T.seasonColorWin[1], local),
+      progPetal: smoothstep(T.seasonPetalWin[0], T.seasonPetalWin[1], local),
+      name: SEASON_NAMES[index],
+    };
 
     return { cam, reveal, season };
   }

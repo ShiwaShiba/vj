@@ -213,7 +213,9 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
     U.uGrey.value.set(ep.prev.grey, ep.cur.grey);
     U.uColor0.value.set(ep.colorPrev[0], ep.colorPrev[1], ep.colorPrev[2]);
     U.uColor1.value.set(ep.colorCur[0], ep.colorCur[1], ep.colorCur[2]);
-    U.uProg.value = season.prog;
+    // 花びらの量は遅延prog(progPetal)で＝散りが薄く長い尾を引き、緑が満ちる頃まで降り続ける余韻。
+    // 構造を持たない粒子はスイープ含め progPetal に乗せる(無ければ構造progで後方互換)。
+    U.uProg.value = season.progPetal ?? season.prog;
     U.uTime.value += dt || 0;
     if (renderer) U.uScale.value = 0.5 * renderer.domElement.height;
     if (mode != null) modeTarget = mode ? 1 : 0;

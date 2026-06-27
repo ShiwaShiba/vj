@@ -111,7 +111,7 @@ function loop(now) {
       if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
       if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
       if (trees) { trees.update(f.season, mode, dt, { strobe: strobeEnabled }); trees.uniforms.uAppear.value = f.reveal.trees; } // 並木 seasons + 冬 strobe + reveal-in after buildings
-      if (particles) { particles.update(f.season, mode, dt); particles.uniforms.uAppear.value = f.reveal.trees; } // 花びら/落ち葉/雪 (GPU fall, sweep-synced) + reveal with the trees
+      if (particles) { particles.update(f.season, mode, dt); particles.uniforms.uAppear.value = f.reveal.petals; } // 花びら/落ち葉/雪 (GPU fall, sweep-synced) + 粒子専用のゆるやか出現(treeと別ランプ=バースト回避)
     }
     // The driver layers audio accents in INTRO, and OWNS camera/season/uMode/density in LIVE
     // (where the authored writes above are suppressed). tSec is frozen at handoff (no advance).
@@ -190,6 +190,9 @@ const onLoadProgress = (e) => {
   if (e && e.lengthComputable && e.total) { loadingEl.classList.remove('indet'); loadFill.style.width = `${Math.round((e.loaded / e.total) * 100)}%`; }
   else loadingEl.classList.add('indet');
 };
+// build stamp — a glance at the console after reload confirms WHICH code is live (no guessing
+// whether a change deployed). Bump the label when shipping a visible change.
+console.log('%c[VJ city] build: season look-lag — 散り→新緑の自然遷移 (progColor/progPetal) ✓', 'color:#e39;font-weight:bold');
 loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.json', onLoadProgress).then((city) => {
   const { terrain, terrainGrid, buildings, landmark, station, manifest } = city;
   terrainRef = terrain; manifestRef = manifest;    // keep for the live-tuning rebuilds (setPetals/setFraming/setTiming)

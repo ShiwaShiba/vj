@@ -140,6 +140,7 @@ const TONE_HI = GRAD.base + GRAD.span;
 function makeUniforms() {
   return {
     uProg: { value: 0 },
+    uProgColor: { value: 0 },                          // 見た目(色/トーン)専用の遅延prog。構造(uProg)から分離
     uAppear: { value: 1 },                             // reveal gate (0→1) — 木々 grow in AFTER the buildings
     uScale: { value: new THREE.Vector2(1, 1) },        // prev, cur canopy scale
     uDensity: { value: new THREE.Vector2(1, 1) },      // prev, cur fraction kept
@@ -171,6 +172,7 @@ function installSeasonShader(mat, U, uDampValue) {
 attribute float aPhase;
 attribute float aSeed;
 uniform float uProg;
+uniform float uProgColor;
 uniform float uAppear;
 uniform vec2 uScale;
 uniform vec2 uDensity;
@@ -178,17 +180,20 @@ uniform float uStagger;
 uniform float uBand;
 uniform float uDamp;
 varying float vProgI;
+varying float vProgColorI;
 varying float vSeed;
 varying float vPhase;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 float _pStart = min(aPhase * uStagger, 1.0 - uBand);
 float progI = smoothstep(_pStart, _pStart + uBand, uProg);
+float progColorI = smoothstep(_pStart, _pStart + uBand, uProgColor);  // 色は遅延prog の同じスイープ
 float dens = mix(uDensity.x, uDensity.y, progI);
 float keep = 1.0 - smoothstep(dens - 0.06, dens, aSeed);
 float sScale = mix(uScale.x, uScale.y, progI) * uDamp;
 transformed *= sScale * keep * uAppear;            // uAppear scales the canopy in (reveal gate)
 transformed.y -= 999.0 * (1.0 - keep);
 vProgI = progI;
+vProgColorI = progColorI;
 vSeed = aSeed;
 vPhase = aPhase;`);
     shader.fragmentShader = shader.fragmentShader
@@ -207,14 +212,16 @@ uniform float uStrobe;
 uniform float uStrobeRate;
 uniform float uStrobeSpan;
 varying float vProgI;
+varying float vProgColorI;
 varying float vSeed;
 varying float vPhase;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 float gradT = clamp((diffuseColor.r - uGradBase) / uGradSpan, 0.0, 1.0);
-float grey = mix(mix(uToneLo.x, uToneLo.y, vProgI), mix(uToneHi.x, uToneHi.y, vProgI), gradT);
-grey += mix(uShimmer.x, uShimmer.y, vProgI) * 0.06 * (sin(uTime * 1.7 + vSeed * 43.0) * 0.5 + 0.5);
-grey = mix(grey, 0.85, mix(uSnow.x, uSnow.y, vProgI) * smoothstep(0.45, 1.0, gradT));
-vec3 seasonC = mix(uColor0, uColor1, vProgI) * (0.45 + 0.55 * gradT);
+// 見た目(トーン/シマー/雪/色)は vProgColorI(遅延)で。構造(大きさ/密度)は vProgI のまま＝色だけ後から入る。
+float grey = mix(mix(uToneLo.x, uToneLo.y, vProgColorI), mix(uToneHi.x, uToneHi.y, vProgColorI), gradT);
+grey += mix(uShimmer.x, uShimmer.y, vProgColorI) * 0.06 * (sin(uTime * 1.7 + vSeed * 43.0) * 0.5 + 0.5);
+grey = mix(grey, 0.85, mix(uSnow.x, uSnow.y, vProgColorI) * smoothstep(0.45, 1.0, gradT));
+vec3 seasonC = mix(uColor0, uColor1, vProgColorI) * (0.45 + 0.55 * gradT);
 diffuseColor.rgb = mix(vec3(grey), seasonC, uMode);
 // 冬 christmas-light strobe: a white pulse that travels DOWN the avenue (vPhase offset).
 // White only (守る線), ≤3Hz (uStrobeRate), soft in/out window (no hard square). The whole
@@ -309,6 +316,7 @@ export function buildTrees(manifest, terrain, opts = {}) {
     U.uColor0.value.set(ep.colorPrev[0], ep.colorPrev[1], ep.colorPrev[2]);
     U.uColor1.value.set(ep.colorCur[0], ep.colorCur[1], ep.colorCur[2]);
     U.uProg.value = season.prog;
+    U.uProgColor.value = season.progColor ?? season.prog; // 色は遅延prog(無ければ構造progで後方互換)
     U.uTime.value += dt || 0;
     if (mode != null) modeTarget = mode ? 1 : 0;
     U.uMode.value += (modeTarget - U.uMode.value) * Math.min(1, (dt || 0) * 4); // ~0.6s crossfade
