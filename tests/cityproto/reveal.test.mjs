@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { buildRevealAttributes, clusterRevealKeys } from '../../src/cityproto/reveal.js';
+import { buildRevealAttributes, clusterRevealKeys, buildIndexAttribute } from '../../src/cityproto/reveal.js';
 
 // A unit-square footprint (4 verts) centred at (cx,cz), half-size s.
 const square = (cx, cz, s = 0.5) => [[cx - s, cz - s], [cx + s, cz - s], [cx + s, cz + s], [cx - s, cz + s]];
@@ -15,6 +15,15 @@ test('aReveal/aBaseY broadcast per building; aBaseY is the floor (min raw Y)', (
   assert.deepStrictEqual([...aReveal], [2, 2, 2, 5, 5, 5], 'distance key broadcast to each vert');
   assert.deepStrictEqual([...aBaseY], [5, 5, 5, 14, 14, 14], 'floor = min raw Y over the range');
   assert.strictEqual(maxRevealKey, 5.0, 'sweep target = farthest building');
+});
+
+test('buildIndexAttribute maps each vertex to its building index', () => {
+  const perBuilding = [
+    { vStart: 0, vCount: 3 },
+    { vStart: 3, vCount: 2 },
+  ];
+  const idx = buildIndexAttribute(perBuilding, 5);
+  assert.deepStrictEqual([...idx], [0, 0, 0, 1, 1]);
 });
 
 test('vertices outside any building range stay 0 (no spurious reveal data)', () => {

@@ -106,6 +106,16 @@ export function buildRevealAttributes(perBuilding, getY, count, opts = {}) {
   return { aReveal, aBaseY, maxRevealKey };
 }
 
+// 頂点 → 所属建物 index（scope テクスチャ lookup 用）。純・決定論。
+export function buildIndexAttribute(perBuilding, count) {
+  const aIdx = new Float32Array(count);
+  for (let bi = 0; bi < perBuilding.length; bi++) {
+    const b = perBuilding[bi], end = b.vStart + b.vCount;
+    for (let i = b.vStart; i < end; i++) aIdx[i] = bi;
+  }
+  return aIdx;
+}
+
 // Patch the buildings mesh: add the attributes and inject the rise into the unlit
 // material. Returns { material, setProgress, maxRevealKey }. setProgress(p∈[0,1])
 // sweeps the reveal; p=1 is fully built. THREE is passed in so this module stays
@@ -118,15 +128,43 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
   geo.setAttribute('aReveal', new THREE.BufferAttribute(aReveal, 1));
   geo.setAttribute('aBaseY', new THREE.BufferAttribute(aBaseY, 1));
 
+  // scope テクスチャ: 建物ごとの reveal 係数を毎フレ書く RGBA8（.r に scope, nearest）。
+  // CityScope（音→建物変調）が writeScope/setScopeEnabled で駆動。uScopeEnabled=0（INTRO/既定）
+  // のとき scope=1 で現状ピクセル一致。
+  const n = perBuilding.length;
+  const side = Math.max(1, Math.ceil(Math.sqrt(n)));
+  geo.setAttribute('aBuildIndex', new THREE.BufferAttribute(buildIndexAttribute(perBuilding, pos.count), 1));
+  const scopeBytes = new Uint8Array(side * side * 4).fill(255);   // 既定 1.0（OFF=全フル）
+  const scopeTex = new THREE.DataTexture(scopeBytes, side, side, THREE.RGBAFormat);
+  scopeTex.magFilter = THREE.NearestFilter; scopeTex.minFilter = THREE.NearestFilter;
+  scopeTex.needsUpdate = true;
+  const uScopeTex = { value: scopeTex };
+  const uScopeSize = { value: side };
+  const uScopeEnabled = { value: 0 };   // INTRO/既定は無効＝現状一致
+
   const uReveal = { value: 0 };
   const uBand = { value: band };
   const mat = mesh.material;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uReveal = uReveal;
     shader.uniforms.uBand = uBand;
+    shader.uniforms.uScopeTex = uScopeTex;
+    shader.uniforms.uScopeSize = uScopeSize;
+    shader.uniforms.uScopeEnabled = uScopeEnabled;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aReveal;\nattribute float aBaseY;\nuniform float uReveal;\nuniform float uBand;\nvarying float vReveal;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nfloat _rv = smoothstep(aReveal - uBand, aReveal, uReveal);\nvReveal = _rv;\ntransformed.y = mix(aBaseY, transformed.y, _rv);');
+      .replace('#include <common>', '#include <common>\nattribute float aReveal;\nattribute float aBaseY;\nattribute float aBuildIndex;\nuniform float uReveal;\nuniform float uBand;\nuniform sampler2D uScopeTex;\nuniform float uScopeSize;\nuniform float uScopeEnabled;\nvarying float vReveal;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\n'
+        + 'float _scope = 1.0;\n'
+        + 'if (uScopeEnabled > 0.5) {\n'
+        + '  float _sx = mod(aBuildIndex, uScopeSize);\n'
+        + '  float _sy = floor(aBuildIndex / uScopeSize);\n'
+        + '  vec2 _suv = (vec2(_sx, _sy) + 0.5) / uScopeSize;\n'
+        + '  _scope = texture2D(uScopeTex, _suv).r;\n'
+        + '}\n'
+        + 'float _rv = smoothstep(aReveal - uBand, aReveal, uReveal) * _scope;\n'
+        + 'vReveal = _rv;\n'
+        + 'transformed.y = mix(aBaseY, transformed.y, _rv);');
     // Hide a building until the sweep actually reaches it. Before reveal it is collapsed to its
     // floor (aBaseY) — a flat AO-shaded cap lying on the terrain — which read as grey "shards"
     // across the whole un-revealed ring. Discarding while _rv≈0 means un-reached buildings show
@@ -143,5 +181,15 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
     maxRevealKey,
     uBand,
     setProgress: (p) => { uReveal.value = Math.max(0, p) * maxRevealKey; },
+    scopeCount: n,
+    setScopeEnabled: (b) => { uScopeEnabled.value = b ? 1 : 0; },
+    writeScope: (scope) => {
+      const m = Math.min(n, scope.length);
+      for (let b = 0; b < m; b++) {
+        const v = scope[b] < 0 ? 0 : scope[b] > 1 ? 255 : (scope[b] * 255 + 0.5) | 0;
+        scopeBytes[b * 4] = v;            // .r に格納（mono）
+      }
+      scopeTex.needsUpdate = true;
+    },
   };
 }
