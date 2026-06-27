@@ -43,6 +43,23 @@
   #shothud input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;
     border-radius:50%;background:rgba(194,202,214,0.85)}
   #shothud .row{display:flex;justify-content:space-between;align-items:center;margin-top:2px}
+  /* SCOPE HUD: 音→建物変調（オシロスコープ都市）。CAM HUD と被らせないよう左下に。 */
+  #scopehud{position:fixed;left:12px;bottom:12px;z-index:9;width:192px;
+    background:rgba(7,8,10,0.42);backdrop-filter:blur(3px);border:1px solid rgba(194,202,214,0.12);
+    color:rgba(194,202,214,0.62);font:11px/1.5 -apple-system,"Helvetica Neue",Arial,sans-serif;
+    letter-spacing:0.06em;-webkit-user-select:none;user-select:none}
+  #scopehud-h{padding:6px 9px;cursor:pointer;display:flex;justify-content:space-between;
+    border-bottom:1px solid rgba(194,202,214,0.10)}
+  #scopehud-b{padding:7px 9px 9px}
+  #scopehud.col #scopehud-b{display:none}
+  #scopehud.col #scopehud-h{border-bottom:none}
+  #scopehud label{display:block;margin:7px 0 2px;display:flex;justify-content:space-between}
+  #scopehud .v{color:rgba(194,202,214,0.85)}
+  #scopehud input[type=range]{width:100%;height:2px;margin:3px 0 0;accent-color:rgba(194,202,214,0.7);
+    background:rgba(194,202,214,0.18);-webkit-appearance:none;appearance:none}
+  #scopehud input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;
+    border-radius:50%;background:rgba(194,202,214,0.85)}
+  #scopehud .row{display:flex;justify-content:space-between;align-items:center;margin-top:2px}
 </style>
 <canvas id="gl"></canvas>
 <canvas id="ov"></canvas>
@@ -56,6 +73,20 @@
     <label><span>ブレンド</span><span class="v" id="sh-bv">0.18s</span></label><input type="range" id="sh-bl" min="0" max="1.2" step="0.02" value="0.18">
     <label><span>アップ比率</span><span class="v" id="sh-rv">0.50</span></label><input type="range" id="sh-ra" min="0" max="1" step="0.05" value="0.5">
     <label><span>前進(小=速)</span><span class="v" id="sh-tv">16</span></label><input type="range" id="sh-tr" min="6" max="32" step="1" value="16">
+  </div>
+</div>
+<div id="scopehud">
+  <div id="scopehud-h"><span>SCOPE · 建物連動</span><span id="scopehud-t">▾</span></div>
+  <div id="scopehud-b">
+    <div class="row"><span>有効</span><input type="checkbox" id="sc-en" checked></div>
+    <label><span>モード</span><span class="v" id="sc-mv">呼吸</span></label>
+    <input type="range" id="sc-mo" min="0" max="2" step="1" value="0">
+    <label><span>空間</span><span class="v" id="sc-sv">同心円</span></label>
+    <input type="range" id="sc-sp" min="0" max="2" step="1" value="0">
+    <label><span>強さ(mix)</span><span class="v" id="sc-xv">1.00</span></label>
+    <input type="range" id="sc-mx" min="0" max="1" step="0.02" value="1">
+    <label><span>A比率(跳ね/消し)</span><span class="v" id="sc-av">0.00</span></label>
+    <input type="range" id="sc-ar" min="0" max="1" step="0.02" value="0">
   </div>
 </div>
 <script>
@@ -74,6 +105,24 @@
     $('sh-bl').addEventListener('input', function (e) { var s = +e.target.value; $('sh-bv').textContent = s.toFixed(2) + 's'; set({ blendSec: s }); });
     $('sh-ra').addEventListener('input', function (e) { var r = +e.target.value; $('sh-rv').textContent = r.toFixed(2); set({ avenueRatio: r }); });
     $('sh-tr').addEventListener('input', function (e) { var t = +e.target.value; $('sh-tv').textContent = t; set({ travelBars: t }); });
+  })();
+</script>
+<script>
+  // SCOPE HUD → window.__proto.setScope()。音→建物変調（CityScope）の生ダイヤル。
+  (function () {
+    var MODES = ['breathing', 'scanbar', 'bloom'], MODE_JA = ['呼吸', '走査', '開花'];
+    var SPATIAL = ['rings', 'avenue', 'both'], SPATIAL_JA = ['同心円', '並木', '両方'];
+    var $ = function (id) { return document.getElementById(id); };
+    var set = function (o) { if (window.__proto && window.__proto.setScope) window.__proto.setScope(o); };
+    var hud = $('scopehud');
+    $('scopehud-h').addEventListener('click', function () {
+      hud.classList.toggle('col'); $('scopehud-t').textContent = hud.classList.contains('col') ? '▸' : '▾';
+    });
+    $('sc-en').addEventListener('input', function (e) { set({ enabled: e.target.checked }); });
+    $('sc-mo').addEventListener('input', function (e) { var i = +e.target.value; $('sc-mv').textContent = MODE_JA[i]; set({ mode: MODES[i] }); });
+    $('sc-sp').addEventListener('input', function (e) { var i = +e.target.value; $('sc-sv').textContent = SPATIAL_JA[i]; set({ spatial: SPATIAL[i] }); });
+    $('sc-mx').addEventListener('input', function (e) { var v = +e.target.value; $('sc-xv').textContent = v.toFixed(2); set({ mix: v }); });
+    $('sc-ar').addEventListener('input', function (e) { var v = +e.target.value; $('sc-av').textContent = v.toFixed(2); set({ aRatio: v }); });
   })();
 </script>
 <script type="importmap">
