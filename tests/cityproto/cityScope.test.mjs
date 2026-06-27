@@ -1,7 +1,7 @@
 // tests/cityproto/cityScope.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildScopeGeom, defaultScopeConfig, initScopeState, frameUniforms, computeScope } from '../../src/cityproto/cityScope.js';
+import { buildScopeGeom, defaultScopeConfig, initScopeState, frameUniforms, computeScope, createCityScope } from '../../src/cityproto/cityScope.js';
 
 const feat = (o = {}) => ({ level: 0, levelSlow: 0, bass: 0, beat: false, beats: 0, beatPhase: 0, ...o });
 
@@ -70,4 +70,16 @@ test('computeScope OFF or mix=0 → all ones (現状一致)', () => {
   cfg.enabled = true; cfg.mix = 0;
   computeScope(out, geom, { barPhase2: 0.5, level: 1 }, cfg);
   assert.deepEqual([...out], [1, 1, 1]);
+});
+
+test('createCityScope writes scope and toggles enable via config', () => {
+  const geom = { radius: new Float32Array([0, 1]), zc: new Float32Array([0, 1]) };
+  let wrote = null, en = null;
+  const sink = { writeScope: (a) => { wrote = [...a]; }, setScopeEnabled: (b) => { en = b; } };
+  const cs = createCityScope(geom, sink, { mode: 'breathing' });
+  cs.frame({ level: 1, beats: 0, beatPhase: 0.5 }, 0.016);
+  assert.equal(wrote.length, 2); assert.equal(en, true);
+  cs.setConfig({ enabled: false });
+  cs.frame({ level: 1, beats: 0, beatPhase: 0.5 }, 0.016);
+  assert.deepEqual(wrote, [1, 1]); assert.equal(en, false);
 });

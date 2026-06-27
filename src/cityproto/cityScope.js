@@ -88,3 +88,21 @@ export function computeScope(out, geom, u, cfg) {
   }
   return out;
 }
+
+// 薄い factory: 毎フレ reveal（sink）へ scope を書く。LIVE でのみ frame() が呼ばれる前提
+// （INTRO は誰も呼ばず uScopeEnabled=0 のまま＝現状一致）。
+export function createCityScope(geom, sink, config = {}) {
+  const cfg = { ...defaultScopeConfig(), ...config };
+  const state = initScopeState();
+  const out = new Float32Array(geom.radius.length);
+  return {
+    setConfig(partial) { Object.assign(cfg, partial); },
+    get config() { return cfg; },
+    frame(features, dt) {
+      const u = frameUniforms(features, dt, cfg, state);
+      computeScope(out, geom, u, cfg);
+      sink.writeScope(out);
+      sink.setScopeEnabled(cfg.enabled && cfg.mix > 0);
+    },
+  };
+}

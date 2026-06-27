@@ -13,6 +13,7 @@ import { installIntroLayers } from './intro.js';
 import { createLiveDriver } from './liveDriver.js';
 import { createShotDirector } from './shotDirector.js';
 import { makeGroundSampler } from './groundSampler.js';
+import { buildScopeGeom, createCityScope } from './cityScope.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
@@ -65,6 +66,9 @@ const fallDist = 0.40;     // canopy-height fall distance (step5 visual tune)
 // centerline is known (load). shotOpts accumulates the live slider overrides.
 let shotDir = null;
 let shotOpts = {};
+// 音反応 建物変調レイヤ（CityScope）。城ロード後に生成。scopeOpts は HUD の上書きを蓄積。
+let cityScope = null;
+let scopeOpts = {};
 
 // Audio-reactive LIVE driver (owns the mic + the pure live.js reactor). Mic is started
 // from a tap gesture (see #start below); until then visuals run on the internal clock.
@@ -132,6 +136,7 @@ function loop(now) {
       setOverlayIntensity: (v) => { liveOverlayI = v; },
       strobe: strobeEnabled,
       shotDir, beat, // LIVE applies the same beat-driven 俯瞰⇔アップ overlay onto the parked cam
+      cityScope, // LIVE で建物 scope を駆動（INTRO は無効のまま）
     });
   }
   renderer.render(scene, camera);
@@ -169,6 +174,7 @@ window.__proto = {
   setTiming: (partial) => { Object.assign(timingOpts, partial); rebuildDirector(); },   // director 緩急 overrides
   setFraming: (partial) => { Object.assign(framingOpts, partial); rebuildDirector(); }, // camrig framing overrides
   setShot: (partial) => { Object.assign(shotOpts, partial); if (shotDir) shotDir.setConfig(shotOpts); }, // beat-driven 俯瞰⇔アップ camera (slider HUD)
+  setScope: (partial) => { Object.assign(scopeOpts, partial); if (cityScope) cityScope.setConfig(scopeOpts); }, // 音反応 建物変調(HUD)
   state: () => ({ tSec, paused, parallax, mode, strobeEnabled }),
 };
 
@@ -263,6 +269,18 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
     const centerline = avPts.filter((_, i) => i % step === 0);
     shotDir = createShotDirector(centerline, shotOpts);
     window.__proto.shotDir = shotDir;
+  }
+
+  // CityScope geom: 建物の world Z で並木軸を、revealKey で半径を正規化。world 位置は
+  // trees と同じ matrixWorld 経由（KHR 量子化 → world）。reveal が scope テクスチャの sink。
+  if (buildings && reveal) {
+    buildings.updateWorldMatrix(true, false);
+    const bp = buildings.geometry.attributes.position, _w = new THREE.Vector3();
+    const worldZ = new Float32Array(bp.count);
+    for (let i = 0; i < bp.count; i++) { _w.fromBufferAttribute(bp, i).applyMatrix4(buildings.matrixWorld); worldZ[i] = _w.z; }
+    const geom = buildScopeGeom(manifest.buildings, (i) => worldZ[i]);
+    cityScope = createCityScope(geom, reveal, scopeOpts);
+    window.__proto.cityScope = cityScope;
   }
 
   // Intro reveals: the 格子 lattice fades up, then the roads electrify (the symbolic

@@ -79,6 +79,9 @@ export function createLiveDriver() {
         if (ctx.shotDir && ctx.beat) ctx.shotDir.apply(params, ctx.beat, dt);
         applyCamera();
       }
+      // 音反応 建物変調（CityScope）: 固定カメラの LIVE でのみ建物が音/ビートに連動。
+      // feat は extractFeatures の出力（level/levelSlow/bass/beat/beats/beatPhase を含む）。
+      if (ctx.cityScope) ctx.cityScope.frame(feat, dt);
       // sole effective writer of uMode in LIVE: update() (mode=null) still eases uMode toward
       // its old modeTarget, so override AFTER update() every frame.
       if (trees) {
