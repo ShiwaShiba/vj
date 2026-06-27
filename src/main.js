@@ -42,6 +42,12 @@ function startApp() {
   controlPanel = new ControlPanel({ scenes, palette, audio, engine, canvasEl, root: uiRoot });
   window.__vj.controlPanel = controlPanel;
   engine.start();
+
+  // 国立シティ(16MB)を起動直後にバックグラウンド先読み。dancers の即起動は妨げない
+  // (fire-and-forget)。読み込み完了まで city は opacity 0 のまま、切替時にフェードイン。
+  const cityScene = scenes.byId['city'];
+  if (cityScene && cityScene.preload) cityScene.preload();
+
   requestWakeLock();
   registerSW();
 
