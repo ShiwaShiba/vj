@@ -201,7 +201,7 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
   let emitPrev = null, emitCur = null;
   let modeTarget = 0;
   function update(season, mode, dt) {
-    const ep = particleEndpoints(season.index);
+    const ep = particleEndpoints(season.index, season.age ?? 1); // 秋の落ち葉の色が age で 銀杏→オレンジ
     const step = (v, t) => v + (t - v) * Math.min(1, (dt || 0) * (t < v ? EMIT_RELEASE : EMIT_ATTACK));
     if (emitPrev === null) { emitPrev = ep.prev.amount; emitCur = ep.cur.amount; }  // no fade-in on first frame
     emitPrev = step(emitPrev, ep.prev.amount); emitCur = step(emitCur, ep.cur.amount);
@@ -215,7 +215,11 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
     U.uColor1.value.set(ep.colorCur[0], ep.colorCur[1], ep.colorCur[2]);
     // 花びらの量は遅延prog(progPetal)で＝散りが薄く長い尾を引き、緑が満ちる頃まで降り続ける余韻。
     // 構造を持たない粒子はスイープ含め progPetal に乗せる(無ければ構造progで後方互換)。
-    U.uProg.value = season.progPetal ?? season.prog;
+    let leafProg = season.progPetal ?? season.prog;
+    // 秋(index 2)の落ち葉は「繊細にぼんやり」立ち上げる: progPetal を二乗(ease-in)＝onset を遅く・薄く、
+    // 一気に激しく舞い始めない。終端(prog→1)は不変＝定常の降り方は維持。他季は素の progPetal。
+    if (season.index === 2) leafProg *= leafProg;
+    U.uProg.value = leafProg;
     U.uTime.value += dt || 0;
     if (renderer) U.uScale.value = 0.5 * renderer.domElement.height;
     if (mode != null) modeTarget = mode ? 1 : 0;

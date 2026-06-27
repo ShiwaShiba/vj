@@ -44,10 +44,12 @@ const DEFAULTS = {
   // (色より長い尾＝緑が満ちた後も最後の花びらが少し残る余韻)。両端 0/1 でサイクル境界は連続(pop無し)。
   seasonColorWin: [2.0, 13.0],
   seasonPetalWin: [2.5, 16.0],
-  // ★夏の樹冠の「経年」窓(local秒)。春→夏の色が入りきった後(≈13s)から、復路の近接ショーケース(holdLowB,
-  // ≈43s)に向けてゆっくり進む＝②→③(市街の長い見せ場)→④→復路 とズームの移動を跨いで 新緑→濃緑→黄緑。
-  // cycleDur(45s)手前で 1 に飽和＝サイクル境界で settled(黄緑)に達し、秋へ pop 無しで繋がる。夏のみ使用。
-  seasonAgeWin: [13.0, 43.0],
+  // ★季節の「経年」(サイクル内の色ドリフト)の窓[start,end](local秒)、season ごとに別。dummy=春/冬は
+  // seasonEndpoints が age を無視するので使わない。
+  //  夏[13,43]: 色が入りきった後(≈13s)から②→③(市街の見せ場)→④→復路を跨いでゆっくり 新緑→濃緑→黄緑。
+  //  秋[33,44]: 銀杏黄を保ち、④全域(最広, hold4≈local32-33)を過ぎた最後の方からオレンジ→最後の数秒で赤。
+  // いずれも cycleDur(45s)手前で 1 に飽和＝サイクル境界で settled に達し pop 無し。秋は赤(settled)を 44-45s で保持。
+  seasonAgeWins: [[0, 1], [13.0, 43.0], [33.0, 44.0], [0, 1]],
   // Staged reveal order = terrain → roads → buildings → 木々. 粒子は uAppear(=trees reveal)で
   // ゲートされるので、最初の★近接ホールド(t≈4.8–11.3s)の中で桜が出始めるよう treeWin を前倒し。
   terrainWin: [0.0, 2.5], roadWin: [1.2, 4.7], buildWin: [4.7, 9.0], treeWin: [9.0, 11.0],
@@ -118,7 +120,7 @@ export function createDirector({ keyframes, tuning = {}, parallax = false }) {
       prog: smoothstep(0, seasonRampEnd, local),
       progColor: smoothstep(T.seasonColorWin[0], T.seasonColorWin[1], local),
       progPetal: smoothstep(T.seasonPetalWin[0], T.seasonPetalWin[1], local),
-      age: smoothstep(T.seasonAgeWin[0], T.seasonAgeWin[1], local), // サイクル内の経年(現状は夏の樹冠のみ使用)
+      age: smoothstep(T.seasonAgeWins[index][0], T.seasonAgeWins[index][1], local), // サイクル内の経年(夏=樹冠の深まり / 秋=銀杏→オレンジ)
       name: SEASON_NAMES[index],
     };
 

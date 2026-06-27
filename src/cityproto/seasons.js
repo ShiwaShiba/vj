@@ -59,6 +59,22 @@ export function agedSummerColor(age, settled) {
   return _seg3(SUMMER_FRESH_COLOR, SUMMER_DEEP_COLOR, settled, age, _lerp3);
 }
 
+// --- 秋の樹冠の「経年」: 銀杏黄(age0) → ④全域以降にオレンジ → 最後の3-5sでモミジ赤(age1) ---
+// 夏と同じ仕組みの3-stop。夏末の黄緑は seasonEndpoints の prev→cur(progColor)で銀杏黄(=fresh)に入り、
+// その後 age が進んで オレンジ(中盤) → 赤(終端=settled) へ。age=1 の終端は active chroma の秋
+// (=chromaCanopy(2)=current[2] のモミジ赤)に厳密一致＝サイクル境界(秋cur=冬prev)で pop しない。
+// AUTUMN_ORANGE_AT までで銀杏→オレンジ、その後 オレンジ→赤＝赤化を age 後半(最後の数秒)に圧縮。
+export const AUTUMN_FRESH_COLOR = [0.86, 0.68, 0.10]; // 銀杏: 強い黄金色(夏黄緑より強い黄)
+export const AUTUMN_MID_COLOR = [0.86, 0.42, 0.10];   // オレンジ: 中盤(④全域以降)
+const AUTUMN_ORANGE_AT = 0.55;                        // この age でオレンジ到達、以降 赤へ(=最後の数秒)
+export function agedAutumnColor(age, settled) {
+  if (age <= 0) return AUTUMN_FRESH_COLOR;
+  if (age >= 1) return settled;       // 端で mix を呼ばない＝誤差ゼロで settled(赤)に一致(連続性)
+  return age <= AUTUMN_ORANGE_AT
+    ? _lerp3(AUTUMN_FRESH_COLOR, AUTUMN_MID_COLOR, age / AUTUMN_ORANGE_AT)
+    : _lerp3(AUTUMN_MID_COLOR, settled, (age - AUTUMN_ORANGE_AT) / (1 - AUTUMN_ORANGE_AT));
+}
+
 // --- step 6: seasonal colour mode (the `C`-key uMode opt-in) ---
 // Season hues for chroma mode. [r,g,b] in 0..1 LINEAR — fed straight into GLSL vec3
 // uniforms (NOT the 0..255 helpers in lib/math.js). Dead while uMode=0 (the monochrome
@@ -69,8 +85,8 @@ export function agedSummerColor(age, settled) {
 export const CHROMA_VARIANTS = {
   current: [
     [0.95, 0.62, 0.72], // 春 sakura pink
-    [0.55, 0.62, 0.24], // 夏 settled = 経年 age=1 の黄緑(秋amberへ繋ぐ)。新緑/濃緑は SUMMER_*_COLOR
-    [0.85, 0.50, 0.18], // 秋 amber
+    [0.55, 0.62, 0.24], // 夏 settled = 経年 age=1 の黄緑(秋へ繋ぐ)。新緑/濃緑は SUMMER_*_COLOR
+    [0.80, 0.15, 0.07], // 秋 settled = 経年 age=1 のモミジ赤(最後の3-5sで到達, 冬へ繋ぐ)。銀杏黄/オレンジは AUTUMN_FRESH/MID_COLOR
     [0.80, 0.86, 0.95], // 冬 icy white-blue
   ],
   muted: [
@@ -111,10 +127,12 @@ export const COLOR_PALETTE = CHROMA_VARIANTS[DEFAULT_CHROMA];
 export function seasonEndpoints(index, age = 1) {
   const i = ((index % 4) + 4) % 4;
   const p = (i + 3) % 4;
-  // 夏(i===1)だけ cur が経年で動く: tone/色を age で 新緑→濃緑→黄緑 に。age=1(既定)で settled に
-  // 厳密一致＝既存の全呼び出し/テストは不変、サイクル境界(夏cur=秋prev)も pop しない。他季は据え置き。
+  // 夏(i===1)/秋(i===2)だけ cur が経年で動く: 夏=tone+色(新緑→濃緑→黄緑)、秋=色のみ(銀杏→オレンジ)。
+  // age=1(既定)で settled に厳密一致＝既存の全呼び出し/テストは不変、サイクル境界も pop しない。他季は据え置き。
   const cur = i === 1 ? { ...MONO_SETTLED[1], ...agedSummerTone(age) } : MONO_SETTLED[i];
-  const colorCur = i === 1 ? agedSummerColor(age, chromaCanopy(1)) : chromaCanopy(i);
+  const colorCur = i === 1 ? agedSummerColor(age, chromaCanopy(1))
+    : i === 2 ? agedAutumnColor(age, chromaCanopy(2))
+    : chromaCanopy(i);
   return {
     prev: MONO_SETTLED[p], cur,
     colorPrev: chromaCanopy(p), colorCur,
@@ -136,7 +154,7 @@ export function seasonEndpoints(index, age = 1) {
 export const PARTICLE = [
   { amount: 0.85, size: 0.115, sway: 0.26, fall: 1.30, grey: 0.78, spin: 0.6 }, // 春 桜吹雪: 大粒・lazy。fall>1 で早めに着地→地面で余韻フェード
   { amount: 0.00, size: 0.045, sway: 0.10, fall: 1.00, grey: 0.30, spin: 1.0 }, // 夏: (almost) none — amount===0 不可視 (size据置)
-  { amount: 0.70, size: 0.150, sway: 0.42, fall: 1.55, grey: 0.45, spin: 1.8 }, // 秋 落葉: 最大粒・最広最速tumble。さらに早く着地し地面で散り敷く余韻
+  { amount: 0.42, size: 0.090, sway: 0.20, fall: 1.15, grey: 0.45, spin: 0.7 }, // 秋 落葉: 控えめにハラハラ。狭いsway・遅いspin・floaty落下。size↓(9px上限を下回り細かく粒径差が出る=繊細な立ち上がり)・amount↓で疎。emit 一定で最後まで継続
   { amount: 1.00, size: 0.070, sway: 0.15, fall: 0.90, grey: 0.92, spin: 0.4 }, // 冬 雪: smallest, dense, narrow drift, never settles (white)
 ];
 
@@ -150,11 +168,13 @@ export const PARTICLE_COLOR = [
 
 // Mirror of seasonEndpoints for the particle look — same wrap construction, so emission
 // amount/size/sway/fall blend continuously across the season boundary (no burst/stop pop).
-export function particleEndpoints(index) {
+export function particleEndpoints(index, age = 1) {
   const i = ((index % 4) + 4) % 4;
   const p = (i + 3) % 4;
+  // 落ち葉の色は樹冠と揃える: 秋(i===2)だけ colorCur が age で 銀杏→オレンジ にドリフト(age=1で settled)。
+  const colorCur = i === 2 ? agedAutumnColor(age, chromaParticle(2)) : chromaParticle(i);
   return {
     prev: PARTICLE[p], cur: PARTICLE[i],
-    colorPrev: chromaParticle(p), colorCur: chromaParticle(i),
+    colorPrev: chromaParticle(p), colorCur,
   };
 }
