@@ -1,6 +1,6 @@
 // Cache-first service worker for offline use. Bump CACHE_VERSION on deploy to
 // invalidate. All paths are relative so it works under a GitHub Pages subpath.
-const CACHE_VERSION = 'vj-v15';
+const CACHE_VERSION = 'vj-v16';
 
 const ASSETS = [
   './',
@@ -32,7 +32,6 @@ const ASSETS = [
   './src/scenes/dots/ParticleField.js',
   './src/scenes/dots/Tunnel.js',
   './src/scenes/dots/FallingCubes.js',
-  './src/scenes/dots/GroundPlan.js',
   './src/scenes/dots/Kaleidoscope.js',
   './src/scenes/dots/SpectrumBars.js',
   './src/scenes/dots/Oscilloscope.js',
