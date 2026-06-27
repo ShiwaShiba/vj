@@ -68,6 +68,16 @@ test('radar: near rings show recent audio, far rings show older (traveling wave)
   assert.ok(MODES.radar(0.0, u, cfg) > MODES.radar(0.9, u, cfg), 'wavefront nearer the centre');
 });
 
+test('eq: coord zone selects bass/mid/treble band', () => {
+  const cfg = defaultScopeConfig(); cfg.eqFloor = 0; cfg.eqGain = 10; // saturate present bands
+  const u = { bands: [1, 0, 0] };                 // only bass loud
+  assert.ok(MODES.eq(0.1, u, cfg) > 0.9, 'inner zone follows bass');
+  assert.ok(MODES.eq(0.5, u, cfg) < 0.05, 'mid zone silent');
+  assert.ok(MODES.eq(0.9, u, cfg) < 0.05, 'outer zone silent');
+  const u2 = { bands: [0, 0, 1] };
+  assert.ok(MODES.eq(0.9, u2, cfg) > 0.9, 'outer zone follows treble');
+});
+
 test('applyA spikes/clears a hash-selected building deterministically', () => {
   const cfg = defaultScopeConfig(); cfg.aRatio = 1.0; // すべて被選択
   const u = { beatIndex: 7 };

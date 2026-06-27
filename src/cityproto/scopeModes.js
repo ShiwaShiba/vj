@@ -57,6 +57,13 @@ export const MODES = {
     const e = sampleHistory(u.hist, u.histHead, delay / Math.max(1e-3, u.histDt));
     return lerp(cfg.radarFloor, 1, smooth01(e * cfg.radarGain));
   },
+  // ② スペクトラムEQ: 座標 c を3ゾーンへ量子化し、内→低音/中→中音/外→高音の帯エネルギーで高さ。
+  // スペクトラムアナライザを街に展開（駅側が低音で踏むほど沈み、外周が高音で踊る）。
+  eq(c, u, cfg) {
+    const bi = c < 1 / 3 ? 0 : (c < 2 / 3 ? 1 : 2);
+    const e = (u.bands && u.bands[bi]) || 0;
+    return lerp(cfg.eqFloor, 1, smooth01(e * cfg.eqGain));
+  },
 };
 
 // A層: ビート毎 hash01(b ⊕ beatIndex) で抽選した建物を、跳ね(+δ)か消し(0)に。aRatio=濃度。
