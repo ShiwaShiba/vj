@@ -91,10 +91,10 @@ void main() {
 
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = clamp(psz * uScale / max(-mv.z, 0.05), 1.0, 16.0);
+  gl_PointSize = clamp(psz * uScale / max(-mv.z, 0.05), 1.8, 9.0);
 
   float fadeIn = smoothstep(0.0, 0.08, frac);
-  float fadeOut = 1.0 - smoothstep(0.85, 1.0, frac);
+  float fadeOut = 1.0 - smoothstep(0.70, 1.0, frac);   // longer touchdown fade = softer landing (余韻)
   vAlpha = fadeIn * fadeOut * progI * emit * uEmitMul * uAppear;
   vProgI = progI;
 }`;
@@ -186,10 +186,21 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
   points.frustumCulled = false;
   points.renderOrder = 10;                    // after opaque so depthTest culls occluded points
 
+  // 余韻: when a season's emission ends, petals already in the air should finish their
+  // fall and land — not blink out together (vAlpha *= emit dims the whole curtain at
+  // once). Ease each emission endpoint with a fast attack / slow RELEASE: a drop tapers
+  // over a couple seconds (long enough for in-flight petals to reach the ground via the
+  // touchdown fade) while a season turning ON still ramps in promptly. CPU-side, no glb.
+  const EMIT_ATTACK = 8;     // ~0.12s rise — petals appear without lag
+  const EMIT_RELEASE = 0.8;  // ~1.25s fall constant → ~3s graceful taper (no snap)
+  let emitPrev = null, emitCur = null;
   let modeTarget = 0;
   function update(season, mode, dt) {
     const ep = particleEndpoints(season.index);
-    U.uEmit.value.set(ep.prev.amount, ep.cur.amount);
+    const step = (v, t) => v + (t - v) * Math.min(1, (dt || 0) * (t < v ? EMIT_RELEASE : EMIT_ATTACK));
+    if (emitPrev === null) { emitPrev = ep.prev.amount; emitCur = ep.cur.amount; }  // no fade-in on first frame
+    emitPrev = step(emitPrev, ep.prev.amount); emitCur = step(emitCur, ep.cur.amount);
+    U.uEmit.value.set(emitPrev, emitCur);
     U.uSize.value.set(ep.prev.size, ep.cur.size);
     U.uSway.value.set(ep.prev.sway, ep.cur.sway);
     U.uSpin.value.set(ep.prev.spin, ep.cur.spin);

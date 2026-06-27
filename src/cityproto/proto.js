@@ -55,10 +55,10 @@ let debug = false;       // live-tuning readout overlay (D key). Default OFF →
 let terrainRef = null;     // DEM mesh, kept for particle rebuilds (setPetals)
 let manifestRef = null;    // baked manifest, kept for the rebuilds
 let kfInputs = null;       // {full,landmark,station} snapshot for keyframe rebuilds
-let petalOpts = { perColumn: 7, stride: 1 }; // emit density (live via setPetals)
+let petalOpts = { perColumn: 9, stride: 1 }; // emit density (live via setPetals)
 let framingOpts = {};      // camrig DEF overrides (live via setFraming); {} = DEF
 let timingOpts = {};       // director DEFAULTS overrides (live via setTiming); {} = DEFAULTS
-const fallDist = 0.32;     // canopy-height fall distance (step5 visual tune)
+const fallDist = 0.40;     // canopy-height fall distance (step5 visual tune)
 
 // Audio-reactive LIVE driver (owns the mic + the pure live.js reactor). Mic is started
 // from a tap gesture (see #start below); until then visuals run on the internal clock.

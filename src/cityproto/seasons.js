@@ -99,10 +99,10 @@ export function seasonEndpoints(index) {
 // summer amount=0 so petals fade fully out before 新緑; the prev→cur blend (particleEndpoints)
 // carries the SAME continuity invariant as seasonEndpoints, so the 4-cycle wrap is seamless.
 export const PARTICLE = [
-  { amount: 0.85, size: 0.060, sway: 0.22, fall: 1.00, grey: 0.78, spin: 0.6 }, // 春 桜吹雪: slow, broad, bright
-  { amount: 0.00, size: 0.045, sway: 0.10, fall: 1.00, grey: 0.30, spin: 1.0 }, // 夏: (almost) none
-  { amount: 0.70, size: 0.075, sway: 0.34, fall: 1.40, grey: 0.42, spin: 1.6 }, // 秋 落葉: large, fast flutter
-  { amount: 1.00, size: 0.042, sway: 0.12, fall: 0.95, grey: 0.92, spin: 0.4 }, // 冬 雪: small, dense, near-white
+  { amount: 0.85, size: 0.115, sway: 0.26, fall: 1.00, grey: 0.78, spin: 0.6 }, // 春 桜吹雪: bright mid-large, broad & lazy (俯瞰で読める大粒)
+  { amount: 0.00, size: 0.045, sway: 0.10, fall: 1.00, grey: 0.30, spin: 1.0 }, // 夏: (almost) none — amount===0 不可視 (size据置)
+  { amount: 0.70, size: 0.150, sway: 0.42, fall: 1.40, grey: 0.45, spin: 1.8 }, // 秋 落葉: largest point, widest & fastest tumble (散る)
+  { amount: 1.00, size: 0.070, sway: 0.15, fall: 0.90, grey: 0.92, spin: 0.4 }, // 冬 雪: smallest, dense, narrow drift, never settles (white)
 ];
 
 // Particle chroma for the step-6 uMode — derived from the active canopy register via

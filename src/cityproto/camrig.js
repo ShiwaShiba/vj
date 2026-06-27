@@ -13,8 +13,8 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const DEF = {
   d1: 6, h1: 4, fov1: 30,
   d2: 18, h2: 16, fov2: 40,
-  d3: 34, h3: 34, fov3: 48,
-  south: 6,
+  d3: 26, h3: 20, fov3: 44,
+  south: 10,
 };
 
 // Build the 4 keyframes. The full-city framing ④ defines the fixed oblique bearing

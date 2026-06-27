@@ -17,16 +17,16 @@ export const SEASON_NAMES = ['spring', 'summer', 'autumn', 'winter'];
 // tunable live via window.__proto.director.tuning — 緩急 is dialed by looking.
 const DEFAULTS = {
   // ① 駅前アップ(hold1) と ③ 市街の見せ場(holdMid) を長くして、旧駅舎の寄りと 並木の落下粒子
-  // (桜/落ち葉/雪) をしっかり見せる尺に。cycleDur = 26.2s。
-  hold1: 3.0, out12: 2.5, hold2: 1.0, out23: 3.0, holdMid: 9.0, out34: 2.5, hold4: 1.2, reverse: 4.0,
-  parallaxAmt: 1.0,
+  // (桜/落ち葉/雪) をしっかり見せる尺に。holdMid 9→13 で落下エフェクトの鑑賞を約4秒延長。cycleDur = 30.2s。
+  hold1: 3.0, out12: 2.5, hold2: 1.0, out23: 3.0, holdMid: 13.0, out34: 2.5, hold4: 1.2, reverse: 4.0,
+  parallaxAmt: 0.8,
   // 季節の染め(並木の色＋落下粒子のブルーム)が見せ場のどこで満開になるか。1.0=見せ場の終端
   // (＝カメラが引く瞬間に満開=遅すぎ)。0.45=見せ場の序盤で満開→残り約5秒を満開のまま見せられる。
   seasonRampFrac: 0.45,
   // Staged reveal order = terrain → roads → buildings → 木々. buildWin slowed a touch; treeWin
   // starts AFTER the buildings finish so the 並木 (and its petals) grow in last, not before the
-  // city. With the longer hold1 the ③ showpiece now runs 9.5–18.5s: buildings finish at its head
-  // and the 並木(+petals) reveal 10–12s, so the petals stay fully visible for ~6.5s of the hold.
+  // city. With the longer holdMid the ③ showpiece now runs 9.5–22.5s: buildings finish at its head
+  // and the 並木(+petals) reveal 10–12s, so the petals stay fully visible for ~10.5s of the hold.
   terrainWin: [0.0, 2.5], roadWin: [1.2, 4.7], buildWin: [4.7, 10.0], treeWin: [10.0, 12.0],
 };
 
