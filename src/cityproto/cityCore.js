@@ -25,7 +25,7 @@ import { buildScopeGeom, createCityScope } from './cityScope.js';
 export function createCityCore({ THREE, renderer }) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-  const params = { camX: -5.1, camY: 55.3, camZ: 50, fov: 50, lookX: -5.1, lookY: 0, lookV: 16.8 }; // ④ 国立市全域フレーミング
+  const params = { camX: -5.1, camY: 55.3, camZ: 50, fov: 50, lookX: -5.1, lookY: 0, lookV: 23.0 }; // ④ 国立市全域フレーミング
   function applyCamera() {
     camera.fov = params.fov;
     camera.position.set(params.camX, params.camY, params.camZ);
