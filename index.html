@@ -30,10 +30,21 @@
       height: 100vh;
       touch-action: manipulation;
     }
+    #city-gl {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
   </style>
 </head>
 <body>
   <canvas id="stage"></canvas>
+  <canvas id="city-gl"></canvas>
   <div id="ui"></div>
   <div id="start">
     <div class="title">VJ</div>
@@ -53,6 +64,12 @@
       });
       window.addEventListener('unhandledrejection', show);
     })();
+  </script>
+  <script type="importmap">
+  { "imports": {
+    "three": "./src/vendor/three.module.js",
+    "three/addons/": "./src/vendor/three-addons/"
+  } }
   </script>
   <script type="module" src="./src/main.js"></script>
 </body>
