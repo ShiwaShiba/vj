@@ -73,6 +73,17 @@ test('frameUniforms: ring buffer fills with energy and exposes hist/bands', () =
   assert.deepEqual(u.bands.map(x => +x.toFixed(2)), [1, 0.4, 0.7]);
 });
 
+test('frameUniforms: exposes clk (advances) and dropT (=lastDropT, set on drop)', () => {
+  const cfg = defaultScopeConfig();
+  const s = initScopeState();
+  const u0 = frameUniforms(feat({ level: 0.1, levelSlow: 0.1 }), 0.1, cfg, s);
+  assert.ok(Math.abs(u0.clk - 0.1) < 1e-9, 'clk advances by dt');
+  assert.ok(u0.dropT < -1e8, 'no drop yet → dropT stays at initial -1e9');
+  // a real drop sets dropT to the current clk
+  const u1 = frameUniforms(feat({ level: 0.9, levelSlow: 0.1, bass: 0.5 }), 0.1, cfg, s);
+  assert.ok(Math.abs(u1.dropT - u1.clk) < 1e-9, 'dropT snaps to clk on drop');
+});
+
 test('frameUniforms: ring buffer push count is time-driven (deterministic)', () => {
   const cfg = defaultScopeConfig(); cfg.histN = 100; cfg.histDt = 0.05;
   const a = initScopeState(), b = initScopeState();

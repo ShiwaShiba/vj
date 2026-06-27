@@ -48,6 +48,13 @@ export function defaultScopeConfig() {
     radarFloor: 0.2,          // radar: 静か帯の下限高さ
     eqGain: 1.5,              // eq: 帯エネルギーのコントラスト
     eqFloor: 0.18,            // eq: 無音帯の下限高さ
+    matrixBase: 0.15,         // matrix: 無音時の点灯密度
+    matrixGain: 0.7,          // matrix: level で増える点灯密度
+    matrixFloor: 0.0,         // matrix: 消灯時の高さ（0=床へ＝discard）
+    matrixRate: 2,            // matrix: 場の更新レート（ビート毎の段数, 2=8分音符）
+    gravStagger: 0.6,         // gravity: 崩落波が外周(c=1)へ伝わる秒
+    gravTau: 0.5,             // gravity: 反発の減衰時定数（秒, 大=長く揺れる）
+    gravFreq: 3.0,            // gravity: バネ振動の角周波数係数
   };
 }
 
@@ -99,6 +106,7 @@ export function frameUniforms(features, dt, cfg, state) {
   return {
     beatsFloat, beatIndex, level, linePos, barPhase2, front: state.front, envFloor,
     hist: state.hist, histHead: state.histHead, histDt, sweepSec: cfg.sweepSec, bands,
+    clk: state.clk, dropT: state.lastDropT,
   };
 }
 
