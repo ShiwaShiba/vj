@@ -1,85 +1,36 @@
+// proto.js — the standalone city-proto page shell. Owns ONLY the app boundary: the renderer
+// (from #gl), the RAF loop, the #loading veil, the #start mic gesture, the keyboard tuning
+// controls, the DOM overlay/debug HUDs, and window.__proto. ALL scene logic (scene-graph,
+// per-frame director/driver/cityScope, live-tuning rebuilds) lives in the injected cityCore,
+// which a future CityScene shares — feeding it the main app's audio instead of this mic.
 import * as THREE from '../vendor/three.module.js';
-import { buildAvenues } from './avenues.js';
+import { createCityCore } from './cityCore.js';
 import { makeOverlay } from './overlay.js';
-import { buildStation, buildRailway } from './station.js';
-import { planLayout, buildTrees } from './trees.js';
-import { planEmit, buildParticles } from './particles.js';
-import { setChromaVariant } from './seasons.js';
-import { loadCity } from './cityasset.js';
-import { makeKeyframes } from './camrig.js';
-import { createDirector } from './director.js';
-import { installReveal } from './reveal.js';
-import { installIntroLayers } from './intro.js';
 import { createLiveDriver } from './liveDriver.js';
-import { createShotDirector } from './shotDirector.js';
-import { makeGroundSampler } from './groundSampler.js';
-import { buildScopeGeom, createCityScope } from './cityScope.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setClearColor(0x07080a, 1);
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-const params = { camX: -5.1, camY: 55.3, camZ: 50, fov: 50, lookX: -5.1, lookY: 0, lookV: 16.8 }; // ④ 国立市全域フレーミング
-function applyCamera() {
-  camera.fov = params.fov;
-  camera.position.set(params.camX, params.camY, params.camZ);
-  camera.lookAt(params.lookX, params.lookY, params.lookV);
-  camera.updateProjectionMatrix();
-}
+const core = createCityCore({ THREE, renderer });
+const { scene, camera, params } = core;
 
-function resize() {
-  const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h, false);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-}
-addEventListener('resize', resize); resize(); applyCamera();
-
-// --- Plan 3 reveal director (camera + building ripple; season leg wires in later) ---
-let director = null;     // set once the city + keyframes exist
-let reveal = null;       // building ripple controller (installReveal)
-let intro = null;        // terrain-lattice + road opacity reveals (installIntroLayers)
-let tSec = 0;            // director clock (seconds) — scrubbable
-let last = null;         // perf timestamp of the previous frame
-let paused = false;      // freeze the clock to inspect a framing
-let parallax = false;    // straight dolly (false) vs micro-parallax (true), A/B by looking
-let trees = null;        // seasonal 並木 controller (buildTrees → {group, update, setMode})
-let particles = null;    // falling petals/leaves/snow along the 並木 (buildParticles → {points, update})
-let mode = 0;            // 0 = monochrome (step-4 default); 1 = chroma (step-6 C key)
-let strobeEnabled = false; // 冬 white strobe gate (S key). Default OFF (光感受性 safety)
-let debug = false;       // live-tuning readout overlay (D key). Default OFF → shipped look unchanged
-
-// Live-tuning state (step 6). Initial values reproduce the current look EXACTLY — they
-// only move when a window.__proto setter fires (no on-screen HUD yet; that lands at
-// SceneManager integration). Kept at module scope so the rebuild helpers can reach them.
-let terrainRef = null;     // DEM mesh, kept for particle rebuilds (setPetals)
-let manifestRef = null;    // baked manifest, kept for the rebuilds
-let kfInputs = null;       // {full,landmark,station} snapshot for keyframe rebuilds
-let petalOpts = { perColumn: 9, stride: 1 }; // emit density (live via setPetals)
-let framingOpts = {};      // camrig DEF overrides (live via setFraming); {} = DEF
-let timingOpts = {};       // director DEFAULTS overrides (live via setTiming); {} = DEFAULTS
-const fallDist = 0.40;     // canopy-height fall distance (step5 visual tune)
-// Beat-driven 俯瞰⇔アップ shot switcher (shared by INTRO + LIVE). Built once the 並木
-// centerline is known (load). shotOpts accumulates the live slider overrides.
-let shotDir = null;
-let shotOpts = {};
-// 音反応 建物変調レイヤ（CityScope）。城ロード後に生成。scopeOpts は HUD の上書きを蓄積。
-let cityScope = null;
-let scopeOpts = {};
+function resize() { core.resize(innerWidth, innerHeight); }
+addEventListener('resize', resize); resize(); core.applyCamera();
 
 // Audio-reactive LIVE driver (owns the mic + the pure live.js reactor). Mic is started
 // from a tap gesture (see #start below); until then visuals run on the internal clock.
 const driver = createLiveDriver();
 let liveOverlayI = null;                          // overlay grain intensity, set by the driver
+let last = null;                                  // perf timestamp of the previous frame
+let debug = false;                                // live-tuning readout overlay (D key). Default OFF → shipped look unchanged
 
 // credits read the baked manifest live (set on load) — never hardcoded.
 // grain intensity rides the music in LIVE (null = resting 0.05 look).
 const drawOverlay = makeOverlay(
   document.getElementById('ov'),
-  () => manifestRef && manifestRef.attribution,
+  () => { const m = core.refs().manifest; return m && m.attribution; },
   () => liveOverlayI,
 );
 // --- live-tuning readout (D key) — a dev instrument for the audio-reactive session. Default
@@ -108,38 +59,13 @@ function drawDebug() {
 }
 
 function loop(now) {
-  if (director) {
-    if (last === null) last = now;
-    const dt = Math.min((now - last) / 1000, 0.05); last = now;
-    const f = director.update(tSec, { parallax });
-    const live = driver.isLive();
-    // musical time for the shot switcher (1-frame lag in INTRO is imperceptible; LIVE reads
-    // it fresh inside driver.frame after the clock ticks). Runs on the internal clock pre-mic.
-    const beat = { beatsFloat: driver.clock.beats + driver.clock.beatPhase };
-    if (!live) {
-      // Phase 1 INTRO: the authored staged-zoom seasonal reveal owns camera/season/reveal.
-      if (!paused) tSec += dt;
-      Object.assign(params, f.cam);
-      // beat-driven 俯瞰⇔アップ overlay — only once the 並木 has finished revealing, so an
-      // アップ cut never lands on a bare avenue (the build-in zoom plays untouched).
-      if (shotDir && f.reveal.trees >= 0.99) shotDir.apply(params, beat, dt);
-      applyCamera();
-      if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
-      if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
-      if (trees) { trees.update(f.season, mode, dt, { strobe: strobeEnabled }); trees.uniforms.uAppear.value = f.reveal.trees; } // 並木 seasons + 冬 strobe + reveal-in after buildings
-      if (particles) { particles.update(f.season, mode, dt); particles.uniforms.uAppear.value = f.reveal.petals; } // 花びら/落ち葉/雪 (GPU fall, sweep-synced) + 粒子専用のゆるやか出現(treeと別ランプ=バースト回避)
-    }
-    // The driver layers audio accents in INTRO, and OWNS camera/season/uMode/density in LIVE
-    // (where the authored writes above are suppressed). tSec is frozen at handoff (no advance).
-    driver.frame(dt, now, {
-      director, directorCam: f.cam, tSec, trees, particles, params, applyCamera,
-      setOverlayIntensity: (v) => { liveOverlayI = v; },
-      strobe: strobeEnabled,
-      shotDir, beat, // LIVE applies the same beat-driven 俯瞰⇔アップ overlay onto the parked cam
-      cityScope, // LIVE で建物 scope を駆動（INTRO は無効のまま）
-    });
-  }
-  renderer.render(scene, camera);
+  if (last === null) last = now;
+  const dt = Math.min((now - last) / 1000, 0.05); last = now;
+  core.update(dt, now, {
+    audioState: driver.audio.state, driver, live: driver.isLive(), intro: true,
+    setOverlayIntensity: (v) => { liveOverlayI = v; },
+  });
+  core.render();
   drawOverlay();
   drawDebug();
   requestAnimationFrame(loop);
@@ -157,50 +83,30 @@ if (startEl) startEl.addEventListener('pointerdown', beginAudio, { once: true })
 else addEventListener('pointerdown', beginAudio, { once: true });
 
 window.__proto = {
-  THREE, scene, camera, renderer, params, applyCamera,
-  seek: (t) => { tSec = Math.max(0, t); },          // jump the director clock (seconds)
-  // Tuning shortcut: jump straight into the audio-reactive LIVE phase (skip the ~76s intro).
-  // Lands just inside the winter hold4 window so the next frame's `past` fallback hands off
-  // with the camera parked cleanly at ④ (no need to make a sound to trigger the handoff).
-  goLive: () => { const c = driver.modeConfig; tSec = c.winterCycleStart + c.hold4Start + c.hold4Dur - 0.05; },
-  setPaused: (b) => { paused = !!b; },
-  setParallax: (b) => { parallax = !!b; },
-  setMode: (b) => { mode = b ? 1 : 0; },            // 0 mono / 1 chroma (also the C key)
-  setStrobe: (b) => { strobeEnabled = !!b; },        // 冬 white strobe gate (also the S key)
+  THREE, scene, camera, renderer, params, applyCamera: core.applyCamera,
+  seek: (t) => core.seek(t),                        // jump the director clock (seconds)
+  goLive: () => core.goLive(driver),                // jump straight into the audio-reactive LIVE phase
+  setPaused: (b) => core.setPaused(b),
+  setParallax: (b) => core.setParallax(b),
+  setMode: (b) => core.setMode(b),                  // 0 mono / 1 chroma (also the C key)
+  setStrobe: (b) => core.setStrobe(b),              // 冬 white strobe gate (also the S key)
   // step 6 live-tuning knobs (no HUD yet). Initial state == the current look.
-  setChromaVariant: (name) => setChromaVariant(name),         // swap chroma register (look-pick)
-  setStrobeRate: (hz) => { if (trees) trees.uniforms.uStrobeRate.value = Math.max(0, Math.min(3, hz)); }, // ≤3Hz (守る線)
-  setPetals: (partial) => { Object.assign(petalOpts, partial); rebuildParticles(); },   // particle emit density
-  setTiming: (partial) => { Object.assign(timingOpts, partial); rebuildDirector(); },   // director 緩急 overrides
-  setFraming: (partial) => { Object.assign(framingOpts, partial); rebuildDirector(); }, // camrig framing overrides
-  setShot: (partial) => { Object.assign(shotOpts, partial); if (shotDir) shotDir.setConfig(shotOpts); }, // beat-driven 俯瞰⇔アップ camera (slider HUD)
-  setScope: (partial) => { Object.assign(scopeOpts, partial); if (cityScope) cityScope.setConfig(scopeOpts); }, // 音反応 建物変調(HUD)
-  state: () => ({ tSec, paused, parallax, mode, strobeEnabled }),
+  setChromaVariant: (name) => core.setChromaVariant(name),   // swap chroma register (look-pick)
+  setStrobeRate: (hz) => core.setStrobeRate(hz),    // ≤3Hz (守る線)
+  setPetals: (partial) => core.setPetals(partial),  // particle emit density
+  setTiming: (partial) => core.setTiming(partial),  // director 緩急 overrides
+  setFraming: (partial) => core.setFraming(partial),// camrig framing overrides
+  setShot: (partial) => core.setShot(partial),      // beat-driven 俯瞰⇔アップ camera (slider HUD)
+  setScope: (partial) => core.setScope(partial),    // 音反応 建物変調(HUD)
+  state: () => core.state(),
+  refs: () => core.refs(),
+  driver,                                           // expose the audio-reactive driver for live inspection
 };
 
-// Rebuild helpers for the live knobs. Both reuse the pure planners + THREE builders and
-// neither resets the director clock (tSec), so tuning is seamless. No-op until the city loads.
-function rebuildParticles() {
-  if (!particles || !terrainRef || !manifestRef) return;
-  scene.remove(particles.points);
-  particles.points.geometry.dispose();
-  particles.points.material.dispose();
-  const { avenue } = planLayout(manifestRef);
-  particles = buildParticles(planEmit(avenue, petalOpts), terrainRef, manifestRef, { renderer, fallDist });
-  scene.add(particles.points);
-  window.__proto.particles = particles;
-}
-function rebuildDirector() {
-  if (!kfInputs) return;
-  const keyframes = makeKeyframes(kfInputs, framingOpts);
-  director = createDirector({ keyframes, tuning: timingOpts });
-  window.__proto.director = director;
-  window.__proto.keyframes = keyframes;
-}
+// build stamp — a glance at the console after reload confirms WHICH code is live (no guessing
+// whether a change deployed). Bump the label when shipping a visible change.
+console.log('%c[VJ city] build: season look-lag — 散り→新緑の自然遷移 (progColor/progPetal) ✓', 'color:#e39;font-weight:bold');
 
-// Swap the procedural city for the baked OSM/DEM/AO asset. Layers are added in
-// reveal order (terrain → roads → buildings → trees) so Plan 3's reveal anim
-// can drive them.
 // Load-bar wiring: fill #loadfill with the glb download %, then fade the veil and
 // reveal TAP TO START once the scene is ready. Falls back to the pulsing indeterminate
 // bar when the response length is unknown (e.g. gzip transport → no Content-Length).
@@ -210,94 +116,10 @@ const onLoadProgress = (e) => {
   if (e && e.lengthComputable && e.total) { loadingEl.classList.remove('indet'); loadFill.style.width = `${Math.round((e.loaded / e.total) * 100)}%`; }
   else loadingEl.classList.add('indet');
 };
-// build stamp — a glance at the console after reload confirms WHICH code is live (no guessing
-// whether a change deployed). Bump the label when shipping a visible change.
-console.log('%c[VJ city] build: season look-lag — 散り→新緑の自然遷移 (progColor/progPetal) ✓', 'color:#e39;font-weight:bold');
-loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.json', onLoadProgress).then((city) => {
-  const { terrain, terrainGrid, buildings, landmark, station, manifest } = city;
-  terrainRef = terrain; manifestRef = manifest;    // keep for the live-tuning rebuilds (setPetals/setFraming/setTiming)
-  if (terrain) scene.add(terrain);                 // 1. terrain (DEM relief) — always visible (the stage)
-  if (terrainGrid) scene.add(terrainGrid);         //    fine lattice baked onto the DEM (reveals in)
-  const avenuesGroup = buildAvenues(manifest); scene.add(avenuesGroup); // 2. roads (manifest polylines)
-  const railGroup = buildRailway(manifest); scene.add(railGroup);
-  if (buildings) scene.add(buildings);             // 3. buildings (real footprints + baked AO)
-  if (buildings) reveal = installReveal(THREE, buildings, manifest.buildings); // ripple from the station
-  if (landmark) scene.add(landmark);
-  if (station) scene.add(station);
-  scene.add(buildStation(manifest));               // station glow accent (runtime canvas texture)
-  if (terrain) {                                   // 4. 木々 (green zones + 大学通り 並木 + 空き地, seasonal)
-    // 空き地の木: hand planLayout the building vertex WORLD positions so it can find the
-    // building carpet's interior gaps (vacant lots) and plant damped greenery there.
-    // KHR-quantized geometry → world via matrixWorld. Cost is a one-time load-pass.
-    let buildingPositions = null;
-    if (buildings) {
-      buildings.updateWorldMatrix(true, false);
-      const bp = buildings.geometry.attributes.position, _v = new THREE.Vector3();
-      buildingPositions = new Float32Array(bp.count * 3);
-      for (let i = 0; i < bp.count; i++) { _v.fromBufferAttribute(bp, i).applyMatrix4(buildings.matrixWorld); buildingPositions[i * 3] = _v.x; buildingPositions[i * 3 + 1] = _v.y; buildingPositions[i * 3 + 2] = _v.z; }
-    }
-    trees = buildTrees(manifest, terrain, { vacantDensity: 0.26, buildingPositions });
-    scene.add(trees.group);
-  }
-  if (terrain) {                                    // 5. falling particles along the 並木 (reuse the avenue layout)
-    const { avenue } = planLayout(manifest);        // pure + deterministic → byte-identical to buildTrees' avenue
-    particles = buildParticles(planEmit(avenue, petalOpts), terrain, manifest, { renderer, fallDist });
-    scene.add(particles.points);
-  }
-
-  // Keyframes: ④ = the current full-city params; ① is the 旧駅舎 (landmark) hero.
-  const { SCALE, VSCALE, vOffset } = manifest.scale;
-  const s = manifest.station || { u: 0, v: 0, h: 0 };
-  const stationW = { x: s.u * SCALE, z: (s.v - vOffset) * SCALE };
-  let landmarkW = { x: stationW.x, y: 0, z: stationW.z };       // fallback: station
-  if (landmark) {
-    landmark.updateMatrixWorld(true);
-    const c = new THREE.Box3().setFromObject(landmark).getCenter(new THREE.Vector3());
-    landmarkW = { x: c.x, y: c.y, z: c.z };
-  }
-  kfInputs = { full: { ...params }, landmark: landmarkW, station: stationW }; // snapshot ④ before the loop mutates params
-  rebuildDirector();                               // builds keyframes + director from kfInputs / framingOpts / timingOpts
-
-  // 並木 centerline for the beat-driven shot switcher: avenue (u,v) → world + DEM height,
-  // ordered south→north, subsampled to a smooth ~40-pt line the pure shotDirector glides along.
-  if (terrain) {
-    const groundY = makeGroundSampler(terrain);
-    const avPts = planLayout(manifest).avenue
-      .map((a) => { const x = a.u * SCALE, z = (a.v - vOffset) * SCALE; return { x, y: groundY(x, z), z }; })
-      .sort((p, q) => q.z - p.z);                  // south (large +Z) → north (station)
-    const step = Math.max(1, Math.floor(avPts.length / 40));
-    const centerline = avPts.filter((_, i) => i % step === 0);
-    shotDir = createShotDirector(centerline, shotOpts);
-    window.__proto.shotDir = shotDir;
-  }
-
-  // CityScope geom: 建物の world Z で並木軸を、revealKey で半径を正規化。world 位置は
-  // trees と同じ matrixWorld 経由（KHR 量子化 → world）。reveal が scope テクスチャの sink。
-  if (buildings && reveal) {
-    buildings.updateWorldMatrix(true, false);
-    const bp = buildings.geometry.attributes.position, _w = new THREE.Vector3();
-    const worldZ = new Float32Array(bp.count);
-    for (let i = 0; i < bp.count; i++) { _w.fromBufferAttribute(bp, i).applyMatrix4(buildings.matrixWorld); worldZ[i] = _w.z; }
-    const geom = buildScopeGeom(manifest.buildings, (i) => worldZ[i]);
-    cityScope = createCityScope(geom, reveal, scopeOpts);
-    window.__proto.cityScope = cityScope;
-  }
-
-  // Intro reveals: the 格子 lattice fades up, then the roads electrify (the symbolic
-  // white avenues + 中央線 lead, the grey network fills behind them).
-  const roadMaterials = [];
-  for (const g of [avenuesGroup, railGroup]) g.traverse((o) => {
-    if (o.material) roadMaterials.push({ material: o.material, phase: o.renderOrder <= 6 ? 0.35 : 0.0 });
-  });
-  intro = installIntroLayers({ gridMaterials: terrainGrid ? [terrainGrid.material] : [], roadMaterials });
-
-  window.__proto.city = city;
-  window.__proto.trees = trees;
-  window.__proto.particles = particles;
-  window.__proto.manifest = manifest;
-  window.__proto.reveal = reveal;
-  window.__proto.intro = intro;
-
+core.load(onLoadProgress).then(() => {
+  // Mirror the original inspection surface on window.__proto (live snapshot of the core refs).
+  const r = core.refs();
+  Object.assign(window.__proto, { city: r.city, trees: r.trees, particles: r.particles, manifest: r.manifest, reveal: r.reveal, intro: r.intro, shotDir: r.shotDir, cityScope: r.cityScope });
   // Scene is ready: fill the bar, fade the veil out, reveal the TAP TO START gate.
   if (loadingEl) { loadFill.style.width = '100%'; loadingEl.classList.add('done'); setTimeout(() => { loadingEl.style.display = 'none'; }, 600); }
   if (startEl) startEl.style.display = 'flex';
@@ -308,24 +130,22 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
 
 // Tuning controls (city-proto stage): dial 緩急 by looking. Later → ControlPanel.
 addEventListener('keydown', (e) => {
-  if (e.key === ' ') { paused = !paused; e.preventDefault(); }       // freeze / resume clock
-  else if (e.key === '[') { tSec = Math.max(0, tSec - 1.0); }        // scrub back 1s
-  else if (e.key === ']') { tSec += 1.0; }                            // scrub forward 1s
-  else if (e.key === 'p' || e.key === 'P') { parallax = !parallax; } // straight dolly ↔ micro-parallax
+  if (e.key === ' ') { core.setPaused(!core.state().paused); e.preventDefault(); }   // freeze / resume clock
+  else if (e.key === '[') { core.seek(core.state().tSec - 1.0); }     // scrub back 1s
+  else if (e.key === ']') { core.seek(core.state().tSec + 1.0); }     // scrub forward 1s
+  else if (e.key === 'p' || e.key === 'P') { core.setParallax(!core.state().parallax); } // straight dolly ↔ micro-parallax
   else if (e.key === 'c' || e.key === 'C') {
     // LIVE: the audio reactor owns color, so a manual toggle must override it via the reactor's
     // 'manual' colorMode (mono ↔ 季節色). INTRO: the director owns color → toggle the local mode.
     if (driver.isLive()) { const c = driver.modeConfig; driver.setColorMode('manual'); c.manualChromaMix = c.manualChromaMix > 0 ? 0 : 1; }
-    else { mode = mode ? 0 : 1; }
+    else { core.setMode(!core.state().mode); }
   }
   else if (e.key === 'n' || e.key === 'N') { // LIVE: 季節送り 春→夏→秋→冬 (forces manual + 色ON so the pick is visible)
     const c = driver.modeConfig; driver.setColorMode('manual'); c.manualSeason = (c.manualSeason + 1) % 4; c.manualChromaMix = 1;
   }
   else if (e.key === 'b' || e.key === 'B') { driver.setColorMode('burst'); } // LIVE: hand color back to the audio reactor
-  else if (e.key === 's' || e.key === 'S') { strobeEnabled = !strobeEnabled; } // 冬 white strobe (default off)
+  else if (e.key === 's' || e.key === 'S') { core.setStrobe(!core.state().strobeEnabled); } // 冬 white strobe (default off)
   else if (e.key === 'm' || e.key === 'M') { console.log('colorMode →', driver.cycleColorMode()); } // LIVE 色モード循環 (burst/advance/manual)
   else if (e.key === 'd' || e.key === 'D') { debug = !debug; dbgEl.style.display = debug ? 'block' : 'none'; } // live-tuning readout
   else if (e.key === 'l' || e.key === 'L') { window.__proto.goLive(); } // jump straight to the audio-reactive LIVE phase
 });
-
-window.__proto.driver = driver;  // expose the audio-reactive driver for live inspection
