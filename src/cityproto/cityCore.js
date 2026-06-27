@@ -98,6 +98,13 @@ export function createCityCore({ THREE, renderer }) {
       Object.assign(params, kfInputs ? kfInputs.full : params);
       if (shotDir) shotDir.apply(params, beat, dt);
       applyCamera();
+      // No authored INTRO to animate the reveal channels, so latch every gate fully open
+      // (the body scene is always the complete city). Idempotent cheap uniform writes; the
+      // LIVE driver.frame below still drives seasonal trees/particles + cityScope per-building.
+      if (reveal) reveal.setProgress(1);
+      if (introLayers) { introLayers.setTerrain(1); introLayers.setRoads(1); }
+      if (trees) trees.uniforms.uAppear.value = 1;
+      if (particles) particles.uniforms.uAppear.value = 1;
     }
     // The driver layers audio accents in INTRO, and OWNS camera/season/uMode/density in LIVE
     // (where the authored writes above are suppressed). tSec is frozen at handoff (no advance).
