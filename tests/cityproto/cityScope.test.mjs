@@ -1,7 +1,7 @@
 // tests/cityproto/cityScope.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildScopeGeom, defaultScopeConfig, initScopeState, frameUniforms } from '../../src/cityproto/cityScope.js';
+import { buildScopeGeom, defaultScopeConfig, initScopeState, frameUniforms, computeScope } from '../../src/cityproto/cityScope.js';
 
 const feat = (o = {}) => ({ level: 0, levelSlow: 0, bass: 0, beat: false, beats: 0, beatPhase: 0, ...o });
 
@@ -59,4 +59,15 @@ test('frameUniforms: deterministic for same inputs', () => {
   const a = frameUniforms(feat({ level: 0.4, beats: 2, beatPhase: 0.3 }), 0.016, cfg, initScopeState());
   const b = frameUniforms(feat({ level: 0.4, beats: 2, beatPhase: 0.3 }), 0.016, cfg, initScopeState());
   assert.deepEqual(a, b);
+});
+
+test('computeScope OFF or mix=0 → all ones (現状一致)', () => {
+  const geom = { radius: new Float32Array([0, 0.5, 1]), zc: new Float32Array([0, 0.5, 1]) };
+  const out = new Float32Array(3);
+  const cfg = defaultScopeConfig(); cfg.enabled = false;
+  computeScope(out, geom, { barPhase2: 0.5, level: 1 }, cfg);
+  assert.deepEqual([...out], [1, 1, 1]);
+  cfg.enabled = true; cfg.mix = 0;
+  computeScope(out, geom, { barPhase2: 0.5, level: 1 }, cfg);
+  assert.deepEqual([...out], [1, 1, 1]);
 });

@@ -1,7 +1,7 @@
 // CityScope — 音→建物変調レイヤ。純コア（geom/frameUniforms/computeScope）＋薄い factory。
 // reveal.js が transformed.y を所有し、本レイヤは建物ごとの scope∈[0,1] を毎フレ計算して
 // building-index テクスチャへ書くだけ（scope=1 で現状一致）。THREE/DOM/RNG/Date 無。
-import { clamp } from './scopeModes.js';
+import { clamp, coordOf, MODES, applyA } from './scopeModes.js';
 
 // 建物ごとの空間座標を1回構築。radius=駅からの正規化距離、zc=並木Z軸の正規化位置。
 export function buildScopeGeom(perBuilding, getWorldZ) {
@@ -72,4 +72,19 @@ export function frameUniforms(features, dt, cfg, state) {
   const envFloor = clamp(0.15 + (features.levelSlow || 0) * 0.85, 0, 1);
 
   return { beatsFloat, beatIndex, level, linePos, barPhase2, front: state.front, envFloor };
+}
+
+// 建物ごとの scope を out へ。enabled=false / mix=0 は全 1（＝現状一致）。
+export function computeScope(out, geom, u, cfg) {
+  const n = out.length;
+  if (!cfg.enabled || cfg.mix <= 0) { out.fill(1); return out; }
+  const fn = MODES[cfg.mode] || MODES.breathing;
+  for (let b = 0; b < n; b++) {
+    const c = coordOf(geom, b, cfg.spatial);
+    let s = fn(c, u, cfg);
+    s = applyA(s, b, u, cfg);
+    // mix: 1 で完全適用、0 で無効(=1)。中間は線形ブレンド。
+    out[b] = 1 - cfg.mix * (1 - clamp(s, 0, 1));
+  }
+  return out;
 }
