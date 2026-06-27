@@ -37,6 +37,8 @@ export class SceneManager {
   start(id) {
     const s = this.byId[id] || this.scenes[0];
     this._ensureInit(s);
+    const old = this.active;
+    if (old && old !== s && old.onExit) old.onExit();
     this.active = s;
     this.next = null;
     this.fade = 1;
@@ -79,6 +81,8 @@ export class SceneManager {
     if (this.next) {
       this.fade += dt / this.fadeDur;
       if (this.fade >= 1) {
+        const old = this.active;
+        if (old && old !== this.next && old.onExit) old.onExit();
         this.active = this.next;
         this.next = null;
         this.fade = 1;

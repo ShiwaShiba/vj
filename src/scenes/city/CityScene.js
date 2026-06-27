@@ -42,9 +42,11 @@ export class CityScene extends Scene {
     this._core.render();
     this._cityGl.style.opacity = String(alpha);
   }
+  onExit() { this._cityGl && (this._cityGl.style.opacity = 0); }
   dispose() {
     if (this._cityGl) this._cityGl.style.opacity = 0;
     if (this._core) this._core.dispose();
     if (this._renderer) this._renderer.dispose();
+    this._core = null; this._renderer = null; this._ready = false;
   }
 }

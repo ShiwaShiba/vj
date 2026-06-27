@@ -28,6 +28,7 @@ export class Scene {
   update(dt, audio, palette, clock) {}
   draw(ctx, alpha) {}
   drawHud(ctx, w, h, info) {} // optional per-scene HUD, drawn over the generic overlay HUD
+  onExit() {} // called when this scene stops being active/next, so a scene with an external layer can hide it
   dispose() {}
 
   defineParam(key, value, min, max, step, label) {
