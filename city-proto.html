@@ -80,7 +80,7 @@
   <div id="scopehud-b">
     <div class="row"><span>有効</span><input type="checkbox" id="sc-en" checked></div>
     <label><span>モード</span><span class="v" id="sc-mv">呼吸</span></label>
-    <input type="range" id="sc-mo" min="0" max="4" step="1" value="0">
+    <input type="range" id="sc-mo" min="0" max="6" step="1" value="0">
     <label><span>空間</span><span class="v" id="sc-sv">同心円</span></label>
     <input type="range" id="sc-sp" min="0" max="2" step="1" value="0">
     <label><span>強さ(mix)</span><span class="v" id="sc-xv">1.00</span></label>
@@ -110,7 +110,7 @@
 <script>
   // SCOPE HUD → window.__proto.setScope()。音→建物変調（CityScope）の生ダイヤル。
   (function () {
-    var MODES = ['breathing', 'scanbar', 'bloom', 'radar', 'eq'], MODE_JA = ['呼吸', '走査', '開花', 'レーダー', 'EQ'];
+    var MODES = ['breathing', 'scanbar', 'bloom', 'radar', 'eq', 'matrix', 'gravity'], MODE_JA = ['呼吸', '走査', '開花', 'レーダー', 'EQ', '二値', '重力'];
     var SPATIAL = ['rings', 'avenue', 'both'], SPATIAL_JA = ['同心円', '並木', '両方'];
     var $ = function (id) { return document.getElementById(id); };
     var set = function (o) { if (window.__proto && window.__proto.setScope) window.__proto.setScope(o); };
