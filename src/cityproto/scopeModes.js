@@ -64,6 +64,22 @@ export const MODES = {
     const e = (u.bands && u.bands[bi]) || 0;
     return lerp(cfg.eqFloor, 1, smooth01(e * cfg.eqGain));
   },
+  // ④ 二値マトリクス: 各建物を 0/1 に二値化（池田 data.matrix）。固有ハッシュが音量駆動の点灯密度
+  // density を下回れば満高(1)・他は matrixFloor（既定0=床へ崩落）。matrixRate でビートを細分し高速明滅。
+  matrix(c, u, cfg, b) {
+    const density = clamp(cfg.matrixBase + cfg.matrixGain * (u.level || 0), 0, 1);
+    const step = Math.floor((u.beatsFloat || 0) * cfg.matrixRate);
+    const h = hash01(((b | 0) * 2654435761) ^ (step * 0x9e3779b1));
+    return h < density ? 1 : cfg.matrixFloor;
+  },
+  // ⑥ グラビティ落下: drop 時刻 dropT から座標 c で staggered に崩落し、減衰バネ振動で満高へ復帰。
+  // 崩落波が駅から外周へ伝播（c·gravStagger 秒遅れ）。t<=0=波 未到達で満高、t=0 直後に 0 へ落ちて弾む。
+  gravity(c, u, cfg) {
+    const t = (u.clk - u.dropT) - c * cfg.gravStagger;
+    if (t <= 0) return 1;
+    const env = Math.exp(-t / Math.max(1e-3, cfg.gravTau));
+    return 1 - env * Math.cos(cfg.gravFreq * t);
+  },
 };
 
 // A層: ビート毎 hash01(b ⊕ beatIndex) で抽選した建物を、跳ね(+δ)か消し(0)に。aRatio=濃度。

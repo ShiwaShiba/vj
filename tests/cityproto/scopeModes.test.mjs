@@ -78,6 +78,28 @@ test('eq: coord zone selects bass/mid/treble band', () => {
   assert.ok(MODES.eq(0.9, u2, cfg) > 0.9, 'outer zone follows treble');
 });
 
+test('matrix: binary 0/1 field, density rises with level, refreshes per step, deterministic', () => {
+  const cfg = defaultScopeConfig(); cfg.matrixFloor = 0; cfg.matrixRate = 2;
+  const count = 400;
+  const lit = (u) => { let n = 0; for (let b = 0; b < count; b++) { const v = MODES.matrix(0.5, u, cfg, b); assert.ok(v === 0 || v === 1, `binary, got ${v}`); n += v; } return n; };
+  const quiet = { beatsFloat: 0, level: 0 };
+  const loud = { beatsFloat: 0, level: 1 };
+  const nQuiet = lit(quiet), nLoud = lit(loud);
+  assert.ok(nLoud > nQuiet, `louder lights more (${nLoud} > ${nQuiet})`);
+  // determinism: same (b, step, density) → same value
+  assert.equal(MODES.matrix(0.5, loud, cfg, 7), MODES.matrix(0.5, loud, cfg, 7));
+  // a step boundary changes the field (beatsFloat 0 → 0.5 crosses floor(*2) 0→1)
+  const next = { beatsFloat: 0.5, level: 1 };
+  let diff = 0; for (let b = 0; b < count; b++) if (MODES.matrix(0.5, loud, cfg, b) !== MODES.matrix(0.5, next, cfg, b)) diff++;
+  assert.ok(diff > 0, 'field refreshes across a step boundary');
+});
+
+test('matrix: matrixFloor sets the dark-cell height (0 = collapse)', () => {
+  const cfg = defaultScopeConfig(); cfg.matrixBase = 0; cfg.matrixGain = 0; cfg.matrixFloor = 0.3;
+  // density 0 → every cell dark → returns matrixFloor
+  for (let b = 0; b < 20; b++) assert.equal(MODES.matrix(0.5, { beatsFloat: 0, level: 0 }, cfg, b), 0.3);
+});
+
 test('applyA spikes/clears a hash-selected building deterministically', () => {
   const cfg = defaultScopeConfig(); cfg.aRatio = 1.0; // すべて被選択
   const u = { beatIndex: 7 };

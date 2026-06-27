@@ -117,7 +117,7 @@ export function computeScope(out, geom, u, cfg) {
   const fn = MODES[cfg.mode] || MODES.breathing;
   for (let b = 0; b < n; b++) {
     const c = coordOf(geom, b, cfg.spatial);
-    let s = fn(c, u, cfg);
+    let s = fn(c, u, cfg, b);
     s = applyA(s, b, u, cfg);
     // mix: 1 で完全適用、0 で無効(=1)。中間は線形ブレンド。
     out[b] = 1 - cfg.mix * (1 - clamp(s, 0, 1));
