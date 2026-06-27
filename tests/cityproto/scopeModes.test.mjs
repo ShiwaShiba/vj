@@ -100,6 +100,18 @@ test('matrix: matrixFloor sets the dark-cell height (0 = collapse)', () => {
   for (let b = 0; b < 20; b++) assert.equal(MODES.matrix(0.5, { beatsFloat: 0, level: 0 }, cfg, b), 0.3);
 });
 
+test('gravity: drop collapses near c to ~0 then springs back; unreached far c stays 1', () => {
+  const cfg = defaultScopeConfig(); cfg.gravStagger = 0.6; cfg.gravTau = 0.5; cfg.gravFreq = 3;
+  // just after a drop: clk barely past dropT
+  const justDropped = { clk: 10.01, dropT: 10.0 };
+  assert.ok(MODES.gravity(0.0, justDropped, cfg) < 0.2, 'centre collapses toward floor right after drop');
+  // far building: collapse wave (c*gravStagger=0.6s) has not arrived yet → still full
+  assert.equal(MODES.gravity(1.0, justDropped, cfg), 1);
+  // long after the drop, the spring has settled back near full height
+  const settled = { clk: 14.0, dropT: 10.0 };
+  assert.ok(MODES.gravity(0.0, settled, cfg) > 0.9, 'springs back to ~1 after settling');
+});
+
 test('applyA spikes/clears a hash-selected building deterministically', () => {
   const cfg = defaultScopeConfig(); cfg.aRatio = 1.0; // すべて被選択
   const u = { beatIndex: 7 };
