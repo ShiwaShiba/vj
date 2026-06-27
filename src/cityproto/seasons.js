@@ -99,9 +99,9 @@ export function seasonEndpoints(index) {
 // summer amount=0 so petals fade fully out before 新緑; the prev→cur blend (particleEndpoints)
 // carries the SAME continuity invariant as seasonEndpoints, so the 4-cycle wrap is seamless.
 export const PARTICLE = [
-  { amount: 0.85, size: 0.115, sway: 0.26, fall: 1.00, grey: 0.78, spin: 0.6 }, // 春 桜吹雪: bright mid-large, broad & lazy (俯瞰で読める大粒)
+  { amount: 0.85, size: 0.115, sway: 0.26, fall: 1.30, grey: 0.78, spin: 0.6 }, // 春 桜吹雪: 大粒・lazy。fall>1 で早めに着地→地面で余韻フェード
   { amount: 0.00, size: 0.045, sway: 0.10, fall: 1.00, grey: 0.30, spin: 1.0 }, // 夏: (almost) none — amount===0 不可視 (size据置)
-  { amount: 0.70, size: 0.150, sway: 0.42, fall: 1.40, grey: 0.45, spin: 1.8 }, // 秋 落葉: largest point, widest & fastest tumble (散る)
+  { amount: 0.70, size: 0.150, sway: 0.42, fall: 1.55, grey: 0.45, spin: 1.8 }, // 秋 落葉: 最大粒・最広最速tumble。さらに早く着地し地面で散り敷く余韻
   { amount: 1.00, size: 0.070, sway: 0.15, fall: 0.90, grey: 0.92, spin: 0.4 }, // 冬 雪: smallest, dense, narrow drift, never settles (white)
 ];
 

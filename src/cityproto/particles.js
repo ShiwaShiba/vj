@@ -78,23 +78,28 @@ void main() {
   float psz  = mix(uSize.x, uSize.y, progI);
   float fall = mix(uFall.x, uFall.y, progI);
 
-  // vertical fall: from (aGround + uFallDist) down to aGround. fall>1 lands before frac=1.
+  // vertical fall: from (aGround + uFallDist) down to aGround. fall>1 lands before frac=1
+  // (spring/autumn touch down early, then rest on the ground for the remaining life = 余韻).
   vec3 pos = position;                                       // position.y is the spawn top
-  float drop = clamp(frac * fall, 0.0, 1.0) * uFallDist;
-  pos.y = (aGround + uFallDist) - drop;
+  float fallT = clamp(frac * fall, 0.0, 1.0);               // 0 top → 1 touchdown
+  pos.y = (aGround + uFallDist) - fallT * uFallDist;
 
-  // horizontal sway, seed-phased so columns don't move in lockstep; ×frac so it starts
-  // tight at birth and opens up as it falls (two axes → a tumble feel).
+  // horizontal sway, seed-phased so columns don't move in lockstep; ×fallT so it opens up
+  // as it falls (two axes → a tumble feel) and then FREEZES its amplitude at touchdown so a
+  // landed petal settles in place instead of sliding around — the rest part of the 余韻.
   float w = uTime * spin + aSeed * 31.4159;
-  pos.x += sway * frac * sin(w);
-  pos.z += sway * frac * cos(w * 0.83 + aSeed * 7.0);
+  pos.x += sway * fallT * sin(w);
+  pos.z += sway * fallT * cos(w * 0.83 + aSeed * 7.0);
 
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
   gl_PointSize = clamp(psz * uScale / max(-mv.z, 0.05), 1.8, 9.0);
 
   float fadeIn = smoothstep(0.0, 0.08, frac);
-  float fadeOut = 1.0 - smoothstep(0.70, 1.0, frac);   // longer touchdown fade = softer landing (余韻)
+  // long, gentle touchdown fade: with fall>1 the petal has already landed by ~frac 0.65–0.77,
+  // so this fade plays out while it RESTS on the ground over the last third of its life —
+  // a soft 余韻 (settle-then-dissolve), not a mid-air blink-off. starts earlier (0.55) = longer.
+  float fadeOut = 1.0 - smoothstep(0.55, 1.0, frac);
   vAlpha = fadeIn * fadeOut * progI * emit * uEmitMul * uAppear;
   vProgI = progI;
 }`;
@@ -192,7 +197,7 @@ export function buildParticles(planned, terrain, manifest, opts = {}) {
   // over a couple seconds (long enough for in-flight petals to reach the ground via the
   // touchdown fade) while a season turning ON still ramps in promptly. CPU-side, no glb.
   const EMIT_ATTACK = 8;     // ~0.12s rise — petals appear without lag
-  const EMIT_RELEASE = 0.8;  // ~1.25s fall constant → ~3s graceful taper (no snap)
+  const EMIT_RELEASE = 0.6;  // ~1.7s fall constant → ~4–5s graceful taper at season end (long 余韻)
   let emitPrev = null, emitCur = null;
   let modeTarget = 0;
   function update(season, mode, dt) {

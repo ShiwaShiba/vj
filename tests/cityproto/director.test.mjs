@@ -63,8 +63,10 @@ test('seasons cycle 春→夏→秋→冬 then wrap to 春', () => {
 
 test('season progress ramps from 0 at cycle start to ~1 by the end of the ③ hold', () => {
   const d = mk();
-  const T = d.tuning;
-  const endOfHold = T.hold1 + T.out12 + T.hold2 + T.out23 + T.holdMid;
+  // derive the ③(holdMid) end from the actual segment list so this stays correct as the
+  // timeline is retuned (close-hold segments were inserted before ③).
+  let endOfHold = 0;
+  for (const s of d.segments) { endOfHold += s.dur; if (s.name === 'holdMid') break; }
   assert.ok(d.update(0).season.prog < 0.05, 'starts at season 0');
   assert.ok(d.update(endOfHold + 0.3).season.prog > 0.95, 'completes its arc by ③ end');
 });
