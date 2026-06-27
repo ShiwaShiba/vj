@@ -18,6 +18,17 @@ export function coordOf(geom, b, spatial) {
   return geom.radius[b]; // 'rings'
 }
 
+// リングバッファ hist を head（最新書込位置）から samplesBack サンプル遡って読む（端数は線形補間）。
+export function sampleHistory(hist, head, samplesBack) {
+  const n = hist.length;
+  if (n === 0) return 0;
+  const sb = clamp(samplesBack, 0, n - 1);
+  const i0 = Math.floor(sb), frac = sb - i0;
+  const a = hist[((head - i0) % n + n) % n];
+  const b = hist[((head - i0 - 1) % n + n) % n];
+  return a + (b - a) * frac;
+}
+
 export const MODES = {
   // ⑤ 都市の呼吸: 2小節で1呼吸、深さは level、座標で位相をずらしリップル。下限 breathFloor。
   breathing(c, u, cfg) {
@@ -38,6 +49,13 @@ export const MODES = {
   bloom(c, u, cfg) {
     const reveal = smooth01((u.front - (c - cfg.bloomBand)) / Math.max(1e-4, cfg.bloomBand));
     return Math.max(u.envFloor, reveal);
+  },
+  // ① レーダーping: 座標 c を時間遅延に写し、c·sweepSec 秒前の音エネルギーを表示＝
+  // マップに巻いたオシロスコープ。kick で生まれた明るいリングが駅から外周へ進行する。
+  radar(c, u, cfg) {
+    const delay = c * cfg.sweepSec;
+    const e = sampleHistory(u.hist, u.histHead, delay / Math.max(1e-3, u.histDt));
+    return lerp(cfg.radarFloor, 1, smooth01(e * cfg.radarGain));
   },
 };
 

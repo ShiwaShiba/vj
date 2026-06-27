@@ -1,7 +1,7 @@
 // tests/cityproto/scopeModes.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hash01, clamp, lerp, smooth01, coordOf, MODES, applyA } from '../../src/cityproto/scopeModes.js';
+import { hash01, clamp, lerp, smooth01, coordOf, MODES, applyA, sampleHistory } from '../../src/cityproto/scopeModes.js';
 import { defaultScopeConfig } from '../../src/cityproto/cityScope.js';
 
 const GEOM = { radius: new Float32Array([0, 0.5, 1]), zc: new Float32Array([1, 0.5, 0]) };
@@ -50,6 +50,22 @@ test('bloom: building inside the front is up, outside is envFloor', () => {
   const u = { front: 0.5, envFloor: 0.2 };
   assert.ok(MODES.bloom(0.1, u, cfg) > 0.9, 'near (radius<front) bloomed');
   assert.ok(Math.abs(MODES.bloom(0.95, u, cfg) - 0.2) < 1e-6, 'far holds envFloor');
+});
+
+test('sampleHistory reads back from head with wrap + lerp', () => {
+  const h = new Float32Array([0, 1, 2, 3]); // head=3 → most recent is 3
+  assert.equal(sampleHistory(h, 3, 0), 3);
+  assert.equal(sampleHistory(h, 3, 1), 2);
+  assert.equal(sampleHistory(h, 3, 0.5), 2.5);
+  assert.equal(sampleHistory(h, 0, 1), 3, 'wraps past index 0');
+});
+
+test('radar: near rings show recent audio, far rings show older (traveling wave)', () => {
+  const cfg = defaultScopeConfig(); cfg.sweepSec = 1.0; cfg.histDt = 0.1; cfg.radarFloor = 0;
+  // hist: most-recent loud, older silent → near (c~0) tall, far (c~1) short
+  const hist = new Float32Array(16); const head = 5; hist[head] = 1; // newest loud only
+  const u = { hist, histHead: head, histDt: 0.1, sweepSec: 1.0 };
+  assert.ok(MODES.radar(0.0, u, cfg) > MODES.radar(0.9, u, cfg), 'wavefront nearer the centre');
 });
 
 test('applyA spikes/clears a hash-selected building deterministically', () => {
