@@ -150,7 +150,7 @@ export class ControlPanel {
       c.appendChild(vrow);
     }
 
-    // Generic named mode-groups (e.g. GroundPlan: 範囲 / カメラ / 高さ / スタイル).
+    // Generic named mode-groups (e.g. 範囲 / カメラ / 高さ / スタイル).
     if (scene.modeGroups && scene.setModeGroup) {
       for (const g of scene.modeGroups) {
         const grow = document.createElement('div');

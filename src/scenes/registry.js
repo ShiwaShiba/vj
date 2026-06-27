@@ -4,7 +4,7 @@ import { FlowField } from './dots/FlowField.js';
 import { ParticleField } from './dots/ParticleField.js';
 import { Tunnel } from './dots/Tunnel.js';
 import { FallingCubes } from './dots/FallingCubes.js';
-import { GroundPlan } from './dots/GroundPlan.js';
+import { CityScene } from './city/CityScene.js';
 import { Kaleidoscope } from './dots/Kaleidoscope.js';
 import { Lissajous } from './dots/Lissajous.js';
 import { Moire } from './dots/Moire.js';
@@ -23,7 +23,7 @@ export function createScenes() {
     new ParticleField(),
     new Tunnel(),
     new FallingCubes(),
-    new GroundPlan(),
+    new CityScene(),
     new Kaleidoscope(),
     new Lissajous(),
     new Moire(),
