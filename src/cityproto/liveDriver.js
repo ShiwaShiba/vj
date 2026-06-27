@@ -74,6 +74,9 @@ export function createLiveDriver() {
         params.camX = p.camX; params.camY = p.camY;
         params.camZ = p.camZ * (1 - cfg.breathAmp * knobs.camBreath);
         params.fov = p.fov; params.lookX = p.lookX; params.lookY = p.lookY; params.lookV = p.lookV;
+        // beat-driven 俯瞰⇔アップ overlay on the parked hero cam (park = the 俯瞰 base). Same
+        // shared instance/state as INTRO, so the switch rhythm carries across the handoff.
+        if (ctx.shotDir && ctx.beat) ctx.shotDir.apply(params, ctx.beat, dt);
         applyCamera();
       }
       // sole effective writer of uMode in LIVE: update() (mode=null) still eases uMode toward

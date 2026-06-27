@@ -11,6 +11,8 @@ import { createDirector } from './director.js';
 import { installReveal } from './reveal.js';
 import { installIntroLayers } from './intro.js';
 import { createLiveDriver } from './liveDriver.js';
+import { createShotDirector } from './shotDirector.js';
+import { makeGroundSampler } from './groundSampler.js';
 
 const glCanvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
@@ -59,6 +61,10 @@ let petalOpts = { perColumn: 9, stride: 1 }; // emit density (live via setPetals
 let framingOpts = {};      // camrig DEF overrides (live via setFraming); {} = DEF
 let timingOpts = {};       // director DEFAULTS overrides (live via setTiming); {} = DEFAULTS
 const fallDist = 0.40;     // canopy-height fall distance (step5 visual tune)
+// Beat-driven 俯瞰⇔アップ shot switcher (shared by INTRO + LIVE). Built once the 並木
+// centerline is known (load). shotOpts accumulates the live slider overrides.
+let shotDir = null;
+let shotOpts = {};
 
 // Audio-reactive LIVE driver (owns the mic + the pure live.js reactor). Mic is started
 // from a tap gesture (see #start below); until then visuals run on the internal clock.
@@ -103,10 +109,16 @@ function loop(now) {
     const dt = Math.min((now - last) / 1000, 0.05); last = now;
     const f = director.update(tSec, { parallax });
     const live = driver.isLive();
+    // musical time for the shot switcher (1-frame lag in INTRO is imperceptible; LIVE reads
+    // it fresh inside driver.frame after the clock ticks). Runs on the internal clock pre-mic.
+    const beat = { beatsFloat: driver.clock.beats + driver.clock.beatPhase };
     if (!live) {
       // Phase 1 INTRO: the authored staged-zoom seasonal reveal owns camera/season/reveal.
       if (!paused) tSec += dt;
       Object.assign(params, f.cam);
+      // beat-driven 俯瞰⇔アップ overlay — only once the 並木 has finished revealing, so an
+      // アップ cut never lands on a bare avenue (the build-in zoom plays untouched).
+      if (shotDir && f.reveal.trees >= 0.99) shotDir.apply(params, beat, dt);
       applyCamera();
       if (reveal) reveal.setProgress(f.reveal.buildings); // intro ripple; latches at 1
       if (intro) { intro.setTerrain(f.reveal.terrain); intro.setRoads(f.reveal.roads); } // 格子 → 通電
@@ -119,6 +131,7 @@ function loop(now) {
       director, directorCam: f.cam, tSec, trees, particles, params, applyCamera,
       setOverlayIntensity: (v) => { liveOverlayI = v; },
       strobe: strobeEnabled,
+      shotDir, beat, // LIVE applies the same beat-driven 俯瞰⇔アップ overlay onto the parked cam
     });
   }
   renderer.render(scene, camera);
@@ -155,6 +168,7 @@ window.__proto = {
   setPetals: (partial) => { Object.assign(petalOpts, partial); rebuildParticles(); },   // particle emit density
   setTiming: (partial) => { Object.assign(timingOpts, partial); rebuildDirector(); },   // director 緩急 overrides
   setFraming: (partial) => { Object.assign(framingOpts, partial); rebuildDirector(); }, // camrig framing overrides
+  setShot: (partial) => { Object.assign(shotOpts, partial); if (shotDir) shotDir.setConfig(shotOpts); }, // beat-driven 俯瞰⇔アップ camera (slider HUD)
   state: () => ({ tSec, paused, parallax, mode, strobeEnabled }),
 };
 
@@ -237,6 +251,19 @@ loadCity('./tools/citybake/dist/city.glb', './tools/citybake/dist/city.manifest.
   }
   kfInputs = { full: { ...params }, landmark: landmarkW, station: stationW }; // snapshot ④ before the loop mutates params
   rebuildDirector();                               // builds keyframes + director from kfInputs / framingOpts / timingOpts
+
+  // 並木 centerline for the beat-driven shot switcher: avenue (u,v) → world + DEM height,
+  // ordered south→north, subsampled to a smooth ~40-pt line the pure shotDirector glides along.
+  if (terrain) {
+    const groundY = makeGroundSampler(terrain);
+    const avPts = planLayout(manifest).avenue
+      .map((a) => { const x = a.u * SCALE, z = (a.v - vOffset) * SCALE; return { x, y: groundY(x, z), z }; })
+      .sort((p, q) => q.z - p.z);                  // south (large +Z) → north (station)
+    const step = Math.max(1, Math.floor(avPts.length / 40));
+    const centerline = avPts.filter((_, i) => i % step === 0);
+    shotDir = createShotDirector(centerline, shotOpts);
+    window.__proto.shotDir = shotDir;
+  }
 
   // Intro reveals: the 格子 lattice fades up, then the roads electrify (the symbolic
   // white avenues + 中央線 lead, the grey network fills behind them).
