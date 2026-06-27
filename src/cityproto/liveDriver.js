@@ -65,7 +65,9 @@ export function createLiveDriver() {
     if (particles && particles.uniforms.uEmitMul) particles.uniforms.uEmitMul.value = knobs.petalDensity;
 
     if (ps.phase === PHASE.LIVE) {
-      const season = { index: knobs.seasonIndex, prog: knobs.seasonProg, ...seasonLookProgs(knobs.seasonProg) };
+      // age=1: 夏は settled(黄緑)で安定。サイクル内の 新緑→濃緑→黄緑 の経年は intro(director)の
+      // ズーム演出＝LIVE は固定カメラのため据え置き(連続性も保たれる)。
+      const season = { index: knobs.seasonIndex, prog: knobs.seasonProg, age: 1, ...seasonLookProgs(knobs.seasonProg) };
       // camera: parked hero framing + a level-driven breath micro-dolly on camZ (no travel)
       if (ps.parkParams && params && applyCamera) {
         const p = ps.parkParams;

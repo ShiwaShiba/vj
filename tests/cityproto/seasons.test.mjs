@@ -5,6 +5,8 @@ import {
   SEASON_NAMES, MONO_SETTLED, COLOR_PALETTE, GRAD, seasonEndpoints,
   PARTICLE, PARTICLE_COLOR, particleEndpoints,
   CHROMA_VARIANTS, setChromaVariant,
+  SUMMER_FRESH_TONE, SUMMER_DEEP_TONE, SUMMER_FRESH_COLOR, SUMMER_DEEP_COLOR,
+  agedSummerTone, agedSummerColor,
 } from '../../src/cityproto/seasons.js';
 
 test('SEASON_NAMES is the single source re-exported from director', () => {
@@ -44,6 +46,37 @@ test('seasonEndpoints selects cur=index, prev=previous-with-wrap', () => {
     assert.deepStrictEqual(ep.colorCur, COLOR_PALETTE[i]);
     assert.deepStrictEqual(ep.colorPrev, COLOR_PALETTE[(i + 3) % 4]);
   }
+});
+
+test('夏の経年: age 0=新緑 / 0.5=濃緑 / 1=settled、端点は厳密一致(誤差ゼロ)', () => {
+  // 端点で mix を呼ばない設計 ⇒ 浮動小数の誤差なく stop と完全一致
+  assert.deepStrictEqual(agedSummerTone(0), SUMMER_FRESH_TONE);
+  assert.deepStrictEqual(agedSummerTone(0.5), SUMMER_DEEP_TONE);
+  assert.deepStrictEqual(agedSummerTone(1), { toneLo: MONO_SETTLED[1].toneLo, toneHi: MONO_SETTLED[1].toneHi });
+  assert.deepStrictEqual(agedSummerColor(0, COLOR_PALETTE[1]), SUMMER_FRESH_COLOR);
+  assert.deepStrictEqual(agedSummerColor(0.5, COLOR_PALETTE[1]), SUMMER_DEEP_COLOR);
+  assert.deepStrictEqual(agedSummerColor(1, COLOR_PALETTE[1]), COLOR_PALETTE[1]);
+});
+
+test('夏の経年: 新緑→濃緑は暗くなり(濃く)、tone は単調に深まる(toneHi: fresh>deep)', () => {
+  assert.ok(SUMMER_FRESH_TONE.toneHi > SUMMER_DEEP_TONE.toneHi, '新緑の方が明るい(crown)');
+  // 0→0.5 で toneHi は単調減少(深まる)
+  let prev = agedSummerTone(0).toneHi;
+  for (const a of [0.1, 0.2, 0.3, 0.4, 0.5]) {
+    const hi = agedSummerTone(a).toneHi;
+    assert.ok(hi <= prev + 1e-9, `toneHi 単調減少 @${a}`);
+    prev = hi;
+  }
+});
+
+test('夏の経年: age を変えても age=1 で settled に一致＝サイクル境界(夏cur=秋prev)は不変', () => {
+  // 経年中(age<1)は cur が動くが、wrap で参照される age=1 は settled に一致
+  const wrapCur = seasonEndpoints(1, 1);
+  assert.deepStrictEqual(wrapCur.cur, MONO_SETTLED[1], 'age=1 mono cur = settled');
+  assert.deepStrictEqual(wrapCur.colorCur, COLOR_PALETTE[1], 'age=1 chroma cur = settled');
+  assert.deepStrictEqual(wrapCur.colorCur, seasonEndpoints(2, 1).colorPrev, '夏cur(age1)=秋prev');
+  // age=0(新緑)は settled と異なる＝経年が実際に効いている
+  assert.notDeepStrictEqual(seasonEndpoints(1, 0).colorCur, COLOR_PALETTE[1], 'age=0 は新緑で settled と別');
 });
 
 test('continuity invariant: endpoints(i).cur === endpoints(i+1).prev (no wrap pop)', () => {

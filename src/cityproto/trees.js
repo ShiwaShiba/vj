@@ -306,7 +306,7 @@ export function buildTrees(manifest, terrain, opts = {}) {
 
   let modeTarget = 0;
   function update(season, mode, dt, opts = {}) {
-    const ep = seasonEndpoints(season.index);
+    const ep = seasonEndpoints(season.index, season.age ?? 1); // age で夏の樹冠が 新緑→濃緑→黄緑(無ければ settled)
     U.uScale.value.set(ep.prev.scale, ep.cur.scale);
     U.uDensity.value.set(ep.prev.density, ep.cur.density);
     U.uToneLo.value.set(ep.prev.toneLo, ep.cur.toneLo);

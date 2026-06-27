@@ -93,6 +93,22 @@ test('look-lag: progColor/progPetal trail the structural prog so 散り→新緑
   assert.ok(start.prog < 0.05 && start.progColor < 0.05 && start.progPetal < 0.05, 'all ~0 at cycle start');
 });
 
+test('season.age: 夏の経年は color が入りきった後にゆっくり進み、サイクル境界で 1(=settled, wrap安全)', () => {
+  // 新緑→濃緑→黄緑 の経年。color(≈13s)が入りきるまでは ~0 で新緑に着地し、その後ズームの移動を
+  // 跨いで進み、wrap 直前で 1 に飽和＝秋へ pop 無し。構造/色prog からは独立した別チャンネル。
+  const d = mk();
+  const C = d.cycleDur;
+  const early = d.update(C + 12).season;   // 春→夏の色が入りきる手前 ⇒ まだ新緑(age~0)
+  assert.ok(early.age < 0.05, 'age ~0 while still landing on 新緑');
+  const mid = d.update(C + 28).season;     // ③市街の見せ場あたり ⇒ 濃緑へ深まる
+  assert.ok(mid.age > 0.3 && mid.age < 0.9, `age deepening mid-cycle (got ${mid.age})`);
+  assert.ok(mid.age > early.age, 'age advances across the zoom moves');
+  const late = d.update(C + 44).season;    // 復路近接の終盤 ⇒ 黄緑(settled)に達する
+  assert.strictEqual(late.age, 1, 'age saturates to 1 before the wrap');
+  const start = d.update(2 * C).season;     // 次サイクル境界
+  assert.ok(start.age < 0.05, 'age resets ~0 at cycle start (continuous)');
+});
+
 test('season progress ramps from 0 at cycle start to ~1 by the end of the ③ hold', () => {
   const d = mk();
   // derive the ③(holdMid) end from the actual segment list so this stays correct as the

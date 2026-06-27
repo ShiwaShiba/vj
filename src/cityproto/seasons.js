@@ -23,10 +23,41 @@ export const GRAD = { base: 0.11, span: 0.20 };
 // order matches SEASON_NAMES: 0 spring, 1 summer, 2 autumn, 3 winter.
 export const MONO_SETTLED = [
   { scale: 1.05, density: 0.90, toneLo: 0.20, toneHi: 0.46, shimmer: 0.00, snow: 0.0 }, // 春 桜: bright bloom
-  { scale: 1.18, density: 1.00, toneLo: 0.09, toneHi: 0.22, shimmer: 0.00, snow: 0.0 }, // 夏 新緑→濃緑: densest, darkest
+  { scale: 1.18, density: 1.00, toneLo: 0.11, toneHi: 0.26, shimmer: 0.00, snow: 0.0 }, // 夏 settled = 経年の age=1(秋に近づく黄緑): densest。toneLo/Hi は agedSummerTone(1)＝下の SUMMER_*_TONE の終端と一致(連続性)
   { scale: 0.98, density: 0.62, toneLo: 0.14, toneHi: 0.34, shimmer: 0.10, snow: 0.0 }, // 秋: shimmer, thinning
   { scale: 0.82, density: 0.42, toneLo: 0.11, toneHi: 0.40, shimmer: 0.02, snow: 0.7 }, // 冬: sparse, snow crown
 ];
+
+// --- 夏の樹冠の「経年」: 1サイクル内で 新緑 → 濃緑 → (秋へ向かう)黄緑 とゆっくり深まる ---
+// ディレクター(intro)が season.age(0→1, ズームの移動を跨いで進む長い窓)を供給し、trees.js が
+// seasonEndpoints(index, age) 経由で uniform を更新＝シェーダは不変、毎フレームの値だけが進む。
+// age 0=芽吹いたばかりの新緑、0.5=盛夏の最も深い濃緑、1=秋に近づく黄緑。age=1 の終端は
+// MONO_SETTLED[1] / アクティブ chroma の夏(=chromaCanopy(1)) に厳密一致＝サイクル境界(夏cur=秋prev)で
+// pop しない。中間stop(fresh/deep)だけをここに置く。色は uMode=1(C キー)時のみ可視・mono は tone のみ。
+export const SUMMER_FRESH_TONE = { toneLo: 0.13, toneHi: 0.30 }; // 新緑: 明るい
+export const SUMMER_DEEP_TONE = { toneLo: 0.08, toneHi: 0.19 };  // 濃緑: 最も暗い
+export const SUMMER_FRESH_COLOR = [0.42, 0.66, 0.34];           // 新緑: 鮮やかな若葉
+export const SUMMER_DEEP_COLOR = [0.22, 0.45, 0.20];            // 濃緑: 深い葉
+
+const _seg = (a, b, t) => a + (b - a) * t;
+const _lerp3 = (A, B, t) => [_seg(A[0], B[0], t), _seg(A[1], B[1], t), _seg(A[2], B[2], t)];
+const _lerpTone = (A, B, t) => ({ toneLo: _seg(A.toneLo, B.toneLo, t), toneHi: _seg(A.toneHi, B.toneHi, t) });
+// 折れ線3stop: age≤0→s0, [0,.5]→s0..s1, [.5,1]→s1..s2, age≥1→s2。端点は厳密一致(端で mix を呼ばない
+// ＝浮動小数の誤差ゼロ、連続性テスト/wrap が安定)。これで 新緑→濃緑 を必ず中点で通過する。
+function _seg3(s0, s1, s2, age, mix) {
+  if (age <= 0) return s0;
+  if (age >= 1) return s2;
+  return age <= 0.5 ? mix(s0, s1, age / 0.5) : mix(s1, s2, (age - 0.5) / 0.5);
+}
+// settled(age=1)は呼び出し側の単一ソースから取る: tone=MONO_SETTLED[1], color=chromaCanopy(1)
+// ＝全 chroma 変種で age=1 が各々の夏に一致し、連続性が崩れない。
+export function agedSummerTone(age) {
+  const settled = { toneLo: MONO_SETTLED[1].toneLo, toneHi: MONO_SETTLED[1].toneHi };
+  return _seg3(SUMMER_FRESH_TONE, SUMMER_DEEP_TONE, settled, age, _lerpTone);
+}
+export function agedSummerColor(age, settled) {
+  return _seg3(SUMMER_FRESH_COLOR, SUMMER_DEEP_COLOR, settled, age, _lerp3);
+}
 
 // --- step 6: seasonal colour mode (the `C`-key uMode opt-in) ---
 // Season hues for chroma mode. [r,g,b] in 0..1 LINEAR — fed straight into GLSL vec3
@@ -38,7 +69,7 @@ export const MONO_SETTLED = [
 export const CHROMA_VARIANTS = {
   current: [
     [0.95, 0.62, 0.72], // 春 sakura pink
-    [0.36, 0.58, 0.30], // 夏 leaf green
+    [0.55, 0.62, 0.24], // 夏 settled = 経年 age=1 の黄緑(秋amberへ繋ぐ)。新緑/濃緑は SUMMER_*_COLOR
     [0.85, 0.50, 0.18], // 秋 amber
     [0.80, 0.86, 0.95], // 冬 icy white-blue
   ],
@@ -77,12 +108,16 @@ export const COLOR_PALETTE = CHROMA_VARIANTS[DEFAULT_CHROMA];
 // The two ends of this frame's blend: prev = where instances start (= last cycle's
 // settled look), cur = where they arrive by prog=1. The wrap is continuous because
 // cur(i) === prev((i+1)%4) by construction.
-export function seasonEndpoints(index) {
+export function seasonEndpoints(index, age = 1) {
   const i = ((index % 4) + 4) % 4;
   const p = (i + 3) % 4;
+  // 夏(i===1)だけ cur が経年で動く: tone/色を age で 新緑→濃緑→黄緑 に。age=1(既定)で settled に
+  // 厳密一致＝既存の全呼び出し/テストは不変、サイクル境界(夏cur=秋prev)も pop しない。他季は据え置き。
+  const cur = i === 1 ? { ...MONO_SETTLED[1], ...agedSummerTone(age) } : MONO_SETTLED[i];
+  const colorCur = i === 1 ? agedSummerColor(age, chromaCanopy(1)) : chromaCanopy(i);
   return {
-    prev: MONO_SETTLED[p], cur: MONO_SETTLED[i],
-    colorPrev: chromaCanopy(p), colorCur: chromaCanopy(i),
+    prev: MONO_SETTLED[p], cur,
+    colorPrev: chromaCanopy(p), colorCur,
   };
 }
 
