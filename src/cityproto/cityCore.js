@@ -34,7 +34,10 @@ export function createCityCore({ THREE, renderer }) {
   }
 
   function resize(w, h) {
-    renderer.setSize(w, h, false);
+    // updateStyle:true pins the canvas BOX to w×h CSS px (inline style), matching how the 2D
+    // #stage is sized from window.innerHeight. Relying on CSS `height:100vh`/`inset:0` instead
+    // lets iOS Safari stretch the fixed canvas past the visual viewport, clipping the bottom.
+    renderer.setSize(w, h, true);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   }

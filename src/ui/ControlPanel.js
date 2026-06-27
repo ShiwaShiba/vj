@@ -174,7 +174,7 @@ export class ControlPanel {
     sliders.className = 'vj-sliders';
     for (const key in scene.params) {
       const entry = scene.params[key];
-      sliders.appendChild(createSlider(entry.label, entry, (v) => { entry.value = v; }));
+      sliders.appendChild(createSlider(entry.label, entry, (v) => { entry.value = v; if (entry.onChange) entry.onChange(v); }));
     }
     c.appendChild(sliders);
   }
