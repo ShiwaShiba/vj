@@ -74,6 +74,12 @@
 第1陣で土台（cityScope レイヤ＋reveal 拡張＋HUD＋空間3択）を据え、純解析の3モードで映えを即確認する。
 Tier2/Tier3 はテクスチャ配管を段階的に足すが、いずれも reveal の所有権・既存モードに触れない。
 
+> **実装上の統合（plan 2026-06-27-cityscope-batch1 で確定）**：上記3 Tier の内部実装は、全モード共通の
+> **per-building scope テクスチャ1本**へ統合する。CPU が純 JS（`scopeModes.js`/`cityScope.js`）で建物ごとの
+> `scope[b]∈[0,1]` を毎フレ計算し、reveal シェーダは building index で1回 lookup するだけ。これにより各モードの
+> math が GLSL に重複せず、**CPU 検証 math＝実機 math**（false-green の温床が原理的に消える）。挙動・8モード集合・
+> 守る線は不変。第1陣で本テクスチャ配管を据えるため、第3陣（二値マトリクス/落下）の texbuilding は追加コストが小さい。
+
 ## 8モード定義（curated menu）
 
 | # | モード | 一言 | 相性空間 | 酔い | Tier |
