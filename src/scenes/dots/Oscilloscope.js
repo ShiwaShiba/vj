@@ -9,8 +9,11 @@ import { rgbCss, TWO_PI } from '../../lib/math.js';
 // one axis = reverse the bass diagonal UL/LR <-> LL/UR), a Drive band selector
 // (BASS / TREBLE / LEVEL drives the breathing scale; small bands lifted by a
 // gamma so treble — which rarely peaks — still reads), and Rotate (spin the
-// whole figure). Auto wanders all of these hands-off, fully deterministic from
-// clock time/beats (no Math.random/Date), so an unattended scope keeps evolving.
+// whole figure). Spin has an explicit OFF/ON toggle so stopping the rotation is
+// one tap (no hunting for slider-zero), and the Rotate slider has a centre
+// dead-zone so its middle is a reliable "stopped" position on a touchscreen.
+// Auto wanders all of these hands-off, fully deterministic from clock
+// time/beats (no Math.random/Date), so an unattended scope keeps evolving.
 export class Oscilloscope extends Scene {
   constructor() {
     super('scope', 'Oscilloscope');
@@ -21,12 +24,14 @@ export class Oscilloscope extends Scene {
     this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
     // XY-mode levers (no effect in Line/Circle).
     this.defineParam('phase', 8, 1, 64, 1, 'Phase');     // self-correlation lag = loop shape
-    this.defineParam('rotate', 0, -0.5, 0.5, 0.02, 'Rotate'); // base spin, rev/s
+    this.defineParam('rotate', 0, -0.5, 0.5, 0.02, 'Rotate'); // spin speed/dir, rev/s (centre dead-zone)
     this.defineParam('drive', 0.6, 0, 1.5, 0.05, 'Drive');    // band-driven breathing depth
     // Button groups (rendered by ControlPanel; only meaningful in XY).
+    // Spin OFF freezes the figure instantly regardless of the Rotate slider.
     this.modeGroups = [
       { key: 'drive', label: 'Drive', options: ['BASS', 'TREBLE', 'LEVEL'], index: 0 },
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
+      { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
     this._spin = 0; // accumulated rotation, radians
@@ -42,10 +47,18 @@ export class Oscilloscope extends Scene {
 
     // Rotation: manual slider, OR a slow bold wander when Auto is on. Band is
     // intentionally NOT mixed into spin — Drive drives the scale, Rotate the
-    // spin — so each lever stays predictable.
-    let spinRate = this.p('rotate'); // rev/s
+    // spin — so each lever stays predictable. Auto is the master override; below
+    // it, Spin OFF freezes the figure and the Rotate slider has a centre
+    // dead-zone so its middle reliably means "stopped" on a touchscreen.
+    let spinRate;
     if (this.mg('auto') === 1) {
       spinRate = 0.05 + 0.035 * Math.sin(this.t * 0.045 * TWO_PI); // ~0.015..0.085 rev/s
+    } else if (this.mg('spin') === 1) {
+      let r = this.p('rotate'); // rev/s
+      if (Math.abs(r) < 0.03) r = 0; // centre dead-zone (catches 0 and ±one step)
+      spinRate = r;
+    } else {
+      spinRate = 0; // Spin OFF — frozen wherever it is, slider ignored
     }
     this._spin = (this._spin + dt * spinRate * TWO_PI) % TWO_PI;
   }
