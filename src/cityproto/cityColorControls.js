@@ -9,17 +9,23 @@ export function applyCityColorGroup(key, idx, ctx) {
   const core = ctx && ctx.core, adapter = ctx && ctx.adapter;
   if (!core || !adapter) return false;
   if (key === 'cityColor') {
-    if (idx === 1) { adapter.setColorMode('manual'); adapter.modeConfig.manualChromaMix = 1; }
-    else { adapter.setColorMode('burst'); }            // モノ＝音反応の既定（rest=mono）
+    // 0=モノ(burst) / 1=季節色(固定) / 2=季節オート(春→夏→秋→冬 循環)
+    if (idx === 0) { adapter.setColorMode('burst'); adapter.modeConfig.autoSeason = false; } // モノ＝音反応の既定(rest=mono)
+    else {
+      adapter.setColorMode('manual');
+      adapter.modeConfig.manualChromaMix = 1;
+      adapter.modeConfig.autoSeason = idx === 2;
+    }
     return true;
   }
   if (key === 'citySeason') {
     adapter.setColorMode('manual');
     adapter.modeConfig.manualSeason = ((idx % 4) + 4) % 4;
     adapter.modeConfig.manualChromaMix = 1;            // 季節を選んだら色ON
+    adapter.modeConfig.autoSeason = false;             // 手動で季節を選んだらオート解除
     return true;
   }
   if (key === 'cityVariant') { core.setChromaVariant(CITY_VARIANTS[idx] || 'current'); return true; }
-  if (key === 'cityStrobe') { core.setStrobe(idx === 1); return true; }
+  if (key === 'cityStrobe') { core.setStrobe(idx === 1); core.setStrobeAll(idx === 1); return true; } // 常時ストロボ(全季節)
   return false;
 }

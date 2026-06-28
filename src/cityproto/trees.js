@@ -320,10 +320,11 @@ export function buildTrees(manifest, terrain, opts = {}) {
     U.uTime.value += dt || 0;
     if (mode != null) modeTarget = mode ? 1 : 0;
     U.uMode.value += (modeTarget - U.uMode.value) * Math.min(1, (dt || 0) * 4); // ~0.6s crossfade
-    // Winter strobe: only season 3, only when the S-key gate is on, ramped via uStrobe so
-    // onset/offset are smooth (no abrupt full-rate flash). Default gate off ⇒ eases to 0.
+    // Strobe: gated by opts.strobe (default off), ramped via uStrobe so onset/offset are smooth.
+    // opts.strobeAll ⇒ fire in EVERY season (常時ストロボ); otherwise winter-only (proto S-key).
     const gate = opts.strobe ? 1 : 0;
-    const strobeTarget = (season.index === 3 ? season.prog : 0) * gate;
+    const seasonAmp = opts.strobeAll ? 1 : (season.index === 3 ? season.prog : 0);
+    const strobeTarget = seasonAmp * gate;
     U.uStrobe.value += (strobeTarget - U.uStrobe.value) * Math.min(1, (dt || 0) * 3); // ~1s ramp
   }
   function setMode(mode) { modeTarget = mode ? 1 : 0; }

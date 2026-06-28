@@ -32,10 +32,10 @@ export class CityScene extends Scene {
       { label: '建物連動', key: 'scopeEnabled', index: 0, options: ['ON', 'OFF'] },
       { label: 'SCOPE', key: 'scopeMode', index: 0, options: SCOPE_MODES_JA },
       { label: '空間', key: 'scopeSpatial', index: 0, options: SCOPE_SPATIAL_JA },
-      { label: '色', key: 'cityColor', index: 0, options: ['モノ', '季節色'] },
+      { label: '色', key: 'cityColor', index: 0, options: ['モノ', '季節色', '季節オート'] },
       { label: '季節', key: 'citySeason', index: 0, options: ['春', '夏', '秋', '冬'] },
       { label: '色変種', key: 'cityVariant', index: 0, options: ['現行', '淡', '中'] },
-      { label: '冬ストロボ', key: 'cityStrobe', index: 0, options: ['OFF', 'ON'] },
+      { label: 'ストロボ', key: 'cityStrobe', index: 0, options: ['OFF', 'ON'] },
     ];
     // Continuous sliders. onChange pushes straight into the core's live setters (no-op until load,
     // where shotOpts/scopeOpts persist the pre-load value, so dragging during load is safe).
@@ -46,10 +46,13 @@ export class CityScene extends Scene {
       orbit:     { label: '俯瞰の動き', value: 0.4, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setShot({ orbitRate: v * 0.05, breatheAmp: v * 0.12 }) },
       near:      { label: '俯瞰ニア比率', value: 0.25, min: 0, max: 1, step: 0.05, onChange: (v) => this._core && this._core.setShot({ nearRatio: v }) },
       cityTint:  { label: '全体色なじみ', value: 0.2, min: 0, max: 1, step: 0.02, onChange: (v) => { this._tintStr = v; } },
+      seasonCyc: { label: '季節循環(小節)', value: 8, min: 2, max: 16, step: 1, onChange: (v) => { this._adapter && (this._adapter.modeConfig.autoSeasonBeats = v * 4); } },
+      strobeHz:  { label: 'ストロボ速さ', value: 2, min: 0, max: 3, step: 0.1, onChange: (v) => { this._strobeHz = v; } }, // ≤3Hz 死守(光感受性)
       scopeMix:  { label: 'SCOPE強さ', value: 1, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setScope({ mix: v }) },
       scopeA:    { label: 'SCOPE A比率', value: 0, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setScope({ aRatio: v }) },
     };
     this._tintStr = 0.2; // 全体COLOR着色の強さ（cityTint スライダー）
+    this._strobeHz = 2;  // ストロボ速さ(Hz, ≤3)。LIVEドライバのBPM値を毎フレーム上書きしスライダー優先
   }
 
   // Apply a button-group change: let the base update the group index (with wraparound), then push
@@ -86,6 +89,8 @@ export class CityScene extends Scene {
         breatheAmp: this.params.orbit.value * 0.12,
         nearRatio: this.params.near.value,
       });
+      // パネル既定: 季節循環の周期(小節→beats)を adapter へ。ストロボ速さは update() が毎フレーム反映。
+      if (this._adapter) this._adapter.modeConfig.autoSeasonBeats = this.params.seasonCyc.value * 4;
     }).catch((e) => console.error('[city] preload failed', e));
     return this._loading;
   }
@@ -104,6 +109,8 @@ export class CityScene extends Scene {
     if (!this._ready || !this._core) return;
     this._adapter.update(audio, clock);
     this._core.update(dt, this._now, { audioState: audio, driver: this._adapter, live: true, intro: false });
+    // ストロボ速さ: LIVEドライバが core.update 内で uStrobeRate を BPM 値へ書くため、後から上書きしてスライダーを優先。
+    this._core.setStrobeRate(this._strobeHz);
     if (palette) this._core.setTint(paletteToCityTint(palette, this._tintStr));
   }
   draw(ctx, alpha) {

@@ -104,7 +104,7 @@ export function createSceneAudioAdapter() {
     const r = reduce(ps, feat, cfg, dt); ps = r.next;
     knobs = smoothKnobs(knobs, r.targets, dt, cfg);
 
-    const { trees, particles, params, applyCamera, setOverlayIntensity, strobe } = ctx;
+    const { trees, particles, params, applyCamera, setOverlayIntensity, strobe, strobeAll } = ctx;
 
     // overlay grain rides the music; particle density from reduce (LIVE combine).
     if (setOverlayIntensity) setOverlayIntensity(knobs.overlayIntensity);
@@ -131,7 +131,7 @@ export function createSceneAudioAdapter() {
       // sole effective writer of uMode in LIVE: update() (mode=null) eases uMode toward its old
       // modeTarget, so override AFTER update() every frame. strobe clamped ≤3Hz (luminance guard).
       if (trees) {
-        trees.update(season, null, dt, { strobe });
+        trees.update(season, null, dt, { strobe, strobeAll });
         trees.uniforms.uMode.value = knobs.chromaMix;
         if (trees.uniforms.uStrobeRate) trees.uniforms.uStrobeRate.value = Math.max(0, Math.min(3, knobs.strobeRate));
       }

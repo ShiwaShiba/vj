@@ -45,6 +45,8 @@ export function defaultModeConfig() {
     dropThresh: 0.25, dropRefractoryS: 2.0, bassJump: 0.1,
     advanceOnPhrase: false, seasonMinDwellBeats: 4, seasonRampDur: 3.0,
     manualSeason: 3, manualChromaMix: 0,
+    autoSeason: false, autoSeasonBeats: 32, // manual色のオート循環: ONで春→夏→秋→冬を beats 周期で回す
+
     // chroma bloom (transient-only):
     chromaCeil: 0.9, chromaBurst: 0.6, chromaDecayTau: 2.0,
     // camera breath + particle density:
@@ -155,7 +157,16 @@ export function reduce(phaseState, feat, cfg, dt) {
   // --- season + chroma (LIVE only owns these; INTRO leaves them for the director) ---
   if (next.phase === PHASE.LIVE) {
     if (cfg.colorMode === 'manual') {
-      next.seasonIndex = ((cfg.manualSeason % 4) + 4) % 4;
+      if (cfg.autoSeason) {
+        // 時間(beats)駆動で季節を循環。境界で seasonProg を 0 に落とし樹冠をクロスフェード。
+        const period = Math.max(1, cfg.autoSeasonBeats || 32);
+        const idx = Math.floor(feat.beats / period) % 4;
+        if (idx !== ps.seasonIndex) { next.seasonIndex = idx; next.seasonProg = 0; }
+        else { next.seasonIndex = ps.seasonIndex; next.seasonProg = Math.min(1, ps.seasonProg + dt / cfg.seasonRampDur); }
+      } else {
+        next.seasonIndex = ((cfg.manualSeason % 4) + 4) % 4;
+        next.seasonProg = 1; // 固定季節は settled で安定（autoから戻った時の途中progを解消）
+      }
       next.chromaEnv = cfg.manualChromaMix;
     } else {
       // advance: a drop steps the season (with a min-dwell guard)

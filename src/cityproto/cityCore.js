@@ -52,7 +52,8 @@ export function createCityCore({ THREE, renderer }) {
   let trees = null;        // seasonal 並木 controller (buildTrees → {group, update, setMode})
   let particles = null;    // falling petals/leaves/snow along the 並木 (buildParticles → {points, update})
   let mode = 0;            // 0 = monochrome (step-4 default); 1 = chroma (step-6 C key)
-  let strobeEnabled = false; // 冬 white strobe gate (S key). Default OFF (光感受性 safety)
+  let strobeEnabled = false; // strobe gate (S key / panel). Default OFF (光感受性 safety)
+  let strobeAllSeasons = false; // 常時ストロボ: ONで全季節（OFFは proto の冬限定 white strobe）
 
   // Live-tuning state (step 6). Initial values reproduce the current look EXACTLY — they
   // only move when a setter fires. Kept at core scope so the rebuild helpers can reach them.
@@ -115,6 +116,7 @@ export function createCityCore({ THREE, renderer }) {
       director, directorCam: f.cam, tSec, trees, particles, params, applyCamera,
       setOverlayIntensity,
       strobe: strobeEnabled,
+      strobeAll: strobeAllSeasons,
       shotDir, beat, // LIVE applies the same beat-driven 俯瞰⇔アップ overlay onto the parked cam
       cityScope, // LIVE で建物 scope を駆動（INTRO は無効のまま）
     });
@@ -234,7 +236,8 @@ export function createCityCore({ THREE, renderer }) {
   function setPaused(b) { paused = !!b; }
   function setParallax(b) { parallax = !!b; }
   function setMode(b) { mode = b ? 1 : 0; }                          // 0 mono / 1 chroma (also the C key)
-  function setStrobe(b) { strobeEnabled = !!b; }                     // 冬 white strobe gate (also the S key)
+  function setStrobe(b) { strobeEnabled = !!b; }                     // strobe gate (also the S key)
+  function setStrobeAll(b) { strobeAllSeasons = !!b; }              // 常時ストロボ（全季節）: panel から
   function setStrobeRate(hz) { if (trees) trees.uniforms.uStrobeRate.value = Math.max(0, Math.min(3, hz)); } // ≤3Hz (守る線)
   function setPetals(partial) { Object.assign(petalOpts, partial); rebuildParticles(); }   // particle emit density
   function setTiming(partial) { Object.assign(timingOpts, partial); rebuildDirector(); }   // director 緩急 overrides
@@ -281,7 +284,7 @@ export function createCityCore({ THREE, renderer }) {
     scene, camera, params, applyCamera,
     resize, load, update, render,
     setShot, setScope, setTint,
-    setMode, setStrobe, setStrobeRate, setPetals, setTiming, setFraming,
+    setMode, setStrobe, setStrobeAll, setStrobeRate, setPetals, setTiming, setFraming,
     setSeason, setChromaVariant: (name) => setChromaVariant(name),
     seek, goLive, setPaused, setParallax,
     state, refs, dispose,

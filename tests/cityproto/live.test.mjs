@@ -119,6 +119,21 @@ test('manual: audio never overrides the VJ-pinned season/chroma', () => {
   for (const e of log) assert.strictEqual(e.knobs.chromaMix, 0, 'chroma pinned');
 });
 
+test('manual autoSeason: 春→夏→秋→冬 を beats 周期で循環し境界で prog をリセット', () => {
+  const cfg = { ...defaultModeConfig(), colorMode: 'manual', autoSeason: true, autoSeasonBeats: 4, manualChromaMix: 1 };
+  // beats 0,1,..,17 を 1フレームずつ流す（feat.beats = clock.beats）。period=4 で idx=floor(beats/4)%4。
+  const frames = Array.from({ length: 18 }, (_, b) => mkFrame({ bpm: 120 }, { clock: { beats: b } }));
+  const { log } = run(frames, { cfg, ps: liveStart(cfg, 3) });
+  const seasonAt = (b) => log[b].ps.seasonIndex;
+  assert.strictEqual(seasonAt(0), 0, 'beats0 → 春(0)');
+  assert.strictEqual(seasonAt(4), 1, 'beats4 → 夏(1)');
+  assert.strictEqual(seasonAt(8), 2, 'beats8 → 秋(2)');
+  assert.strictEqual(seasonAt(12), 3, 'beats12 → 冬(3)');
+  assert.strictEqual(seasonAt(16), 0, 'beats16 → 春(0) 一巡');
+  assert.strictEqual(log[4].ps.seasonProg, 0, '季節境界で prog=0（クロスフェード開始）');
+  for (const e of log) assert.strictEqual(e.knobs.chromaMix, 1, 'オート中は色ON固定');
+});
+
 test('drop refractory: a second drop within the window does not fire', () => {
   const cfg = { ...defaultModeConfig(), colorMode: 'advance' };
   const frames = rep(90, { level: 0.08, bass: 0.05 }, { clock: { beats: 8 } });
