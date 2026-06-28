@@ -15,7 +15,7 @@ import { SimplexNoise } from '../../lib/noise.js';
 const BAR = 4;
 const SEC_BEATS = BAR * 8;       // 8 bars between camera cuts (Tunnel cadence)
 const FOCAL = 4.5;               // focal length in units of H (DancerRig)
-const MAX_CUBES = 160;           // hard device-safe ceiling (separate from slider)
+const MAX_CUBES = 240;           // hard device-safe ceiling (separate from slider; adaptive quality scales cap down under load)
 const NTONE = 16;                // grayscale buckets (cache-friendly fillStyle)
 const GN = 12;                   // height-grid resolution for Mound stacking
 
@@ -73,11 +73,11 @@ export class FallingCubes extends Scene {
     this.views = [{ name: 'Mound' }, { name: 'Cluster' }];
     this.viewIndex = 0;
 
-    this.defineParam('count', 90, 16, 140, 2, 'Cubes');
-    this.defineParam('size', 0.045, 0.02, 0.07, 0.005, 'Cube Size');
+    this.defineParam('count', 90, 16, 240, 2, 'Cubes');
+    this.defineParam('size', 0.045, 0.01, 0.12, 0.005, 'Cube Size');
     this.defineParam('fallSpeed', 1.0, 0.4, 2.2, 0.1, 'Fall Speed');
     this.defineParam('spawn', 1.0, 0.3, 2.5, 0.1, 'Spawn Rate');
-    this.defineParam('burstBars', 8, 2, 16, 1, 'Burst Bars');
+    this.defineParam('burstBars', 8, 2, 32, 1, 'Burst Bars');
     this.defineParam('burstPow', 1.0, 0.4, 2.0, 0.1, 'Burst Power');
     this.defineParam('autocam', 1, 0, 1, 1, 'Auto Cam');
     this.defineParam('camYaw', 0.4, 0, 6.28, 0.02, 'Cam Yaw');
