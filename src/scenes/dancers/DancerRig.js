@@ -37,13 +37,44 @@ const SPINE = {
   neckLatK: -0.18, neckLeanK: 0.5,
 };
 
-// Elbow flex -> forearm/hand DEPTH fold. The forearm used to share the upper
-// arm's depth (armR), so a bent elbow only swung in-plane and read flat from the
-// front. EL_CURL converts elbow flex (beyond the ~0.15 straight value) into a
-// forward depth offset so a fold comes toward the camera = a real 3D bend in
-// front/3-4 views. Side view stays correct because the global camera rotates the
-// +z contribution into screen-x. Tunable per rig via `this.elCurl`.
-const EL_CURL = 0.55;
+// Elbow = a real HINGE. The forearm used to be built as upper-arm azimuth + elR,
+// so flexing only swung the forearm OUTWARD in the frontal plane (abduction) — a
+// bent elbow fanned the hand out beside the torso instead of folding it forward
+// and up toward the body (the "ヒラヒラ" flutter). Now elbow flex rotates the
+// forearm about a hinge axis ⟂ the upper arm, carrying it ANTERIORLY (+z, toward
+// camera) then up toward the shoulder/chest = anatomical flexion. The hinge axis
+// is derived per-frame from the live upper-arm direction so it folds correctly in
+// any shoulder position and from any camera view.
+//   EL_STRAIGHT — elR below this reads as a straight (extended/punch/reach) arm.
+//   EL_FLEX     — radians of fold per unit flex; ~2.4 → elR≈0.95 folds ~90°.
+//   WR_FOLD     — wrist break: continues the curl by a fraction of the cock value.
+const EL_STRAIGHT = 0.28;
+const EL_FLEX = 2.4;
+const WR_FOLD = 0.6;
+
+// Vector helpers for the hinge: a unit direction from (azimuth, depth) matching A()'s
+// convention, and walking a point along a direction by a length.
+const dir = (az, dep) => { const cd = Math.cos(dep); return [Math.sin(az) * cd, Math.cos(az) * cd, Math.sin(dep)]; };
+const vadd = (p, d, len) => [p[0] + d[0] * len, p[1] + d[1] * len, p[2] + d[2] * len];
+
+// Fold unit direction `u` by `ang` (radians, >=0) about the hinge axis ⟂u that
+// carries u toward +z (anterior). Rodrigues rotation; the axis is cross(u, +z),
+// with a lateral fallback when u is parallel to z (degenerate hinge).
+function foldHinge(u, ang) {
+  if (ang <= 0) return u;
+  let kx = u[1], ky = -u[0], kz = 0;          // cross(u, [0,0,1])
+  let m = Math.hypot(kx, ky, kz);
+  if (m < 1e-4) { kx = 1; ky = 0; kz = 0; m = 1; } // u ∥ z → hinge sideways
+  kx /= m; ky /= m; kz /= m;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const kdu = kx * u[0] + ky * u[1] + kz * u[2];   // ~0 (k⟂u); kept for correctness
+  const cx = ky * u[2] - kz * u[1], cy = kz * u[0] - kx * u[2], cz = kx * u[1] - ky * u[0];
+  return [
+    u[0] * c + cx * s + kx * kdu * (1 - c),
+    u[1] * c + cy * s + ky * kdu * (1 - c),
+    u[2] * c + cz * s + kz * kdu * (1 - c),
+  ];
+}
 
 export class DancerRig {
   constructor(x, groundY, H, seed = 1) {
@@ -55,7 +86,7 @@ export class DancerRig {
     };
     this.choreo = new Choreographer(seed);
     this.spine = SPINE;      // spine bend weights (tunable per rig)
-    this.elCurl = EL_CURL;   // elbow depth-fold strength (tunable per rig)
+    this.elFlex = EL_FLEX;   // elbow hinge fold strength, radians/flex (tunable per rig)
     this._g = {};            // reused groove output
     this._wSign = -1;        // weighted side (pre-groove), with hysteresis
   }
@@ -143,19 +174,23 @@ export class DancerRig {
     const wsR = [s1[0] + PROP.waistHalf * H, s1[1], s1[2]];
     const wsL = [s1[0] - PROP.waistHalf * H, s1[1], s1[2]];
 
-    // Elbow flex folds the forearm + hand FORWARD in depth so a bent elbow reads
-    // as a real 3D fold (front/3-4), not a flat in-plane swing. cd() keeps an
-    // over-folded elbow from flipping past the upper arm.
-    const cd2 = (v) => (v < -1.4 ? -1.4 : v > 1.4 ? 1.4 : v);
-    const curlR = Math.max(0, L.elR - 0.15) * this.elCurl;
-    const curlL = Math.max(0, L.elL - 0.15) * this.elCurl;
-    const fdR = cd2(L.armR + curlR), fdL = cd2(L.armL + curlL);
-    const elR = A(shR, L.raise, L.armR, PROP.upperArm * H);
-    const wrR = A(elR, L.raise + L.elR, fdR, PROP.foreArm * H);
-    const haR = A(wrR, L.raise + L.elR + L.wrR, fdR, PROP.hand * H);
-    const elL = A(shL, -L.raise, L.armL, PROP.upperArm * H);
-    const wrL = A(elL, -(L.raise + L.elL), fdL, PROP.foreArm * H);
-    const haL = A(wrL, -(L.raise + L.elL + L.wrL), fdL, PROP.hand * H);
+    // The shoulder sets the upper-arm direction (raise = elevation in the frontal
+    // plane, armR = depth toward camera). The ELBOW then folds the forearm forward
+    // and up about a hinge ⟂ the upper arm (foldHinge), so flex brings the hand in
+    // FRONT of / up toward the body — never fanning out to the side. The WRIST
+    // continues the curl by a fraction of its cock. Left mirrors right: its upper
+    // arm uses -raise, and the cross-product hinge folds it anteriorly all the same;
+    // wrL is negated so a symmetric pose breaks both wrists symmetrically.
+    const uR = dir(L.raise, L.armR);
+    const uL = dir(-L.raise, L.armL);
+    const elR = vadd(shR, uR, PROP.upperArm * H);
+    const elL = vadd(shL, uL, PROP.upperArm * H);
+    const faR = foldHinge(uR, Math.max(0, L.elR - EL_STRAIGHT) * this.elFlex);
+    const faL = foldHinge(uL, Math.max(0, L.elL - EL_STRAIGHT) * this.elFlex);
+    const wrR = vadd(elR, faR, PROP.foreArm * H);
+    const wrL = vadd(elL, faL, PROP.foreArm * H);
+    const haR = vadd(wrR, foldHinge(faR, L.wrR * WR_FOLD), PROP.hand * H);
+    const haL = vadd(wrL, foldHinge(faL, -L.wrL * WR_FOLD), PROP.hand * H);
 
     // --- PELVIS + LEGS: pelvis rolls with weight; thighs swing from the hip ---
     const roll = L.swayX * 0.6;
