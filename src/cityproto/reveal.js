@@ -179,7 +179,7 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
       .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vReveal < 0.03) discard;')
       // 全体COLOR：建物のmono明度はそのまま色相だけ淡く掛ける（uCityTintStr=0 で恒等）。
       // reveal.js:12 の monochrome-safe 制約をここで意図的に緩める（控えめ・単一色相・虹色化しない）。
-      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uCityTint, uCityTintStr)');
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uCityTint, uCityTintStr);');
   };
   mat.needsUpdate = true; // force a recompile if the material already compiled
 
