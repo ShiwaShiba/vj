@@ -88,6 +88,12 @@ export class ControlPanel {
     tr.appendChild(this.beatToggle.el);
     tr.appendChild(createButton('TAP', () => this.ctx.audio.tap(performance.now())));
     if (isFullscreenSupported()) tr.appendChild(createButton('FULL', () => toggleFullscreen(this.ctx.canvasEl)));
+    // 出力ウィンドウ（クリーン投影用）を開く。クリック=ジェスチャでポップアップブロック回避。
+    tr.appendChild(createButton('出力を開く', () => window.open('?role=output', 'vj-output')));
+    this.outputStatus = document.createElement('span');
+    this.outputStatus.className = 'vj-output-status';
+    this.outputStatus.textContent = '出力:未接続';
+    tr.appendChild(this.outputStatus);
     this.panel.appendChild(this._section('PERFORM', tr));
 
     // Audio sensitivity
@@ -195,6 +201,13 @@ export class ControlPanel {
       this.audioSection.classList.add('vj-disabled');
       const t = this.audioSection.querySelector('.vj-section-title');
       if (t) t.textContent = 'AUDIO — MIC OFF';
+    }
+  }
+
+  markOutputConnected() {
+    if (this.outputStatus) {
+      this.outputStatus.textContent = '出力:接続';
+      this.outputStatus.classList.add('connected');
     }
   }
 
