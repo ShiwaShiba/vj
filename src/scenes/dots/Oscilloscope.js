@@ -189,16 +189,43 @@ export class Oscilloscope extends Scene {
     };
     ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
     // Stroke a polyline segment-by-segment so each segment's depth sets its alpha
-    // (the back of the sphere fades out). alpha = crossfade base × depth factor.
-    const strokeSegs = (pts) => {
+    // (the back of the sphere fades out). alpha = crossfade base × intensity ×
+    // depth factor — intensity dims a faint reference layer under a bright one.
+    const strokeSegs = (pts, intensity = 1) => {
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1], b = pts[i];
         const d = (a.depth + b.depth) * 0.5;
-        ctx.globalAlpha = alpha * (0.2 + 0.8 * (d * 0.5 + 0.5));
+        ctx.globalAlpha = alpha * intensity * (0.2 + 0.8 * (d * 0.5 + 0.5));
         ctx.beginPath();
         ctx.moveTo(a.sx, a.sy);
         ctx.lineTo(b.sx, b.sy);
         ctx.stroke();
+      }
+    };
+    // Faint unit-sphere wireframe (latitude rings + meridians) — a reference
+    // globe drawn under a figure so it always reads as a sphere. No waveform
+    // displacement; same rotation/projection as everything else.
+    const wireSphere = (intensity) => {
+      const M = 40, latRings = 5, meridians = 6, P = 30;
+      for (let r = 1; r <= latRings; r++) {
+        const lat = -Math.PI / 2 + Math.PI * (r / (latRings + 1));
+        const cosLat = Math.cos(lat), sinLat = Math.sin(lat);
+        const pts = [];
+        for (let m = 0; m <= M; m++) {
+          const lon = (m / M) * TWO_PI;
+          pts.push(project(cosLat * Math.cos(lon), sinLat, cosLat * Math.sin(lon)));
+        }
+        strokeSegs(pts, intensity);
+      }
+      for (let k = 0; k < meridians; k++) {
+        const lon = (k / meridians) * TWO_PI;
+        const pts = [];
+        for (let j = 0; j <= P; j++) {
+          const lat = -Math.PI / 2 + Math.PI * (j / P);
+          const cosLat = Math.cos(lat);
+          pts.push(project(cosLat * Math.cos(lon), Math.sin(lat), cosLat * Math.sin(lon)));
+        }
+        strokeSegs(pts, intensity);
       }
     };
 
@@ -236,7 +263,10 @@ export class Oscilloscope extends Scene {
       }
       strokeSegs(pts);
     } else {
-      // LISSA — XY's self-correlation in 3D: three delayed waveform copies.
+      // LISSA — a faint wireframe sphere core that's ALWAYS present (so it reads
+      // as a sphere even when the figure is sparse), with XY's self-correlation
+      // developing on top in 3D (three delayed waveform copies).
+      wireSphere(0.32);
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
       const fill = 0.9 * gain;
