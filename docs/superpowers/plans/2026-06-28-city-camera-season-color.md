@@ -311,15 +311,29 @@ export function applyCityColorGroup(key, idx, ctx) {
 
 - [ ] **Step 4: テスト合格を確認** — Run: `node --test tests/cityproto/cityColorControls.test.mjs` → PASS（7 tests）。
 
-- [ ] **Step 5: CityScene にカメラ旋回スライダーを追加** — `src/scenes/city/CityScene.js` の `this.params = { ... }`（lines 36-42）の `travel:` の直後に追記：
+- [ ] **Step 5: CityScene にカメラ「動き」スライダーを追加** — `src/scenes/city/CityScene.js` の `this.params = { ... }`（lines 36-42）の `travel:` の直後に追記：
 
 ```js
       travel:    { label: '前進(小=速)', value: 16, min: 6, max: 32, step: 1, onChange: (v) => this._core && this._core.setShot({ travelBars: v }) },
-      orbit:     { label: '俯瞰旋回', value: 0.4, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setShot({ orbitRate: v * 0.05 }) },
+      orbit:     { label: '俯瞰の動き', value: 0.4, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setShot({ orbitRate: v * 0.05, breatheAmp: v * 0.12 }) },
       near:      { label: '俯瞰ニア比率', value: 0.25, min: 0, max: 1, step: 0.05, onChange: (v) => this._core && this._core.setShot({ nearRatio: v }) },
 ```
 
-（注：`orbit` の 0..1 → `orbitRate` 0..0.05 rad/beat。既定 0.4→0.02 は `defaultShotConfig().orbitRate` と一致。0 で旋回停止。）
+（注：`shotDirector` の新キー既定は **0=固定**（共有モジュールの後方互換）。動きは CityScene が opt-in で与える。`orbit` スライダー 0..1 は **公転 orbitRate 0..0.05 rad/beat と呼吸 breatheAmp 0..0.12 を一括**制御し、**0で完全静止**。`near` は 0..1 → `nearRatio`。これらは下の Step 5b で読込時にも core へ適用するため、ユーザー操作前から俯瞰が動く。）
+
+- [ ] **Step 5b: 読込完了時にカメラ動きの既定値を core へ適用** — モジュール既定が0でも VJ シーンが起動から動くよう、`preload()`（lines 68-74）の `.then(...)` 内、`this._core.goLive(this._adapter); this._ready = true;` の直後にパネル既定の適用を追加：
+
+```js
+    if (!this._loading) this._loading = this._core.load(() => {}).then(() => {
+      this._core.goLive(this._adapter); this._ready = true;
+      // パネル既定の「動き」を core へ反映（モジュール既定0=固定に対する CityScene の opt-in）。
+      this._core.setShot({
+        orbitRate: this.params.orbit.value * 0.05,
+        breatheAmp: this.params.orbit.value * 0.12,
+        nearRatio: this.params.near.value,
+      });
+    }).catch((e) => console.error('[city] preload failed', e));
+```
 
 - [ ] **Step 6: CityScene に季節色 modeGroups を追加** — `this.modeGroups = [ ... ]`（lines 27-33）の最後の要素（空間）の後に追記：
 
@@ -347,7 +361,7 @@ import { applyCityColorGroup } from '../../cityproto/cityColorControls.js';
 - [ ] **Step 8: テスト＋ヘッドレス検証** — `node --test` 全green。dev server（:8125）でヘッドレスCDP：
   - `pkill -f cdp-shot` 後、city シーンを起動し操作パネルを開く。
   - 「色→季節色」「季節→秋」を選び `#city-gl` に色が出ることをスクショ確認、「色→モノ」でモノ復帰を確認。
-  - 「俯瞰旋回」を上げて時間差スクショ2枚で俯瞰が回っていることを確認。
+  - 既定（操作前）で俯瞰が動いていること、さらに「俯瞰の動き」を上げ下げして時間差スクショ2枚で公転/呼吸の変化を確認。0で静止。
   - mono基調維持・虹色化しないことを確認。
 
 - [ ] **Step 9: コミット**
