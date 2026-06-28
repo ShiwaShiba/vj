@@ -204,17 +204,28 @@ export class Oscilloscope extends Scene {
       }
     };
     // Compact wireframe nucleus sphere of the given radius (unit fraction),
-    // drawn at the centre as the LISSA core. Latitude rings + meridians, same
-    // rotation/projection; depth dimming makes the little ball read as solid.
+    // drawn at the centre as the LISSA core. It's ALIVE, not a frozen prop: a
+    // steady self-spin independent of the Rotate slider, a breathe that pulses
+    // its size with level (plus a faint idle pulse so it moves even in silence),
+    // and a waveform ripple that shimmers across its surface. Latitude rings +
+    // meridians; depth dimming makes the little ball read as solid. Deterministic
+    // (self-spin/idle pulse from clock time — no Math.random/Date).
     const coreSphere = (radius, intensity) => {
       const M = 36, latRings = 4, meridians = 6, P = 26;
+      const cs = this.t * 0.28 * TWO_PI;          // ~0.28 rev/s steady self-spin
+      const cc = Math.cos(cs), sc = Math.sin(cs);
+      const pulse = radius * (1 + 0.45 * this.level + 0.05 * Math.sin(this.t * 1.7)); // breathe
+      // local Y-spin (core's own rotation) then the shared scene projection
+      const spun = (ux, uy, uz) => project(ux * cc + uz * sc, uy, -ux * sc + uz * cc);
       for (let r = 1; r <= latRings; r++) {
         const lat = -Math.PI / 2 + Math.PI * (r / (latRings + 1));
-        const cosLat = Math.cos(lat) * radius, sinLat = Math.sin(lat) * radius;
+        const cosLat = Math.cos(lat), sinLat = Math.sin(lat);
         const pts = [];
         for (let m = 0; m <= M; m++) {
-          const lon = (m / M) * TWO_PI;
-          pts.push(project(cosLat * Math.cos(lon), sinLat, cosLat * Math.sin(lon)));
+          const f = m / M, lon = f * TWO_PI;
+          const wi = (Math.floor(f * (N - 1)) + r * 53) % N;
+          const rr = pulse * (1 + ((wave[wi] - 128) / 128) * 0.10); // surface ripple
+          pts.push(spun(cosLat * Math.cos(lon) * rr, sinLat * rr, cosLat * Math.sin(lon) * rr));
         }
         strokeSegs(pts, intensity);
       }
@@ -222,9 +233,11 @@ export class Oscilloscope extends Scene {
         const lon = (k / meridians) * TWO_PI;
         const pts = [];
         for (let j = 0; j <= P; j++) {
-          const lat = -Math.PI / 2 + Math.PI * (j / P);
-          const cosLat = Math.cos(lat) * radius;
-          pts.push(project(cosLat * Math.cos(lon), Math.sin(lat) * radius, cosLat * Math.sin(lon)));
+          const f = j / P, lat = -Math.PI / 2 + Math.PI * f;
+          const cosLat = Math.cos(lat);
+          const wi = (Math.floor(f * (N - 1)) + k * 71) % N;
+          const rr = pulse * (1 + ((wave[wi] - 128) / 128) * 0.10);
+          pts.push(spun(cosLat * Math.cos(lon) * rr, Math.sin(lat) * rr, cosLat * Math.sin(lon) * rr));
         }
         strokeSegs(pts, intensity);
       }
