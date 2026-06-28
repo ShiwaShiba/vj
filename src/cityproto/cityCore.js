@@ -241,6 +241,19 @@ export function createCityCore({ THREE, renderer }) {
   function setFraming(partial) { Object.assign(framingOpts, partial); rebuildDirector(); } // camrig framing overrides
   function setShot(partial) { Object.assign(shotOpts, partial); if (shotDir) shotDir.setConfig(shotOpts); } // beat-driven 俯瞰⇔アップ camera
   function setScope(partial) { Object.assign(scopeOpts, partial); if (cityScope) cityScope.setConfig(scopeOpts); } // 音反応 建物変調
+  // 全体COLOR tint：建物(reveal shader)＋地形DEM(material.color 乗算)へ控えめ着色。
+  // strength0 で恒等＝現状一致。tint={r,g,b,strength}（0..1 LINEAR乗数・luma≈1）。
+  function setTint(tint) {
+    if (reveal && reveal.setTint) reveal.setTint(tint);
+    const s = Math.max(0, Math.min(1, (tint && tint.strength) || 0));
+    if (terrainRef && terrainRef.material && terrainRef.material.color) {
+      const tr = tint && tint.r != null ? tint.r : 1;
+      const tg = tint && tint.g != null ? tint.g : 1;
+      const tb = tint && tint.b != null ? tint.b : 1;
+      // mix(1, tint, s) — vertexColors の乗数（既定 white=恒等）
+      terrainRef.material.color.setRGB(1 + (tr - 1) * s, 1 + (tg - 1) * s, 1 + (tb - 1) * s);
+    }
+  }
   // Manual season override for the body scene (intro:false). INTRO season is owned by the
   // director; LIVE season is owned by the driver — so this is a stub seam for the future
   // CityScene and a no-op on the authored INTRO path that proto.js drives today.
@@ -267,7 +280,7 @@ export function createCityCore({ THREE, renderer }) {
   return {
     scene, camera, params, applyCamera,
     resize, load, update, render,
-    setShot, setScope,
+    setShot, setScope, setTint,
     setMode, setStrobe, setStrobeRate, setPetals, setTiming, setFraming,
     setSeason, setChromaVariant: (name) => setChromaVariant(name),
     seek, goLive, setPaused, setParallax,

@@ -144,6 +144,8 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
 
   const uReveal = { value: 0 };
   const uBand = { value: band };
+  const uCityTint = { value: new THREE.Vector3(1, 1, 1) }; // 全体COLOR tint（既定 恒等）
+  const uCityTintStr = { value: 0 };                       // 強さ 0=現状ピクセル一致（守る線）
   const mat = mesh.material;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uReveal = uReveal;
@@ -151,6 +153,8 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
     shader.uniforms.uScopeTex = uScopeTex;
     shader.uniforms.uScopeSize = uScopeSize;
     shader.uniforms.uScopeEnabled = uScopeEnabled;
+    shader.uniforms.uCityTint = uCityTint;
+    shader.uniforms.uCityTintStr = uCityTintStr;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nattribute float aReveal;\nattribute float aBaseY;\nattribute float aBuildIndex;\nuniform float uReveal;\nuniform float uBand;\nuniform sampler2D uScopeTex;\nuniform float uScopeSize;\nuniform float uScopeEnabled;\nvarying float vReveal;')
       .replace('#include <begin_vertex>',
@@ -171,8 +175,11 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
     // nothing (bare terrain); each then sprouts from the ground as the wavefront passes. The
     // settled state (_rv=1) is untouched, so the final/approved look is byte-identical.
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vReveal;')
-      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vReveal < 0.03) discard;');
+      .replace('#include <common>', '#include <common>\nvarying float vReveal;\nuniform vec3 uCityTint;\nuniform float uCityTintStr;')
+      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vReveal < 0.03) discard;')
+      // 全体COLOR：建物のmono明度はそのまま色相だけ淡く掛ける（uCityTintStr=0 で恒等）。
+      // reveal.js:12 の monochrome-safe 制約をここで意図的に緩める（控えめ・単一色相・虹色化しない）。
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uCityTint, uCityTintStr)');
   };
   mat.needsUpdate = true; // force a recompile if the material already compiled
 
@@ -183,6 +190,14 @@ export function installReveal(THREE, mesh, perBuilding, { band = 0.6 } = {}) {
     setProgress: (p) => { uReveal.value = Math.max(0, p) * maxRevealKey; },
     scopeCount: n,
     setScopeEnabled: (b) => { uScopeEnabled.value = b ? 1 : 0; },
+    setTint: (tint) => {
+      uCityTint.value.set(
+        tint && tint.r != null ? tint.r : 1,
+        tint && tint.g != null ? tint.g : 1,
+        tint && tint.b != null ? tint.b : 1,
+      );
+      uCityTintStr.value = Math.max(0, Math.min(1, (tint && tint.strength) || 0));
+    },
     writeScope: (scope) => {
       const m = Math.min(n, scope.length);
       for (let b = 0; b < m; b++) {

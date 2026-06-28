@@ -3,6 +3,7 @@ import { Scene } from '../Scene.js';
 import { createCityCore } from '../../cityproto/cityCore.js';
 import { createSceneAudioAdapter } from '../../cityproto/sceneAudioAdapter.js';
 import { applyCityColorGroup } from '../../cityproto/cityColorControls.js';
+import { paletteToCityTint } from '../../cityproto/cityTint.js';
 
 // Discrete control vocabularies, mirroring the CAM/SCOPE HUDs of the standalone city-proto.html
 // so the touch panel exposes the same knobs (the standalone drove these via window.__proto/keys).
@@ -44,9 +45,11 @@ export class CityScene extends Scene {
       travel:    { label: '前進(小=速)', value: 16, min: 6, max: 32, step: 1, onChange: (v) => this._core && this._core.setShot({ travelBars: v }) },
       orbit:     { label: '俯瞰の動き', value: 0.4, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setShot({ orbitRate: v * 0.05, breatheAmp: v * 0.12 }) },
       near:      { label: '俯瞰ニア比率', value: 0.25, min: 0, max: 1, step: 0.05, onChange: (v) => this._core && this._core.setShot({ nearRatio: v }) },
+      cityTint:  { label: '全体色なじみ', value: 0.2, min: 0, max: 1, step: 0.02, onChange: (v) => { this._tintStr = v; } },
       scopeMix:  { label: 'SCOPE強さ', value: 1, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setScope({ mix: v }) },
       scopeA:    { label: 'SCOPE A比率', value: 0, min: 0, max: 1, step: 0.02, onChange: (v) => this._core && this._core.setScope({ aRatio: v }) },
     };
+    this._tintStr = 0.2; // 全体COLOR着色の強さ（cityTint スライダー）
   }
 
   // Apply a button-group change: let the base update the group index (with wraparound), then push
@@ -101,6 +104,7 @@ export class CityScene extends Scene {
     if (!this._ready || !this._core) return;
     this._adapter.update(audio, clock);
     this._core.update(dt, this._now, { audioState: audio, driver: this._adapter, live: true, intro: false });
+    if (palette) this._core.setTint(paletteToCityTint(palette, this._tintStr));
   }
   draw(ctx, alpha) {
     if (!this._cityGl) return;
