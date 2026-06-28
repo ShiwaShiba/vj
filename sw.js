@@ -1,6 +1,6 @@
 // Network-first service worker for offline use. Bump CACHE_VERSION on deploy to
 // invalidate. All paths are relative so it works under a GitHub Pages subpath.
-const CACHE_VERSION = 'vj-v16';
+const CACHE_VERSION = 'vj-v17';
 
 const ASSETS = [
   './',
@@ -50,6 +50,9 @@ const ASSETS = [
   './src/ui/SceneGrid.js',
   './src/ui/Sliders.js',
   './src/ui/Toggles.js',
+  './src/sync/RemoteAudio.js',
+  './src/sync/snapshot.js',
+  './src/sync/link.js',
   './src/platform/wakelock.js',
   './src/platform/fullscreen.js',
   './src/platform/pwa.js',
