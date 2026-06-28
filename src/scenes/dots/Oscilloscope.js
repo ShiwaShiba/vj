@@ -39,6 +39,7 @@ export class Oscilloscope extends Scene {
     this.defineParam('rotate', 0, -0.5, 0.5, 0.02, 'Rotate'); // spin rev/s — XY figure or Sphere self-rotation (centre dead-zone)
     this.defineParam('drive', 0.6, 0, 1.5, 0.05, 'Drive');    // band-driven breathing depth
     this.defineParam('density', 9, 3, 24, 1, 'Density');      // Sphere only: GLOBE ring count / WRAP winding count
+    this.defineParam('core', 0.12, 0, 0.45, 0.01, 'Core');    // LISSA only: central nucleus-sphere radius (0 = off)
     // Button groups (rendered by ControlPanel; mainly meaningful in XY/Sphere).
     // Spin OFF freezes the figure/sphere instantly regardless of the Rotate slider.
     this.modeGroups = [
@@ -202,14 +203,14 @@ export class Oscilloscope extends Scene {
         ctx.stroke();
       }
     };
-    // Faint unit-sphere wireframe (latitude rings + meridians) — a reference
-    // globe drawn under a figure so it always reads as a sphere. No waveform
-    // displacement; same rotation/projection as everything else.
-    const wireSphere = (intensity) => {
-      const M = 40, latRings = 5, meridians = 6, P = 30;
+    // Compact wireframe nucleus sphere of the given radius (unit fraction),
+    // drawn at the centre as the LISSA core. Latitude rings + meridians, same
+    // rotation/projection; depth dimming makes the little ball read as solid.
+    const coreSphere = (radius, intensity) => {
+      const M = 36, latRings = 4, meridians = 6, P = 26;
       for (let r = 1; r <= latRings; r++) {
         const lat = -Math.PI / 2 + Math.PI * (r / (latRings + 1));
-        const cosLat = Math.cos(lat), sinLat = Math.sin(lat);
+        const cosLat = Math.cos(lat) * radius, sinLat = Math.sin(lat) * radius;
         const pts = [];
         for (let m = 0; m <= M; m++) {
           const lon = (m / M) * TWO_PI;
@@ -222,8 +223,8 @@ export class Oscilloscope extends Scene {
         const pts = [];
         for (let j = 0; j <= P; j++) {
           const lat = -Math.PI / 2 + Math.PI * (j / P);
-          const cosLat = Math.cos(lat);
-          pts.push(project(cosLat * Math.cos(lon), Math.sin(lat), cosLat * Math.sin(lon)));
+          const cosLat = Math.cos(lat) * radius;
+          pts.push(project(cosLat * Math.cos(lon), Math.sin(lat) * radius, cosLat * Math.sin(lon)));
         }
         strokeSegs(pts, intensity);
       }
@@ -263,18 +264,20 @@ export class Oscilloscope extends Scene {
       }
       strokeSegs(pts);
     } else {
-      // LISSA — a faint wireframe sphere core that's ALWAYS present (so it reads
-      // as a sphere even when the figure is sparse), with XY's self-correlation
-      // developing on top in 3D (three delayed waveform copies).
-      wireSphere(0.32);
+      // LISSA — a small nucleus sphere at the CENTRE is the core (size set by the
+      // Core slider, 0 = off), with XY's self-correlation expanding AROUND it in
+      // 3D (three delayed waveform copies). The effect reaches well past the core
+      // and breathes with the drive band, so its range is wide.
+      const coreR = this.p('core');
+      if (coreR > 0.005) coreSphere(coreR, 0.7);
+      const reach = gain * (1.15 + this.p('drive') * band * 1.1); // wide, audio-breathing extent
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
-      const fill = 0.9 * gain;
       const pts = [];
       for (let i = 0; i + 2 * lag < N; i += step) {
-        const ux = ((wave[i] - 128) / 128) * fill;
-        const uy = ((wave[i + lag] - 128) / 128) * fill * flip;
-        const uz = ((wave[i + 2 * lag] - 128) / 128) * fill;
+        const ux = ((wave[i] - 128) / 128) * reach;
+        const uy = ((wave[i + lag] - 128) / 128) * reach * flip;
+        const uz = ((wave[i + 2 * lag] - 128) / 128) * reach;
         pts.push(project(ux, uy, uz));
       }
       strokeSegs(pts);
