@@ -19,7 +19,8 @@ export class Oscilloscope extends Scene {
     super('scope', 'Oscilloscope');
     this.trail = 0.3;
     this.modes = [{ name: 'Line' }, { name: 'Circle' }, { name: 'XY' }];
-    this.defineParam('thickness', 3, 0.25, 8, 0.25, 'Thickness'); // min low enough for hairline strokes
+    this.defineParam('thickness', 3, 0.25, 8, 0.25, 'Thickness'); // base width; min low enough for hairline strokes
+    this.defineParam('react', 3, 0, 10, 0.5, 'React'); // px the line grows at full level — audio→width balance
     this.defineParam('gain', 1, 0.3, 3, 0.1, 'Gain');
     this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
     // XY-mode levers (no effect in Line/Circle).
@@ -93,7 +94,10 @@ export class Oscilloscope extends Scene {
     const mode = this.modeIndex;
     const gain = this.p('gain');
     const range = this.p('range');
-    ctx.lineWidth = this.p('thickness') + this.level * 3;
+    // Width = fixed base + audio-driven growth. React sets how many px full
+    // level adds, so the user balances how strongly volume thickens the stroke
+    // (0 = constant width, up to a wide reactive swing).
+    ctx.lineWidth = this.p('thickness') + this.level * this.p('react');
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.globalCompositeOperation = 'lighter';
