@@ -21,7 +21,11 @@ const SPRING_DEFS = {
   pelYaw:      [130, 1.0, 0],
   lean:        [110, 0.95, 0.03],
   lateralBend: [110, 0.95, 0.03],
-  shYaw:       [180, 0.85, 0],
+  // shYaw TRAILS pelYaw (lag) so an axial twist propagates HIP -> CHEST -> arms as a
+  // kinetic chain, not a rigid plate: the pelvis initiates (pelYaw lag 0) and the
+  // chest unwinds a beat-fraction later. Softer stiff than the old 180 lets the
+  // trailing twist linger instead of snapping flat. (lag scales with the genre lagMul.)
+  shYaw:       [150, 0.85, 0.12],
   raise:       [180, 0.85, 0.015],
   armR:        [300, 0.6, 0.03],
   armL:        [300, 0.6, 0.03],

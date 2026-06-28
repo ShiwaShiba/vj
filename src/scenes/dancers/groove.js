@@ -19,11 +19,19 @@ const frac = (x) => x - Math.floor(x);
 export function groove(beatsF, bounceImpulse, beatHold, weightAmp, out) {
   const o = out || {};
   const bar2 = frac(beatsF / 2);
-  const weight = Math.sin(bar2 * TWO_PI);            // 1 cycle / 2 beats
+  const weight = Math.sin(bar2 * TWO_PI);            // 1 cycle / 2 beats (pelvis LEADS)
   const breath = Math.sin(beatsF * Math.PI * 0.25) * 0.015;
+  // Kinetic-chain twist WAVE: each segment up the body trails the one below by a
+  // PHASE (no state needed — just retard the sine), so the continuous groove twist
+  // PROPAGATES hip -> chest -> gaze instead of the torso snapping as one rigid plate.
+  // The phase offset is the point: at the cycle peak the pelvis is fully wound while
+  // the chest is still catching up = a visible spiral, the tension flowing up the body.
+  const TW_SH = 0.22, TW_HEAD = 0.36;                // chest trails hips ~0.44 beat; gaze trails further
+  const weightSh = Math.sin((bar2 - TW_SH) * TWO_PI);
+  const weightHead = Math.sin((bar2 - TW_HEAD) * TWO_PI);
   o.swayX = weightAmp * weight;
-  o.pelYaw = 0.18 * weight;
-  o.shYaw = -0.22 * weight;
+  o.pelYaw = 0.26 * weight;                          // pelvis LEADS the twist (the hip-led chain)
+  o.shYaw = -0.34 * weightSh;                        // chest counter-rotates, phase-lagged = travelling twist
   o.sink = -bounceImpulse * 0.10 + breath; // global vertical translate (0.12->0.10: gentler whole-figure bob)
   o.head = beatHold * 0.1 + Math.sin(frac(beatsF) * TWO_PI) * 0.04;
   o.weight = weight;
@@ -41,7 +49,7 @@ export function groove(beatsF, bounceImpulse, beatHold, weightAmp, out) {
   o.wrR = 0.10 * w  + 0.06 * wWave;
   o.wrL = 0.10 * w2 - 0.06 * wWave;
   o.elR = 0.06 * wE; o.elL = -0.06 * wE;              // forearm breathing (folds keep articulating)
-  o.headYaw = 0.05 * s2;                              // gaze isn't frozen
+  o.headYaw = 0.05 * s2 - 0.14 * weightHead;          // gaze is the chain's last link: trails the chest twist
   o.kneeFreeBob = 0.10 * Math.abs(Math.sin(frac(beatsF / 2) * TWO_PI)); // free-leg only (sign-gated in rig)
 
   // --- spine undulation (low-amp, beat-synced): the torso sways/breathes against

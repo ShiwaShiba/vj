@@ -233,9 +233,18 @@ export class DancerRig {
     const PshR = P(shR, yU), PshL = P(shL, yU), PwsR = P(wsR, ys1), PwsL = P(wsL, ys1);
     const PelR = P(elR, yU), PwrR = P(wrR, yU), PhaR = P(haR, yU);
     const PelL = P(elL, yU), PwrL = P(wrL, yU), PhaL = P(haL, yU);
+    // TENSEGRITY ANCHOR: feet RESIST the pelvis twist so a contrapposto winds up as
+    // visible tension — a spiral line from a planted foot through the turning core —
+    // instead of the whole lower body swivelling on a lazy-susan (feet used to share
+    // pelYaw rigidly). The rotation the pelvis and chest AGREE on (same-sign shared
+    // magnitude) is a whole-body TURN, which the feet DO follow; the pelvis twist
+    // BEYOND that is shed down the leg (knee 0.55 -> ankle 0.25 -> foot 0 = planted)
+    // so the ground stays gripped and the force flows up the chain.
+    const turnYaw = Math.sign(yLp) === Math.sign(yU) ? Math.sign(yLp) * Math.min(Math.abs(yLp), Math.abs(yU)) : 0;
+    const kneeYaw = lerp(turnYaw, yLp, 0.48), ankYaw = lerp(turnYaw, yLp, 0.18);
     const PhipR = P(hipR, yLp), PhipL = P(hipL, yLp);
-    const PknR = P(knR, yLp), PanR = P(anR, yLp), PftR = P(ftR, yLp);
-    const PknL = P(knL, yLp), PanL = P(anL, yLp), PftL = P(ftL, yLp);
+    const PknR = P(knR, kneeYaw), PanR = P(anR, ankYaw), PftR = P(ftR, turnYaw);
+    const PknL = P(knL, kneeYaw), PanL = P(anL, ankYaw), PftL = P(ftL, turnYaw);
 
     // Feet stay planted (no horizontal figure translation) so they never skate;
     // the weight shift reads from pelvis ROLL (below), the contrapposto knee split,
