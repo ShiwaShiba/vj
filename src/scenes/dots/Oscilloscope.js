@@ -14,25 +14,38 @@ import { rgbCss, TWO_PI } from '../../lib/math.js';
 // dead-zone so its middle is a reliable "stopped" position on a touchscreen.
 // Auto wanders all of these hands-off, fully deterministic from clock
 // time/beats (no Math.random/Date), so an unattended scope keeps evolving.
+//
+// Sphere is a 3D mode: waveform geometry built on a unit sphere, rotated
+// (reusing the same Spin/Rotate/Auto rotation that drives XY) and projected
+// orthographically to Canvas-2D — no 3D library. A fixed tilt plus per-segment
+// depth dimming (the back of the sphere fades out) sells the volume while
+// staying mono. Its Form sub-toggle picks GLOBE (stacked latitude rings), WRAP
+// (one waveform spiralled pole-to-pole) or LISSA (XY's self-correlation in 3D).
+const SPHERE_TILT = 0.42; // fixed X-axis tilt, rad — keeps the pole off dead-centre
+const SPHERE_COS_TILT = Math.cos(SPHERE_TILT);
+const SPHERE_SIN_TILT = Math.sin(SPHERE_TILT);
+
 export class Oscilloscope extends Scene {
   constructor() {
     super('scope', 'Oscilloscope');
     this.trail = 0.3;
-    this.modes = [{ name: 'Line' }, { name: 'Circle' }, { name: 'XY' }];
+    this.modes = [{ name: 'Line' }, { name: 'Circle' }, { name: 'XY' }, { name: 'Sphere' }];
     this.defineParam('thickness', 3, 0.25, 8, 0.25, 'Thickness'); // base width; min low enough for hairline strokes
     this.defineParam('react', 3, 0, 10, 0.5, 'React'); // px the line grows at full level — audio→width balance
     this.defineParam('gain', 1, 0.3, 3, 0.1, 'Gain');
     this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
-    // XY-mode levers (no effect in Line/Circle).
-    this.defineParam('phase', 8, 1, 64, 1, 'Phase');     // self-correlation lag = loop shape
-    this.defineParam('rotate', 0, -0.5, 0.5, 0.02, 'Rotate'); // spin speed/dir, rev/s (centre dead-zone)
+    // XY / Sphere levers (no effect in Line/Circle).
+    this.defineParam('phase', 8, 1, 64, 1, 'Phase');     // self-correlation lag = loop shape (XY + Sphere/LISSA)
+    this.defineParam('rotate', 0, -0.5, 0.5, 0.02, 'Rotate'); // spin rev/s — XY figure or Sphere self-rotation (centre dead-zone)
     this.defineParam('drive', 0.6, 0, 1.5, 0.05, 'Drive');    // band-driven breathing depth
-    // Button groups (rendered by ControlPanel; only meaningful in XY).
-    // Spin OFF freezes the figure instantly regardless of the Rotate slider.
+    this.defineParam('density', 9, 3, 24, 1, 'Density');      // Sphere only: GLOBE ring count / WRAP winding count
+    // Button groups (rendered by ControlPanel; mainly meaningful in XY/Sphere).
+    // Spin OFF freezes the figure/sphere instantly regardless of the Rotate slider.
     this.modeGroups = [
       { key: 'drive', label: 'Drive', options: ['BASS', 'TREBLE', 'LEVEL'], index: 0 },
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
       { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
+      { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA'], index: 0 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
     this._spin = 0; // accumulated rotation, radians
@@ -129,7 +142,7 @@ export class Oscilloscope extends Scene {
       }
       ctx.closePath();
       ctx.stroke();
-    } else {
+    } else if (mode === 2) {
       const cx = this.w / 2, cy = this.h / 2;
       // Band breathes the figure; Drive sets how strongly.
       const band = this._driveEnergy();
@@ -148,6 +161,94 @@ export class Oscilloscope extends Scene {
         if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
       }
       ctx.stroke();
+    } else {
+      this._drawSphere(ctx, wave, step, gain, range, alpha);
     }
+  }
+
+  // Sphere (mode 3): waveform geometry on a unit sphere, rotated by the shared
+  // spin and projected to 2D. Depth dims the back so it reads as a volume. The
+  // Form sub-toggle picks GLOBE / WRAP / LISSA. Deterministic (no Math.random/Date).
+  _drawSphere(ctx, wave, step, gain, range, alpha) {
+    const cx = this.w / 2, cy = this.h / 2;
+    const R = Math.min(this.w, this.h) * 0.34 * range; // sphere radius, px
+    const band = this._driveEnergy();
+    const amp = 0.2 * gain * (1 + this.p('drive') * band * 0.9); // radial waveform displacement
+    const cosA = Math.cos(this._spin), sinA = Math.sin(this._spin);
+    const ct = SPHERE_COS_TILT, st = SPHERE_SIN_TILT;
+    const N = wave.length;
+
+    // Rotate a unit-sphere point around Y (spin) then tilt around X, and project
+    // orthographically. depth (rotated z, -1..1) drives back-to-front dimming.
+    const project = (ux, uy, uz) => {
+      const rx = ux * cosA + uz * sinA;
+      const rz = -ux * sinA + uz * cosA;
+      const ty = uy * ct - rz * st;
+      const tz = uy * st + rz * ct;
+      return { sx: cx + rx * R, sy: cy - ty * R, depth: tz };
+    };
+    ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
+    // Stroke a polyline segment-by-segment so each segment's depth sets its alpha
+    // (the back of the sphere fades out). alpha = crossfade base × depth factor.
+    const strokeSegs = (pts) => {
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const d = (a.depth + b.depth) * 0.5;
+        ctx.globalAlpha = alpha * (0.2 + 0.8 * (d * 0.5 + 0.5));
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.stroke();
+      }
+    };
+
+    const form = this.mg('sphere');
+    if (form === 0) {
+      // GLOBE — stacked latitude rings, each a circular waveform scope.
+      const rings = Math.round(this.p('density'));
+      const M = 48;
+      for (let r = 0; r < rings; r++) {
+        const lat = -Math.PI / 2 + Math.PI * ((r + 0.5) / rings);
+        const cosLat = Math.cos(lat), sinLat = Math.sin(lat);
+        const pts = [];
+        for (let m = 0; m <= M; m++) {
+          const f = m / M;
+          const lon = f * TWO_PI;
+          const wi = (Math.floor(f * (N - 1)) + r * 37) % N;
+          const rad = 1 + ((wave[wi] - 128) / 128) * amp;
+          pts.push(project(cosLat * Math.cos(lon) * rad, sinLat * rad, cosLat * Math.sin(lon) * rad));
+        }
+        strokeSegs(pts);
+      }
+    } else if (form === 1) {
+      // WRAP — one waveform spiralled pole-to-pole around the sphere.
+      const windings = Math.round(this.p('density'));
+      const STEPS = 360;
+      const pts = [];
+      for (let i = 0; i <= STEPS; i++) {
+        const f = i / STEPS;
+        const lat = -Math.PI / 2 + Math.PI * f;
+        const lon = f * windings * TWO_PI;
+        const cosLat = Math.cos(lat);
+        const wi = Math.floor(f * (N - 1));
+        const rad = 1 + ((wave[wi] - 128) / 128) * amp;
+        pts.push(project(cosLat * Math.cos(lon) * rad, Math.sin(lat) * rad, cosLat * Math.sin(lon) * rad));
+      }
+      strokeSegs(pts);
+    } else {
+      // LISSA — XY's self-correlation in 3D: three delayed waveform copies.
+      const lag = Math.max(1, Math.round(this._effPhase())) * step;
+      const flip = this._effFlip() ? -1 : 1;
+      const fill = 0.9 * gain;
+      const pts = [];
+      for (let i = 0; i + 2 * lag < N; i += step) {
+        const ux = ((wave[i] - 128) / 128) * fill;
+        const uy = ((wave[i + lag] - 128) / 128) * fill * flip;
+        const uz = ((wave[i + 2 * lag] - 128) / 128) * fill;
+        pts.push(project(ux, uy, uz));
+      }
+      strokeSegs(pts);
+    }
+    ctx.globalAlpha = alpha; // restore for anything drawn after
   }
 }
