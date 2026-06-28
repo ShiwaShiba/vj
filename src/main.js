@@ -71,9 +71,14 @@ function startOutput() {
     'font:12px/1.4 monospace;color:rgba(255,255,255,.5);letter-spacing:.1em;' +
     'pointer-events:none;z-index:2;';
   document.body.appendChild(hint);
-  const goFs = () => { toggleFullscreen(document.documentElement); hint.classList.add('gone'); };
-  document.addEventListener('click', goFs);
-  window.addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') goFs(); });
+  // クリックは「全画面へ入る」のみ（誤クリックで投影が抜けないように）。明示的な解除は Esc / F キー。
+  const enterFs = () => {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) toggleFullscreen(document.documentElement);
+    hint.classList.add('gone');
+  };
+  const toggleFs = () => { toggleFullscreen(document.documentElement); hint.classList.add('gone'); };
+  document.addEventListener('click', enterFs);
+  window.addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') toggleFs(); });
 }
 
 // --- 操作ウィンドウ: 従来フロー＋状態配信。---
