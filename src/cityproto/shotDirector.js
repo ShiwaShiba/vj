@@ -46,6 +46,15 @@ export function defaultShotConfig() {
     // comfort caps (酔わせない)
     maxBlendSec: 1.2,       // never let a blend become a long fast sweep across a big jump
     minDwellBars: 1,        // floor on switchBars so it can't strobe the framing
+    // --- aerial 俯瞰の動き（決定論・酔わせない）---
+    orbitRate: 0,           // 俯瞰公転の角速度 [rad/beat]。0=固定（デフォルトは固定=既存挙動保持）。有効値例: 0.02
+    orbitDir: 1,            // 公転方向 ±1
+    breatheBars: 24,        // 呼吸ズームの周期（小節）
+    breatheAmp: 0,          // 呼吸の半径振幅（±割合）。0=固定（デフォルトは固定=既存挙動保持）。有効値例: 0.06
+    nearRatio: 0,           // 非avenue空間のうち「俯瞰ニア」になる割合。0=無効（デフォルト）。有効値例: 0.25
+    nearRadiusMul: 0.62,    // 俯瞰ニアの寄り（半径倍率 <1）
+    nearHeightMul: 0.66,    // 俯瞰ニアの高さ倍率 <1
+    nearFov: 46,            // 俯瞰ニアのFOV
   };
 }
 
@@ -95,6 +104,33 @@ function avenueCam(state, cfg, centerline, beatsFloat) {
   };
 }
 
+// 俯瞰（俯瞰ワイド/ニア）の framing。lookAt(lookX,lookV) 周りで camX/camZ を beatsFloat 由来の
+// 角度でゆっくり公転し、半径に緩い呼吸を重畳（純粋・決定論・酔わせない）。orbitRate=0 かつ
+// breatheAmp=0 の 'wide' は base と完全一致＝固定復帰（現状ピクセル一致の保証）。
+export function aerialCam(base, cfg, beatsFloat, variant) {
+  const isNear = variant === 'near';
+  // Fast passthrough: no orbit, no breathe, wide view → return base unchanged (exact pixel match).
+  // Avoids floating-point trig rounding even when inputs are zero (cos(atan2(z,0)) ≠ 0 exactly).
+  if (!isNear && !(cfg.orbitRate || 0) && !(cfg.breatheAmp || 0)) return { ...base };
+  const radiusMul = isNear ? cfg.nearRadiusMul : 1;
+  const heightMul = isNear ? cfg.nearHeightMul : 1;
+  const dx = base.camX - base.lookX, dz = base.camZ - base.lookV;
+  const r0 = Math.hypot(dx, dz) || 1;
+  const a0 = Math.atan2(dz, dx);
+  const dir = cfg.orbitDir < 0 ? -1 : 1;
+  const ang = a0 + (cfg.orbitRate || 0) * beatsFloat * dir;
+  const breathePeriod = Math.max(1e-3, (cfg.breatheBars || 1) * cfg.barBeats);
+  const breathe = 1 + (cfg.breatheAmp || 0) * Math.sin((2 * Math.PI * beatsFloat) / breathePeriod);
+  const r = r0 * radiusMul * breathe;
+  return {
+    camX: base.lookX + Math.cos(ang) * r,
+    camY: base.camY * heightMul,
+    camZ: base.lookV + Math.sin(ang) * r,
+    fov: isNear ? cfg.nearFov : base.fov,
+    lookX: base.lookX, lookY: base.lookY, lookV: base.lookV,
+  };
+}
+
 // PURE step. Returns { state, cam }. `base` is the passthrough framing; `beat.beatsFloat` is
 // continuous musical time. Same (state, base, beat, cfg, centerline) → same result.
 export function stepShot(state, base, beat, dt, cfg = defaultShotConfig(), centerline = null) {
@@ -115,11 +151,18 @@ export function stepShot(state, base, beat, dt, cfg = defaultShotConfig(), cente
     s.group = group;
     s.fromCam = s.lastCam ? { ...s.lastCam } : { ...base };
     s.blendStart = s.t;
-    s.shot = hash01(group) < cfg.avenueRatio ? 'avenue' : 'aerial';
+    // 3値 決定論振り分け：avenue 確率は avenueRatio を保ち、非avenue空間を nearRatio で分ける。
+    const rr = hash01(group);
+    if (rr < cfg.avenueRatio) s.shot = 'avenue';
+    else if (rr < cfg.avenueRatio + (cfg.nearRatio || 0) * (1 - cfg.avenueRatio)) s.shot = 'aerialNear';
+    else s.shot = 'aerial';
     s.entry = hash01(group * 2 + 1); // vary the avenue entry point per shot
   }
 
-  const target = s.shot === 'avenue' ? avenueCam(s, cfg, centerline, beatsFloat) : { ...base };
+  let target;
+  if (s.shot === 'avenue') target = avenueCam(s, cfg, centerline, beatsFloat);
+  else if (s.shot === 'aerialNear') target = aerialCam(base, cfg, beatsFloat, 'near');
+  else target = aerialCam(base, cfg, beatsFloat, 'wide');
 
   const blendSec = clamp(cfg.blendSec, 0, cfg.maxBlendSec);
   const bt = blendSec <= 1e-3 ? 1 : smooth01((s.t - s.blendStart) / blendSec);
