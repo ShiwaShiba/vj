@@ -19,8 +19,14 @@ export const CONFIG = {
   // Exponential smoothing: fast attack (rise), slow release (fall).
   SMOOTH_ATTACK: 0.5,
   SMOOTH_RELEASE: 0.12,
-  // Default mic input gain (user-adjustable via UI).
-  SENSITIVITY: 1.4,
+  // Default mic input gain (user-adjustable via UI). Raised so the out-of-box
+  // reaction is clearly visible without pinning the Sensitivity slider to max.
+  SENSITIVITY: 2.0,
+  // Fixed input gains applied UNDER the user sensitivity. Bands had no fixed gain
+  // (raw band averages are small after averaging over many bins → weak L/M/H +
+  // weak scene reaction), so a band gain is the main lever for "louder" response.
+  BAND_GAIN: 2.4,
+  LEVEL_GAIN: 4.0,
 
   // --- Beat detection ---
   BEAT_HISTORY: 43, // frames (~0.7s at 60fps)

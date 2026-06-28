@@ -99,7 +99,7 @@ export class ControlPanel {
     // Audio sensitivity
     const sr = document.createElement('div');
     sr.className = 'vj-sliders';
-    sr.appendChild(createSlider('Sensitivity', { value: this.ctx.audio.sensitivity, min: 0.3, max: 3, step: 0.05 }, (v) => this.ctx.audio.setSensitivity(v)));
+    sr.appendChild(createSlider('Sensitivity', { value: this.ctx.audio.sensitivity, min: 0.3, max: 4, step: 0.05 }, (v) => this.ctx.audio.setSensitivity(v)));
     this.audioSection = this._section('AUDIO', sr);
     this.panel.appendChild(this.audioSection);
 

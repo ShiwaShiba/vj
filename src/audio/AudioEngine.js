@@ -104,8 +104,7 @@ export class AudioEngine {
     const hi = Math.min(this.freq.length - 1, Math.ceil(hiHz / this.binHz));
     let sum = 0;
     for (let i = lo; i <= hi; i++) sum += this.freq[i];
-    const avg = sum / (hi - lo + 1) / 255; // 0..1
-    return clamp(avg * this.sensitivity, 0, 1);
+    return sum / (hi - lo + 1) / 255; // raw band average, 0..1 (gain applied by caller)
   }
 
   update(nowMs) {
@@ -125,23 +124,27 @@ export class AudioEngine {
       sumSq += v * v;
     }
     const rms = Math.sqrt(sumSq / this.time.length);
-    // 2.2 is a fixed RMS gain; sensitivity is applied once, same as bands.
-    const rawLevel = clamp(rms * 2.2 * this.sensitivity, 0, 1);
+    // Fixed RMS gain (CONFIG.LEVEL_GAIN); sensitivity is applied once, same as bands.
+    const rawLevel = clamp(rms * CONFIG.LEVEL_GAIN * this.sensitivity, 0, 1);
 
-    const rawBass = this._bandEnergy(CONFIG.BANDS.bass[0], CONFIG.BANDS.bass[1]);
-    const rawMid = this._bandEnergy(CONFIG.BANDS.mid[0], CONFIG.BANDS.mid[1]);
-    const rawTreble = this._bandEnergy(CONFIG.BANDS.treble[0], CONFIG.BANDS.treble[1]);
+    // Apply the band gain UNDER the user sensitivity. Keep an UNCLAMPED boosted bass
+    // for the beat detector: its onset test is a ratio (peak vs running mean), so a
+    // hard clamp at 1.0 would flatten loud kicks into the mean and kill detection.
+    const G = CONFIG.BAND_GAIN * this.sensitivity;
+    const bassBoost = this._bandEnergy(CONFIG.BANDS.bass[0], CONFIG.BANDS.bass[1]) * G;
+    const midBoost = this._bandEnergy(CONFIG.BANDS.mid[0], CONFIG.BANDS.mid[1]) * G;
+    const trebleBoost = this._bandEnergy(CONFIG.BANDS.treble[0], CONFIG.BANDS.treble[1]) * G;
 
     s.level = this._envLevel.push(rawLevel);
-    s.bass = this._envBass.push(rawBass);
-    s.mid = this._envMid.push(rawMid);
-    s.treble = this._envTreble.push(rawTreble);
+    s.bass = this._envBass.push(clamp(bassBoost, 0, 1));
+    s.mid = this._envMid.push(clamp(midBoost, 0, 1));
+    s.treble = this._envTreble.push(clamp(trebleBoost, 0, 1));
 
     // Beat detection.
     let beat = false;
     if (this.beatSource === 'auto') {
       this._beatDetector.sensitivity = CONFIG.BEAT_SENSITIVITY;
-      beat = this._beatDetector.push(rawBass, nowMs);
+      beat = this._beatDetector.push(bassBoost, nowMs);
       s.bpm = this._beatDetector.bpm;
     } else {
       s.bpm = this._tapBpm;
