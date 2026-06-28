@@ -19,7 +19,7 @@ export class Oscilloscope extends Scene {
     super('scope', 'Oscilloscope');
     this.trail = 0.3;
     this.modes = [{ name: 'Line' }, { name: 'Circle' }, { name: 'XY' }];
-    this.defineParam('thickness', 3, 1, 8, 0.5, 'Thickness');
+    this.defineParam('thickness', 3, 0.25, 8, 0.25, 'Thickness'); // min low enough for hairline strokes
     this.defineParam('gain', 1, 0.3, 3, 0.1, 'Gain');
     this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
     // XY-mode levers (no effect in Line/Circle).
