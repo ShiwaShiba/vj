@@ -12,7 +12,12 @@ export function createSlider(label, entry, onInput) {
   input.step = entry.step;
   input.value = entry.value;
   input.addEventListener('input', () => onInput(parseFloat(input.value)));
+  // Track wrapper carries a centre tick (::after at 50%) so the slider's exact
+  // midpoint is visible as a reference — the thumb sits on it at mid-travel.
+  const track = document.createElement('div');
+  track.className = 'vj-slider-track';
+  track.appendChild(input);
   wrap.appendChild(span);
-  wrap.appendChild(input);
+  wrap.appendChild(track);
   return wrap;
 }
