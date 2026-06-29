@@ -49,7 +49,7 @@ export function breathAt(t, audio, opts) {
     const audE = react * (0.55 * beatHold + 0.40 * bass + 0.15 * level);
     K = clamp01(0.05 + 0.45 * breath + audE);
   } else {
-    K = clamp01(0.04 + 0.62 * breath);
+    K = clamp01(0.04 + 0.85 * breath);
   }
 
   const energy = audioOn ? clamp01(0.6 * level + 0.4 * bass) : 0;
