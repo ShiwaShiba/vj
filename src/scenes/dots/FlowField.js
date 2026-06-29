@@ -17,9 +17,11 @@ const TILT = 0.40;                 // X軸の基準チルト(rad) — 回転0で
 const ROT2 = 0.618;                // 第2軸(X)の速度比 — 黄金比で非反復 tumble
 const BANDS = 8;                   // 明度量子化 — 1バンド=1 stroke
 const MAXN = 32000;                // Particles スライダー上限ぶん事前確保
-const CONV_PULL = 0.92;            // 画面内(x,y)の引き込み強さ (1=完全に中心へ)
-const CONV_PULL_Z = 0.55;          // 奥行き(z)は緩く引く → 紡錘状の3D核
-const CONV_SWIRL = 2.4;            // 収束時のスワール量(rad) — 内側ほど速い渦
+const CONV_PULL = 0.965;           // 画面内(x,y)の引き込み強さ (1=完全に中心へ) — ギュッと
+const CONV_PULL_Z = 0.6;           // 奥行き(z)は緩く引く → 紡錘状の3D核
+const CONV_SWIRL = 2.0;            // 収束時のスワール量(rad) — 内側ほど速い渦
+const QUIVER = 0.05;               // 微生物の細動: 微小トレモロ振幅(world)
+const QFREQ = 22.0;                // 細動の速さ(rad/s)
 const PULSE_AMT = 0.18;            // キック鼓動の最大膨張率
 const RESEED_JUMP = 0.25;          // ワールド空間で再投入(瞬間移動)とみなす二乗距離
 
@@ -104,11 +106,18 @@ export class FlowField extends Scene {
       const bf = clock.beats + (clock.beatPhase || 0);
       const ev = bf * 0.045 + 0.5 * Math.sin(bf * 0.041) + 0.3 * Math.sin(bf * 0.017 + 1.7);
       const ph = ev - Math.floor(ev);
-      // 周期の後半30%が収束イベント。前2/3=ゆっくり集まり加速、後1/3=滑らかに解放。
-      const W0 = 0.70, COLL = 0.66;
+      // 周期の後半が収束イベント。収束=中心ほど減速(力が溜まる ease-out)、
+      // 解放=一気に放出して減衰。
+      const W0 = 0.66, COLL = 0.72;
       if (ph > W0) {
         const u = (ph - W0) / (1 - W0);
-        this._conv = u < COLL ? smoother(u / COLL) : 1 - smoother((u - COLL) / (1 - COLL));
+        if (u < COLL) {
+          const c = u / COLL;
+          this._conv = 1 - Math.pow(1 - c, 2.6); // 加速→中心手前で強く減速(停滞=力溜め)
+        } else {
+          const r = (u - COLL) / (1 - COLL);
+          this._conv = Math.pow(1 - r, 1.7);      // 解放: 速く抜けて減衰
+        }
       } else {
         this._conv = 0;
       }
@@ -173,6 +182,15 @@ export class FlowField extends Scene {
     const ay1 = this._spin, cY = Math.cos(ay1), sY = Math.sin(ay1);
     const ax1 = TILT + this._spin2, cX = Math.cos(ax1), sX = Math.sin(ax1);
     const flickT = this.t * 5.0; // フリッカー速度
+    // 収束核は固定点でなく、ゆっくり徘徊する「生きた標的」へ寄せる (有機的)。
+    let tgx = 0, tgy = 0, tgz = 0, qt = 0;
+    if (converging) {
+      const da = this.t * 0.15;
+      tgx = 0.16 * this.noise.noise3D(da, 1.3, 0.0);
+      tgy = 0.16 * this.noise.noise3D(2.1, da, 4.0);
+      tgz = 0.11 * this.noise.noise3D(0.7, 5.2, da + 7.0);
+      qt = this.t * QFREQ;
+    }
     // 投影 → 画面座標・統合明度バンド・有効フラグをキャッシュ。
     for (let i = 0; i < n; i++) {
       // ワールド空間の移動量で再投入(瞬間移動)を判定 — 収束 streak は除外しない。
@@ -181,11 +199,18 @@ export class FlowField extends Scene {
       let ax = this.PX[i], ay = this.PY[i], az = this.PZ[i];
       let bx = this.X[i], by = this.Y[i], bz = this.Z[i];
       if (converging) {
-        // 内側ほど速い渦＋非一様な引き込み (XZ面でスワール, z は緩く)。
-        const rA = Math.sqrt(ax * ax + az * az) + 0.15, anA = swP / rA, cA = Math.cos(anA), sA = Math.sin(anA);
-        ax = (ax * cA + az * sA) * sxyP; const azA = (-this.PX[i] * sA + az * cA) * szP; ay = ay * sxyP; az = azA;
-        const rB = Math.sqrt(bx * bx + bz * bz) + 0.15, anB = swC / rB, cB = Math.cos(anB), sB = Math.sin(anB);
-        const bxN = (bx * cB + bz * sB) * sxyC; const bzN = (-bx * sB + bz * cB) * szC; by = by * sxyC; bx = bxN; bz = bzN;
+        // 徘徊標的(tg)相対で、内側ほど速い渦＋非一様な引き込み (z は緩く=紡錘核)。
+        let rx = ax - tgx, rz = az - tgz, rr = Math.sqrt(rx * rx + rz * rz) + 0.35;
+        let an = swP / rr, c2 = Math.cos(an), s2 = Math.sin(an);
+        ax = tgx + (rx * c2 + rz * s2) * sxyP; az = tgz + (-rx * s2 + rz * c2) * szP; ay = tgy + (ay - tgy) * sxyP;
+        rx = bx - tgx; rz = bz - tgz; rr = Math.sqrt(rx * rx + rz * rz) + 0.35;
+        an = swC / rr; c2 = Math.cos(an); s2 = Math.sin(an);
+        bx = tgx + (rx * c2 + rz * s2) * sxyC; bz = tgz + (-rx * s2 + rz * c2) * szC; by = tgy + (by - tgy) * sxyC;
+        // 微生物の細動: 速く微小なトレモロ — 圧縮(conv)されるほど震える。
+        const phi = this.sv[i] * TWO_PI;
+        const j1 = Math.sin(qt + phi), j2 = Math.sin(qt * 1.27 + phi * 1.6 + 2.0), j3 = Math.sin(qt * 0.9 + phi * 0.7);
+        ax += cvP * QUIVER * j1; az += cvP * QUIVER * j2; ay += cvP * QUIVER * 0.6 * j3;
+        bx += cvC * QUIVER * j1; bz += cvC * QUIVER * j2; by += cvC * QUIVER * 0.6 * j3;
       }
       const arx = ax * cY + az * sY, arz = -ax * sY + az * cY;
       const aty = ay * cX - arz * sX;
