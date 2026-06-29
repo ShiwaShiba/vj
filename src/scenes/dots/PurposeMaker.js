@@ -20,9 +20,9 @@ export class PurposeMaker extends Scene {
     this.trail = 0.16;
     this.modes = [{ name: 'Cycle' }, { name: 'Right' }, { name: 'Left' }, { name: 'Both' }];
     this.modeGroups = [{ key: 'audio', label: 'Audio', options: ['OFF', 'ON'], index: 1 }];
-    this.defineParam('count', 34000, 10000, MAXN, 1000, 'Particles');
-    this.defineParam('recruit', 0.65, 0.3, 0.9, 0.05, 'Recruit');
-    this.defineParam('flow', 0.5, 0.1, 1.5, 0.05, 'Flow Speed');
+    this.defineParam('count', 42000, 10000, MAXN, 1000, 'Particles');
+    this.defineParam('recruit', 0.50, 0.3, 0.9, 0.05, 'Recruit');
+    this.defineParam('flow', 0.62, 0.1, 1.5, 0.05, 'Flow Speed');
     this.defineParam('scale', 1.6, 0.6, 3.2, 0.1, 'Field Scale');
     this.defineParam('cohesion', 1.0, 0.3, 2.0, 0.1, 'Cohesion');
     this.defineParam('thread', 0.9, 0.4, 2.0, 0.1, 'Thread');
@@ -91,7 +91,7 @@ export class PurposeMaker extends Scene {
     if (station === 'R') { hand = 'A'; cloud = H.A; }
     else if (station === 'L') { hand = 'B'; cloud = H.B; }
     else { hand = this._h(i * 3 + 1) < 0.5 ? 'A' : 'B'; cloud = hand === 'A' ? H.A : H.B; }
-    const idx = ((i / 1) | 0) % cloud.n;
+    const idx = i % cloud.n;
     const u = cloud.u[idx] / 32767, v = cloud.v[idx] / 32767;
     // station placement (matches spec): spanX 1.3, spanY 1.0
     let tx, ty = (0.5 - v) * 1.0;
@@ -164,12 +164,12 @@ export class PurposeMaker extends Scene {
     const W = this.w, H = this.h, cx = W / 2, cy = H / 2;
     const R = Math.min(W, H) * 0.5; // world ±1 maps to half-min-dimension (sim ±1.6 bleeds off)
     const cX = Math.cos(TILT), sX = Math.sin(TILT);
-    // project + brightness band
+    // project + brightness band (project hoisted out of the per-particle loop)
+    const project = (wx, wy, wz) => {
+      const ty = wy * cX - wz * sX;
+      return [cx + wx * R, cy - ty * R];
+    };
     for (let i = 0; i < n; i++) {
-      const project = (wx, wy, wz) => {
-        const ty = wy * cX - wz * sX;
-        return [cx + wx * R, cy - ty * R];
-      };
       const a = project(this.PX[i], this.PY[i], this.PZ[i]);
       const b = project(this.X[i], this.Y[i], this.Z[i]);
       this.psx[i] = a[0]; this.psy[i] = a[1]; this.sx[i] = b[0]; this.sy[i] = b[1];
