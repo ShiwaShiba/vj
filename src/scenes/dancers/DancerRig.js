@@ -315,12 +315,25 @@ export class DancerRig {
     // planted-forward = a turned-out crouch, not a fanned-out leg. At stance=0 the
     // azimuths fall back to the original fixed 0.08 (identical to before).
     const splayR = 0.08 + L.stance, splayL = -0.08 - L.stance;
+    // KNEE articulation. Two fixes for "the knee never bends, the raised leg is a stiff spike":
+    // (1) amplitude scaling drives kneeR BELOW its rest 0.2 for near-straight kick poses
+    //     (kneeR 0.08 × amp 1.57 → ~0.01, even negative = hyperextension), locking the leg dead
+    //     straight — clamp to a minimum bend so a knee can never lock/hyperextend.
+    // (2) COUPLE flexion to forward hip-raise: a lifted thigh folds the shin back toward it
+    //     (膝を上げると脛が腿に畳まれる) so a high leg reads as an articulated knee-up, not one rigid
+    //     line. Back-extension (arabesque, hf<0) stays straight, so only forward raises fold.
+    const KNEE_MIN = 0.12, KNEE_MAX = 2.6, KNEE_COUPLE = 0.62, RAISE_KN = 0.5;
+    const kneeFlex = (kn, hf) => {
+      const v = kn + Math.max(0, hf - RAISE_KN) * KNEE_COUPLE;
+      return v < KNEE_MIN ? KNEE_MIN : v > KNEE_MAX ? KNEE_MAX : v;
+    };
+    const kneeFR = kneeFlex(L.kneeR, hipFR), kneeFL = kneeFlex(L.kneeL, hipFL);
     const knR = A(hipR, splayR, hipFR, PROP.thigh * H);
-    const anR = A(knR, 0.08 + L.stance * 0.5, hipFR - L.kneeR, PROP.shin * H);
-    const ftR = A(anR, 0.08, hipFR - L.kneeR + 0.95, PROP.foot * H);
+    const anR = A(knR, 0.08 + L.stance * 0.5, hipFR - kneeFR, PROP.shin * H);
+    const ftR = A(anR, 0.08, hipFR - kneeFR + 0.95, PROP.foot * H);
     const knL = A(hipL, splayL, hipFL, PROP.thigh * H);
-    const anL = A(knL, -(0.08 + L.stance * 0.5), hipFL - L.kneeL, PROP.shin * H);
-    const ftL = A(anL, -0.08, hipFL - L.kneeL + 0.95, PROP.foot * H);
+    const anL = A(knL, -(0.08 + L.stance * 0.5), hipFL - kneeFL, PROP.shin * H);
+    const ftL = A(anL, -0.08, hipFL - kneeFL + 0.95, PROP.foot * H);
 
     // --- Twist winds up the spine: pelvis (pelYaw) -> chest (shYaw) ---
     const yaw = (p, ang) => { const c = Math.cos(ang), s = Math.sin(ang); return [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c]; };
