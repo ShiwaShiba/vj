@@ -24,6 +24,11 @@ export class DancersScene extends Scene {
     // Camera viewpoint as a button group (parallel to modes).
     this.views = VIEWS.map((v) => ({ name: v.name }));
     this.viewIndex = 0;
+    // Render style: pictogram (original Kraftwerk rods) vs graphic (brush-croquis
+    // dancer). Same rig/choreography — only the renderer + proportions differ.
+    this.modeGroups = [
+      { key: 'style', label: 'STYLE', options: ['PICTO', 'GRAPHIC'], index: 0 },
+    ];
     this._camYaw = VIEWS[0].yaw;
     this._camPitch = VIEWS[0].pitch;
     this.defineParam('count', 1, 1, 100, 1, 'Dancers');
@@ -121,8 +126,10 @@ export class DancersScene extends Scene {
     const weightAmp = gains.weightAmp * style.grooveMul;
     const bounceImpulse = gains.bounceImpulse * style.grooveMul;
 
+    const styleIdx = this.mg('style');
     const spread = this.p('spread');
     for (let i = 0; i < this.rigs.length; i++) {
+      this.rigs[i].style = styleIdx;
       // Per-dancer phase offset (floor keeps neighbours desynced even at spread=0)
       // + a tiny seeded amplitude jitter so a crowd never moves in lock-step.
       const offset = i * 0.2 * spread + i * 0.07;

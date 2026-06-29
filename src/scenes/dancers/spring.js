@@ -45,6 +45,10 @@ const SPRING_DEFS = {
   head:        [140, 0.85, 0.06],
   headYaw:     [140, 0.85, 0.06],
   stance:      [150, 0.9, 0.02],
+  // AIRBORNE lift (jump/leap height). Slight overshoot (ZETA<1) gives the launch a
+  // little "pop" and a brief hang before settling back to 0 on the landing pose,
+  // so the rise→hover→land arc reads organic rather than a constant-speed slide.
+  lift:        [170, 0.92, 0],
 };
 
 // Backswing as a constant FRACTION of the move, independent of stiffness.

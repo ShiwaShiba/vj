@@ -19,6 +19,7 @@ export const REST = {
   armR: 0, armL: 0, elR: 0.5, elL: 0.5, wrR: 0, wrL: 0,
   hipR: 0, hipL: 0, kneeR: 0.2, kneeL: 0.2, head: 0, headYaw: 0,
   stance: 0, // outward thigh splay (plié / second position); 0 = original narrow stance
+  lift: 0,   // airborne height (jump/leap); 0 = grounded
 };
 
 // DOFs that get an anticipation backswing on a snap step (the "hit" limbs).

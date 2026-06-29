@@ -8,6 +8,8 @@ import { applyCouplings } from './couplings.js';
 // from the socket, pelvis rolls with the weight shift). Drawn as thin rods +
 // ball-joints, an outlined trapezoid torso, a round head. Proportions are a
 // fraction of total height H.
+// Pictogram proportions (the original Kraftwerk mannequin — UNCHANGED so the
+// existing rod look + its tuned hinge/twist behaviour is preserved exactly).
 const PROP = {
   pelvisHalf: 0.085,
   waist: 0.07,
@@ -21,7 +23,23 @@ const PROP = {
   rod: 0.020,
   joint: 0.028,
 };
-const LEG_REACH = PROP.thigh + PROP.shin;
+// Graphic (brush-croquis) proportions: elongated limbs, small egg head, slim
+// torso — a dancer's body. Used ONLY by the graphic renderer; sloping shoulders
+// (なで肩) come from shDropK in _skeleton. Same DOF rig, different lengths.
+const PROP_GFX = {
+  pelvisHalf: 0.070,
+  waist: 0.085,
+  torsoH: 0.28,
+  shoulderHalf: 0.100,
+  waistHalf: 0.05,
+  neck: 0.068,
+  head: 0.058,
+  upperArm: 0.205, foreArm: 0.185, hand: 0.10,
+  thigh: 0.27, shin: 0.255, foot: 0.085,
+  rod: 0.020,
+  joint: 0.028,
+};
+const SH_DROP_GFX = 0.5;   // なで肩 shoulder-drop factor for graphic (0 = level/pictogram)
 const FOCAL = 4.5;
 const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -82,8 +100,9 @@ export class DancerRig {
     this.L = {
       sink: 0, swayX: 0, pelYaw: 0, lean: 0, lateralBend: 0, shYaw: 0, raise: 0.28,
       armR: 0, armL: 0, elR: 0.5, elL: 0.5, wrR: 0, wrL: 0,
-      hipR: 0, hipL: 0, kneeR: 0.2, kneeL: 0.2, head: 0, headYaw: 0, stance: 0,
+      hipR: 0, hipL: 0, kneeR: 0.2, kneeL: 0.2, head: 0, headYaw: 0, stance: 0, lift: 0,
     };
+    this.style = 0;          // 0 = pictogram rods, 1 = brush-croquis graphic (set by scene)
     this.choreo = new Choreographer(seed);
     this.spine = SPINE;      // spine bend weights (tunable per rig)
     this.elFlex = EL_FLEX;   // elbow hinge fold strength, radians/flex (tunable per rig)
@@ -141,7 +160,21 @@ export class DancerRig {
     applyCouplings(L, this._wSign, ctrl.bounceImpulse);
   }
 
+  // Render style: 0 = pictogram rods (original), 1 = brush-croquis graphic. Set
+  // per-rig by the scene. Each style uses its own proportions + renderer; the
+  // (camYaw,camPitch,PROP,shDropK) skeleton is shared. The PROP parameter SHADOWS
+  // the module pictogram PROP inside _skeleton, so the geometry rescales to the
+  // active proportion set with no other change.
   draw(ctx, color, camYaw = 0, camPitch = 0, alpha = 1) {
+    if (this.style === 1) {
+      const sk = this._skeleton(camYaw, camPitch, PROP_GFX, SH_DROP_GFX);
+      return this._renderBrush(ctx, color, sk, alpha);
+    }
+    const sk = this._skeleton(camYaw, camPitch, PROP, 0);
+    return this._renderRods(ctx, color, sk, alpha);
+  }
+
+  _skeleton(camYaw, camPitch, PROP, shDropK) {
     const H = this.H, L = this.L;
     const A = (p, ang, dep, len) => {
       const cd = Math.cos(dep);
@@ -169,8 +202,12 @@ export class DancerRig {
     // --- SCAPULA: shoulders lift (shrug) + protract (forward) with the arm ---
     const liftR = (L.raise * 0.10 + Math.max(0, L.armR) * 0.10) * H;
     const liftL = (L.raise * 0.10 + Math.max(0, L.armL) * 0.10) * H;
-    const shR = [chestC[0] + PROP.shoulderHalf * H, chestC[1] - liftR, chestC[2] + L.armR * 0.10 * H];
-    const shL = [chestC[0] - PROP.shoulderHalf * H, chestC[1] - liftL, chestC[2] + L.armL * 0.10 * H];
+    // なで肩 (sloping shoulders): the shoulder joints sit BELOW the neck base
+    // (chestC) and slope down-outward, and the arm-raise lift is damped so they
+    // don't square up. chestC stays the silhouette peak (neck emerges between).
+    const shDrop = PROP.shoulderHalf * shDropK * H;
+    const shR = [chestC[0] + PROP.shoulderHalf * H, chestC[1] + shDrop - liftR * 0.45, chestC[2] + L.armR * 0.10 * H];
+    const shL = [chestC[0] - PROP.shoulderHalf * H, chestC[1] + shDrop - liftL * 0.45, chestC[2] + L.armL * 0.10 * H];
     const wsR = [s1[0] + PROP.waistHalf * H, s1[1], s1[2]];
     const wsL = [s1[0] - PROP.waistHalf * H, s1[1], s1[2]];
 
@@ -250,9 +287,29 @@ export class DancerRig {
     // the weight shift reads from pelvis ROLL (below), the contrapposto knee split,
     // the lateral spine bend and the shoulder/pelvis counter-rotation. A small
     // sway-driven drift keeps it alive without sliding the whole body off its feet.
+    // AIRBORNE: `lift` raises the whole figure off the ground (jump/leap). With
+    // raised-leg poses (tuck/kick/split) the feet leave the floor naturally — the
+    // rig has no foot-IK, so a bent/raised knee reads as airborne, not an error.
+    const legReach = PROP.thigh + PROP.shin;
     const hx = this.x + L.swayX * H * 0.12;
-    const hy = this.groundY - LEG_REACH * H + L.sink * H;
+    const hy = this.groundY - legReach * H + L.sink * H - (L.lift || 0) * H;
 
+    return {
+      H, hx, hy,
+      Proot, Ps1, Ps2, Ps3, PchestC, PneckTop, PheadC,
+      PshR, PshL, PwsR, PwsL,
+      PelR, PwrR, PhaR, PelL, PwrL, PhaL,
+      PhipR, PhipL, PknR, PanR, PftR, PknL, PanL, PftL,
+    };
+  }
+
+  _renderRods(ctx, color, sk, alpha) {
+    const H = sk.H;
+    const {
+      Proot, Ps1, Ps2, Ps3, PchestC, PneckTop, PheadC,
+      PshR, PshL, PwsR, PwsL, PelR, PwrR, PhaR, PelL, PwrL, PhaL,
+      PhipR, PhipL, PknR, PanR, PftR, PknL, PanL, PftL, hx, hy,
+    } = sk;
     ctx.save();
     ctx.translate(hx, hy);
     if (alpha !== 1) ctx.globalAlpha = alpha;
@@ -292,6 +349,56 @@ export class DancerRig {
     ctx.arc(PheadC[0], PheadC[1], PROP.head * H * PheadC[2], 0, TWO_PI);
     ctx.fill();
 
+    ctx.restore();
+  }
+
+  // ---- PROTOTYPE: brush-croquis renderer (comparison only) -------------------
+  // Slim filled tapered strokes over the SAME live joints — each bone thins
+  // distally (= croquis line-weight), hands/feet taper to points, small head,
+  // slim torso whose top PEAKS at the neck base (chestC) and slopes down to the
+  // なで肩 shoulders. Single Path2D, one fill (mono union).
+  _renderBrush(ctx, color, sk, alpha) {
+    const H = sk.H, p = new Path2D();
+    const R = { neck: 0.013, ua: 0.024, el: 0.014, fa: 0.014, wr: 0.008, th: 0.032, kn: 0.018, sh: 0.018, an: 0.010 };
+    const TIP = 0.0015;
+    const seg = (a, b, ra, rb) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len, A1 = ra * H * a[2], B1 = rb * H * b[2];
+      p.moveTo(a[0] + nx * A1, a[1] + ny * A1);
+      p.lineTo(b[0] + nx * B1, b[1] + ny * B1);
+      p.lineTo(b[0] - nx * B1, b[1] - ny * B1);
+      p.lineTo(a[0] - nx * A1, a[1] - ny * A1);
+      p.closePath();
+    };
+    const blob = (c, r) => { const rr = r * H * c[2]; p.moveTo(c[0] + rr, c[1]); p.arc(c[0], c[1], rr, 0, TWO_PI); };
+    // Legs (taper to pointed feet) / arms (taper to pointed hands) / neck.
+    seg(sk.PhipR, sk.PknR, R.th, R.kn); seg(sk.PknR, sk.PanR, R.kn, R.sh); seg(sk.PanR, sk.PftR, R.sh, TIP);
+    seg(sk.PhipL, sk.PknL, R.th, R.kn); seg(sk.PknL, sk.PanL, R.kn, R.sh); seg(sk.PanL, sk.PftL, R.sh, TIP);
+    seg(sk.PshR, sk.PelR, R.ua, R.el); seg(sk.PelR, sk.PwrR, R.el, R.fa); seg(sk.PwrR, sk.PhaR, R.fa, TIP);
+    seg(sk.PshL, sk.PelL, R.ua, R.el); seg(sk.PelL, sk.PwrL, R.el, R.fa); seg(sk.PwrL, sk.PhaL, R.fa, TIP);
+    seg(sk.PchestC, sk.PneckTop, R.neck, R.neck);
+    // Sloping shoulder line: a thin stroke from the neck base down to each shoulder.
+    seg(sk.PchestC, sk.PshR, R.neck, R.ua); seg(sk.PchestC, sk.PshL, R.neck, R.ua);
+    // Smooth the major joints so the slivers connect without notches.
+    blob(sk.PknR, R.kn); blob(sk.PknL, R.kn); blob(sk.PelR, R.el); blob(sk.PelL, R.el);
+    blob(sk.PshR, R.ua); blob(sk.PshL, R.ua); blob(sk.PhipR, R.th); blob(sk.PhipL, R.th);
+    // Slim torso whose top PEAKS at the neck base (なで肩 slope to the shoulders).
+    p.moveTo(sk.PshL[0], sk.PshL[1]); p.lineTo(sk.PchestC[0], sk.PchestC[1]); p.lineTo(sk.PshR[0], sk.PshR[1]);
+    p.lineTo(sk.PwsR[0], sk.PwsR[1]); p.lineTo(sk.PhipR[0], sk.PhipR[1]);
+    p.lineTo(sk.PhipL[0], sk.PhipL[1]); p.lineTo(sk.PwsL[0], sk.PwsL[1]); p.closePath();
+    // Small egg-shaped head: a slim ellipse whose long axis follows the neck
+    // (taller than wide, tilts with the head) — not a perfect circle/sphere.
+    const hr = PROP_GFX.head * H * sk.PheadC[2];
+    const rx = hr * 0.82, ry = hr * 1.14;
+    const ndx = sk.PheadC[0] - sk.PneckTop[0], ndy = sk.PheadC[1] - sk.PneckTop[1];
+    const hrot = Math.atan2(ndy, ndx) - Math.PI / 2;   // long axis along the neck
+    p.moveTo(sk.PheadC[0] + rx * Math.cos(hrot), sk.PheadC[1] + rx * Math.sin(hrot));
+    p.ellipse(sk.PheadC[0], sk.PheadC[1], rx, ry, hrot, 0, TWO_PI);
+    ctx.save();
+    ctx.translate(sk.hx, sk.hy);
+    if (alpha !== 1) ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.fill(p);
     ctx.restore();
   }
 
