@@ -27,14 +27,14 @@ export class PurposeMaker extends Scene {
     this.defineParam('scale', 1.6, 0.6, 3.2, 0.1, 'Field Scale');
     this.defineParam('cohesion', 1.0, 0.3, 2.0, 0.1, 'Cohesion');
     this.defineParam('thread', 0.9, 0.4, 2.0, 0.1, 'Thread');
-    this.defineParam('react', 2.0, 0, 6, 0.5, 'React');
+    this.defineParam('react', 1.0, 0, 6, 0.5, 'React');
     this.defineParam('pace', 1.0, 0.4, 2.0, 0.1, 'Pace');
     this.noise = new SimplexNoise(11);
     this.X = this.Y = this.Z = this.PX = this.PY = this.PZ = null;
     this.sx = this.sy = this.psx = this.psy = this.sval = this.sband = null;
     this.n = 0; this.t = 0; this.level = 0; this.bass = 0; this.treble = 0;
     this.hands = null; this.turb = null;
-    this._B = null; this._handBloom = 1;
+    this._B = null;
   }
 
   init(ctx, w, h) {
@@ -86,22 +86,6 @@ export class PurposeMaker extends Scene {
       this.X[i] = this.PX[i] = p.x; this.Y[i] = this.PY[i] = p.y; this.Z[i] = this.PZ[i] = p.z;
     }
   }
-  // hand target (world) for a recruited particle i in the active station
-  _targetFor(i, station) {
-    const H = this.hands;
-    let hand, cloud;
-    if (station === 'R') { hand = 'A'; cloud = H.A; }
-    else if (station === 'L') { hand = 'B'; cloud = H.B; }
-    else { hand = this._h(i * 3 + 1) < 0.5 ? 'A' : 'B'; cloud = hand === 'A' ? H.A : H.B; }
-    const idx = i % cloud.n;
-    const u = cloud.u[idx] / 32767, v = cloud.v[idx] / 32767;
-    // station placement (matches spec): spanX 1.3, spanY 1.0
-    let tx, ty = (0.5 - v) * 1.0;
-    if (hand === 'A') tx = -0.3 + 1.3 * u; else tx = -1.0 + 1.3 * u;
-    if (station === 'Both') ty += hand === 'A' ? 0.12 : -0.12;
-    return { tx, ty, tz: 0 };
-  }
-
   update(dt, audio, palette, clock) {
     this.t = clock.time; this.level = audio.level; this.bass = audio.bass; this.treble = audio.treble;
     const q = clock.quality || 1;
@@ -116,31 +100,26 @@ export class PurposeMaker extends Scene {
     else { const map = [null, 'R', 'L', 'Both']; const s = map[mi]; st = { station: s, cR: s !== 'L' ? 1 : 0, cL: s !== 'R' ? 1 : 0, phase: 'hold' }; }
 
     // line<->particle breathing: ONE coherence pulse K drives every texture cue at once
-    // (frequency, comb, scatter, speed, persistence, brightness). Audio (beat/bass/level)
-    // snaps K toward the LINE regime, so the STRUCTURE tracks the music — the headline
-    // reactive element. Treble adds shimmer; the waveform ripples the filaments crosswise.
+    // (frequency, comb, scatter, speed, persistence, brightness, streak length). Audio
+    // (beat/bass) snaps K toward the LINE regime, so the STRUCTURE tracks the music.
     const B = breathAt(this.t, { level: audio.level, bass: audio.bass, treble: audio.treble, beatHold: audio.beatHold }, { react, audioOn });
     this._B = B;
     // persistence breathes too: lines linger (low trail = more persistence), dust is crisper.
-    this.trail = 0.10 + 0.20 * (1 - B.K);
+    this.trail = 0.16 + 0.13 * (1 - B.K);
 
     // video-derived field; spatial frequency morphs low(line, smooth)..high(dust, fine).
     const baseFreq = this.turb.scale > 0.001 ? (0.9 / this.turb.scale) : 1.6;
     const fBase = baseFreq * (this.p('scale') / 1.6);
     const f = fBase * (1.35 - 0.95 * B.K);
     const fa = this.turb.flowAngle, dirx = Math.cos(fa), diry = -Math.sin(fa);
-    const perpx = -diry, perpy = dirx;
-    const swirlAmp = 0.42 + 0.78 * B.scatter;      // dust = more chaotic swirl
-    const comb = B.forward + 0.58 * B.advance;     // along-flow comb: stretch into filaments
+    const swirlAmp = 0.24 + 0.85 * B.scatter;      // line pole = little swirl -> smooth comb
+    const comb = B.forward + 0.62 * B.advance;     // along-flow comb: stretch into filaments
     const sp = this.p('flow') * B.speed * dt;
     const zt = this.t * 0.05;
     const cohK = this.p('cohesion') * 8.0;
-    const rippleAmp = B.ripple * 0.13;             // transverse waveform wave (audio)
-    const shimmer = B.shimmer;                     // hi-freq agitation (treble)
-    const wave = audio.waveform, wlen = wave ? wave.length : 0;
-    const handBloom = 1 + (audioOn ? react * 0.06 * (audio.bass + audio.beatHold) : 0);
-    this._handBloom = handBloom;
     const noise = this.noise;
+    // hand placement (narrower spanX so long fingers aren't stretched sideways).
+    const H = this.hands, SPANX = 1.08, SPANY = 1.0, OFFA = -0.18, OFFB = -0.90;
 
     for (let i = 0; i < n; i++) {
       this.PX[i] = this.X[i]; this.PY[i] = this.Y[i]; this.PZ[i] = this.Z[i];
@@ -153,38 +132,33 @@ export class PurposeMaker extends Scene {
           : (this._h(i * 3 + 1) < 0.5 ? st.cR : st.cL);
         cc = smoother(which);
       }
-      // shared turbulent swirl (its amplitude breathes with scatter)
+      // shared turbulent swirl (amplitude breathes with scatter)
       let vx = noise.noise3D(x * f, y * f, z * f + zt) * swirlAmp;
       let vy = noise.noise3D(x * f + 5.2, y * f + 9.1, z * f + zt + 2.3) * swirlAmp;
       let vz = noise.noise3D(x * f + 2.7, y * f + 4.4, z * f + zt + 7.8) * swirlAmp * 0.7;
       if (isHand && cc > 0.001) {
-        // coalesce onto the hand point-cloud; while held it blooms (bass) + quivers (alive).
-        const tgt = this._targetFor(i, st.station);
+        // coalesce onto the hand point-cloud (target computed inline -> no per-particle alloc).
+        let hand, cloud;
+        if (st.station === 'R') { hand = 0; cloud = H.A; }
+        else if (st.station === 'L') { hand = 1; cloud = H.B; }
+        else { hand = this._h(i * 3 + 1) < 0.5 ? 0 : 1; cloud = hand === 0 ? H.A : H.B; }
+        const idx = i % cloud.n;
+        const tx = (hand === 0 ? OFFA : OFFB) + SPANX * (cloud.u[idx] / 32767);
+        let ty = (0.5 - cloud.v[idx] / 32767) * SPANY;
+        if (st.station === 'Both') ty += hand === 0 ? 0.11 : -0.11;
         vx += dirx * comb; vy += diry * comb;
-        const qv = cc > 0.5 ? (0.010 + 0.04 * (handBloom - 1)) * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
-        const pullx = (tgt.tx * handBloom - x), pully = (tgt.ty * handBloom - y), pullz = (tgt.tz - z);
-        vx = vx * sp * (1 - cc) + (pullx * cohK + qv) * cc * dt;
-        vy = vy * sp * (1 - cc) + (pully * cohK + qv * 0.5) * cc * dt;
-        vz = vz * sp * (1 - cc) + (pullz * cohK) * cc * dt;
+        const qv = cc > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
+        vx = vx * sp * (1 - cc) + ((tx - x) * cohK + qv) * cc * dt;
+        vy = vy * sp * (1 - cc) + ((ty - y) * cohK + qv * 0.5) * cc * dt;
+        vz = vz * sp * (1 - cc) + ((0 - z) * cohK) * cc * dt;
         this.X[i] = x + vx; this.Y[i] = y + vy; this.Z[i] = z + vz;
         continue;
       }
-      // ambient medium: comb into aligned filament LINES (coherent forward) or scatter into
-      // PARTICLE dust (swirl). A cheap coarse spatial term lets some streamtubes comb first.
+      // ambient medium: comb into aligned LINES (coherent forward) or scatter into DUST.
+      // A cheap coarse spatial term lets some streamtubes comb before others.
       const cn = Math.sin(x * 1.3 + zt * 1.5) * Math.cos(y * 1.1 - zt);
       const lcomb = comb * (0.5 + 0.55 * (cn + 1));
       vx += dirx * lcomb; vy += diry * lcomb;
-      if (rippleAmp > 0 && wlen) {
-        const sCoord = x * dirx + y * diry;          // position along the flow
-        let idx = (((sCoord * 0.5 + 0.5 + this.t * 0.25) * wlen * 0.25) | 0) % wlen;
-        if (idx < 0) idx += wlen;
-        const wv = (wave[idx] - 128) / 128;
-        vx += perpx * rippleAmp * wv; vy += perpy * rippleAmp * wv;
-      }
-      if (shimmer > 0.01) {
-        const j = Math.sin(x * 41.0 + y * 37.0 + this.t * 26.0) * shimmer * 0.5;
-        vx += perpx * j; vy += perpy * j;
-      }
       let nx = x + vx * sp, ny = y + vy * sp, nz = z + vz * sp;
       // off-box ambient particles re-enter on the inflow edge -> continuous off-frame flow.
       if (nx < -SIMX || nx > SIMX || ny < -SIMY || ny > SIMY || nz < -1.2 || nz > 1.2) {
@@ -201,32 +175,64 @@ export class PurposeMaker extends Scene {
     const W = this.w, H = this.h, cx = W / 2, cy = H / 2;
     const R = Math.min(W, H) * 0.5; // world ±1 maps to half-min-dimension (sim ±1.6 bleeds off)
     const cX = Math.cos(TILT), sX = Math.sin(TILT);
-    // project + brightness band (project hoisted out of the per-particle loop)
-    const project = (wx, wy, wz) => {
-      const ty = wy * cX - wz * sX;
-      return [cx + wx * R, cy - ty * R];
-    };
+    const B = this._B;
+    const elong = B ? B.elong : 0.5, flash = B ? B.flash : 0, ambB = B ? B.bright : 0.7;
+    const recruit = this.p('recruit');
+    const streakMax = R * 0.052;                    // px length of a fully-extended LINE streak
+    // light conservation: a longer streak spreads one particle's light over more pixels, so its
+    // per-stroke brightness must fall ~1/length. => DUST = bright compact grains, LINE = faint
+    // long strands (sparse, not a bright bank); the beat-flash is a separate controlled boost.
+    const lenComp = 0.62 / (0.30 + elong);
+    const fa = this.turb.flowAngle, dirx = Math.cos(fa), diry = -Math.sin(fa);
+    const perpx = -diry, perpy = dirx;
+    // positional audio displacement (drawn-only -> legible, no sim diffusion): a transverse
+    // standing wave from the waveform + fine treble jitter, in pixels.
+    const wave = this.audio && this.audio.waveform, wlen = wave ? wave.length : 0;
+    const ripAmp = (B ? B.ripple : 0) * 0.09 * R;
+    const shAmp = (B ? B.shimmer : 0) * 0.05 * R;
+    const tw = this.t;
     for (let i = 0; i < n; i++) {
-      const a = project(this.PX[i], this.PY[i], this.PZ[i]);
-      const b = project(this.X[i], this.Y[i], this.Z[i]);
-      this.psx[i] = a[0]; this.psy[i] = a[1]; this.sx[i] = b[0]; this.sy[i] = b[1];
-      // depth 0..1
-      let d = this.Z[i] * 0.5 + 0.5; if (d < 0) d = 0; else if (d > 1) d = 1;
+      const z = this.Z[i];
+      const tyc = this.Y[i] * cX - z * sX;
+      let sxc = cx + this.X[i] * R, syc = cy - tyc * R;
+      const typ = this.PY[i] * cX - this.PZ[i] * sX;
+      const pxs = cx + this.PX[i] * R, pys = cy - typ * R;
+      let d = z * 0.5 + 0.5; if (d < 0) d = 0; else if (d > 1) d = 1;
       const hi = this._h(i * 7 + 99);
-      const isHand = hi < this.p('recruit');
-      // hands are the luminous focal point; the ambient field is a dimmer atmosphere that
-      // breathes with K (lines = brighter crest, dust = dim powder) and fades toward the
-      // frame edges so the plume reads as a mass in black space framing the hands.
-      const ambB = this._B ? this._B.bright : 0.7;
-      let bv;
+      const isHand = hi < recruit;
+      let bx, by, bv;
       if (isHand) {
-        bv = (0.84 * this._handBloom) * (0.5 + 0.5 * d);
+        // hands = the luminous focal point; drawn prev->cur (crisp grains; convergence on gather).
+        bx = pxs; by = pys;
+        bv = 0.86 * (0.5 + 0.5 * d) * (1 + 0.25 * flash);
       } else {
-        const dx = (this.sx[i] - cx) / R, dy = (this.sy[i] - cy) / R;
-        const rr = Math.sqrt(dx * dx + dy * dy);
+        // ambient: positional waveform + treble displacement applied to the head.
+        if (ripAmp || shAmp) {
+          let off = 0;
+          if (ripAmp && wlen) {
+            const sCoord = this.X[i] * dirx + this.Y[i] * diry;
+            let idx = (((sCoord * 0.5 + 0.5 + tw * 0.2) * wlen * 0.3) | 0) % wlen;
+            if (idx < 0) idx += wlen;
+            off += ripAmp * ((wave[idx] - 128) / 128);
+          }
+          if (shAmp) off += shAmp * Math.sin(this.X[i] * 53 + this.Y[i] * 47 + tw * 30);
+          sxc += perpx * off; syc += perpy * off;
+        }
+        // streak: a tail behind the head along screen motion, length scaled by elong(K):
+        // ~a dot at the DUST pole, a long filament at the LINE pole.
+        let mvx = sxc - pxs, mvy = syc - pys;
+        let mag = Math.sqrt(mvx * mvx + mvy * mvy);
+        if (mag < 1e-3) { mvx = dirx; mvy = -diry; mag = Math.sqrt(mvx * mvx + mvy * mvy) || 1; }
+        const L = streakMax * elong;
+        bx = sxc - (mvx / mag) * L; by = syc - (mvy / mag) * L;
+        // edge falloff: the field fades toward the frame edges -> plume in black space.
+        const ex = (sxc - cx) / R, ey = (syc - cy) / R;
+        const rr = Math.sqrt(ex * ex + ey * ey);
         const fall = rr < 1.0 ? 1 : rr > 1.7 ? 0.14 : 1 - ((rr - 1.0) / 0.7) * 0.86;
-        bv = (0.32 * ambB) * (0.4 + 0.6 * d) * fall;
+        // beat-flash brightness boost so the kick reads as BRIGHTER (not just longer).
+        bv = (0.42 * ambB) * (0.4 + 0.6 * d) * fall * lenComp * (1 + 0.8 * flash);
       }
+      this.psx[i] = bx; this.psy[i] = by; this.sx[i] = sxc; this.sy[i] = syc;
       let band = (bv * BANDS) | 0; if (band >= BANDS) band = BANDS - 1; if (band < 0) band = 0;
       this.sband[i] = band; this.sval[i] = 1;
     }

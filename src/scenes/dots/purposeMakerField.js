@@ -32,7 +32,7 @@ export function baseBreath(t) {
 
 // audio: { level, bass, treble, beatHold }  (scalars 0..1; beat folded into beatHold)
 // opts:  { react=1, audioOn=true }
-// Returns { K, speed, elong, bright, advance, scatter, forward, shimmer, ripple }.
+// Returns { K, flash, speed, elong, bright, advance, scatter, forward, shimmer, ripple }.
 export function breathAt(t, audio, opts) {
   const o = opts || {};
   const react = o.react == null ? 1 : o.react;
@@ -42,26 +42,29 @@ export function breathAt(t, audio, opts) {
   const beatHold = clamp01(a.beatHold);
 
   const breath = baseBreath(t);
-  let K;
+  let K, flash = 0;
   if (audioOn) {
-    // Beat punches K toward lines; bass sustains; level adds floor energy. The
-    // baseline still breathes underneath so quiet passages keep moving.
-    const audE = react * (0.55 * beatHold + 0.40 * bass + 0.15 * level);
-    K = clamp01(0.05 + 0.45 * breath + audE);
+    // TRANSIENT-DOMINANT: the kick (beatHold) punches K toward the LINE pole; only
+    // supra-floor bass sustains, so quiet/steady passages fall back to the DUST pole.
+    // tanh soft-knee => K approaches but rarely pins at 1.0, leaving headroom so the
+    // beat SNAP reads as a real comb<->powder change (not "always lines").
+    const audE = react * (0.90 * beatHold + 0.22 * Math.max(0, bass - 0.25) + 0.05 * level);
+    K = Math.tanh(0.10 + 0.45 * breath + audE);
+    flash = beatHold; // crisp per-kick brightness transient (reinforces the line extension)
   } else {
     K = clamp01(0.04 + 0.85 * breath);
   }
 
   const energy = audioOn ? clamp01(0.6 * level + 0.4 * bass) : 0;
   return {
-    K,
+    K, flash,
     speed: 0.55 + 0.85 * K + 0.50 * energy,        // line state & loud -> faster
-    elong: 0.30 + 1.50 * K,                        // streak elongation (line -> long)
+    elong: 0.04 + 1.90 * K * K,                    // streak length: ~dot (dust) .. long (line)
     bright: 0.45 + 0.55 * K + 0.35 * energy,       // line state & loud -> brighter
     advance: K,                                    // directional stretch weight 0..1
     scatter: 1 - 0.85 * K,                         // curl/noise amplitude (dust -> high)
-    forward: 0.035 + 0.11 * K,                     // net forward drift along flow
-    shimmer: audioOn ? treble : 0,                 // hi-freq per-particle jitter (hats)
-    ripple: audioOn ? clamp01(0.5 * level + 0.5 * bass) : 0, // transverse waveform amp
+    forward: 0.02 + 0.10 * K,                      // net forward drift along flow
+    shimmer: audioOn ? treble : 0,                 // hi-freq positional jitter (hats)
+    ripple: audioOn ? clamp01(0.4 * level + 0.6 * bass) : 0, // transverse waveform amp
   };
 }

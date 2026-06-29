@@ -43,6 +43,21 @@ test('audio pushes K toward the LINE regime (structure snaps to the beat)', () =
   assert.ok(beats > 40, 'a kick visibly raises coherence across phases');
 });
 
+test('flash tracks the beat transient and is silent when audio is off', () => {
+  assert.strictEqual(breathAt(1.0, { beatHold: 1 }, { react: 1, audioOn: false }).flash, 0);
+  const kick = breathAt(1.0, { beatHold: 1, bass: 0.8 }, { react: 1 });
+  const between = breathAt(1.0, { beatHold: 0.05, bass: 0.3 }, { react: 1 });
+  assert.ok(kick.flash > between.flash + 0.5, 'flash spikes on the kick, decays between');
+});
+
+test('K stays off the rail on a kick (soft-knee leaves headroom for the snap)', () => {
+  // With a realistic kick at the default react, K must NOT pin at 1.0 (else "always lines").
+  const kick = breathAt(2.0, { level: 0.6, bass: 0.85, beatHold: 1 }, { react: 1 });
+  assert.ok(kick.K > 0.7 && kick.K < 0.99, `kick K in (0.7,0.99): ${kick.K.toFixed(3)}`);
+  const between = breathAt(2.0, { level: 0.35, bass: 0.3, beatHold: 0.08 }, { react: 1 });
+  assert.ok(between.K < kick.K - 0.2, 'clear dust<->line gap between kick and rest');
+});
+
 test('audioOn:false ignores audio entirely (pure baseline breathing)', () => {
   const loud = breathAt(2.0, { level: 1, bass: 1, treble: 1, beatHold: 1 }, { react: 4, audioOn: false });
   const silent = breathAt(2.0, SILENT, { react: 4, audioOn: false });
