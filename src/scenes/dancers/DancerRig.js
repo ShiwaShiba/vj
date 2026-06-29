@@ -114,7 +114,8 @@ export class DancerRig {
     this.sockDown = 0.50;    // hip-socket drop below the iliac crest
     this.pubDrop = 0.72;     // pubic point depth below root
     this.iliacW = 0.95;      // iliac crest width
-    this.hipFlexMax = 2.3;   // forward hip-flexion limit (rad): high enough for a real KNEE-UP (knee climbs toward the chest); the knee coupling tucks the shin so a big raise folds instead of spiking to the head
+    this.hipFlexMax = 1.6;   // forward hip-flexion limit (rad): thigh stops NEAR HORIZONTAL — high amplitude can't fling it past the shoulder into a long straight rod. The knee coupling folds the shin so a raise reads as a bent knee-up, not a spike.
+    this.hipExtMin = -0.85;  // back-extension limit (rad): a tamed arabesque/leap-trail, not a leg streamed straight out behind. Keeps the rear leg from becoming a long straight rod when amplified.
     this._g = {};            // reused groove output
     this._wSign = -1;        // weighted side (pre-groove), with hysteresis
   }
@@ -294,7 +295,7 @@ export class DancerRig {
     // kick; the knee-flex coupling (below) tucks the shin so even a big-amplitude raise folds
     // into a knee-up instead of spiking the foot to the head. Back extension stops at a
     // split-leap arabesque. Clamping here catches every amplification path (amp/jitter/spring).
-    const HIP_FLEX_MAX = this.hipFlexMax, HIP_EXT_MIN = -1.2;
+    const HIP_FLEX_MAX = this.hipFlexMax, HIP_EXT_MIN = this.hipExtMin;
     const clampHip = (h) => (h > HIP_FLEX_MAX ? HIP_FLEX_MAX : h < HIP_EXT_MIN ? HIP_EXT_MIN : h);
     const hipFR = clampHip(L.hipR), hipFL = clampHip(L.hipL);
     const PEL_HIKE = 0.12;   // subtle pelvic tilt with leg lift; kept low so the pelvis does NOT ride up like an extension of the thigh
@@ -317,16 +318,21 @@ export class DancerRig {
     // planted-forward = a turned-out crouch, not a fanned-out leg. At stance=0 the
     // azimuths fall back to the original fixed 0.08 (identical to before).
     const splayR = 0.08 + L.stance, splayL = -0.08 - L.stance;
-    // KNEE articulation. Two fixes for "the knee never bends, the raised leg is a stiff spike":
+    // KNEE articulation. Fixes "the knee never bends, the raised leg is a stiff spike that
+    // reads as one long straight rod from the side" (the legs swing into DEPTH, so a bend that
+    // exists only in the hip-flex plane foreshortens to a straight line at the angles the user
+    // actually watches — 3/4 and side). Three coupled measures:
     // (1) amplitude scaling drives kneeR BELOW its rest 0.2 for near-straight kick poses
-    //     (kneeR 0.08 × amp 1.57 → ~0.01, even negative = hyperextension), locking the leg dead
-    //     straight — clamp to a minimum bend so a knee can never lock/hyperextend.
-    // (2) COUPLE flexion to forward hip-raise: a lifted thigh folds the shin back toward it
-    //     (膝を上げると脛が腿に畳まれる) so a high leg reads as an articulated knee-up, not one rigid
-    //     line. Back-extension (arabesque, hf<0) stays straight, so only forward raises fold.
-    const KNEE_MIN = 0.12, KNEE_MAX = 2.6, KNEE_COUPLE = 0.62, RAISE_KN = 0.5;
+    //     (kneeR 0.08 × amp 1.6 → ~0.01, even negative = hyperextension) — clamp to a minimum
+    //     bend so a knee can never lock/hyperextend.
+    // (2) COUPLE flexion to hip SWING in EITHER direction (|hf|): a thrown thigh — forward
+    //     knee-up OR back attitude — folds the shin toward it (膝を上げると脛が腿に畳まれる), so a
+    //     swung leg always shows an articulated knee from any camera angle instead of a rod.
+    //     Couples from early in the swing (RAISE_KN low) and folds hard (COUPLE high) so the
+    //     bend survives projection. The support leg (hf≈0) gets no fold and stays straight.
+    const KNEE_MIN = 0.12, KNEE_MAX = 2.6, KNEE_COUPLE = 0.95, RAISE_KN = 0.25;
     const kneeFlex = (kn, hf) => {
-      const v = kn + Math.max(0, hf - RAISE_KN) * KNEE_COUPLE;
+      const v = kn + Math.max(0, Math.abs(hf) - RAISE_KN) * KNEE_COUPLE;
       return v < KNEE_MIN ? KNEE_MIN : v > KNEE_MAX ? KNEE_MAX : v;
     };
     const kneeFR = kneeFlex(L.kneeR, hipFR), kneeFL = kneeFlex(L.kneeL, hipFL);
