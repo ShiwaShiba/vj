@@ -14,6 +14,12 @@ const MAXN = 44000;
 const SIMX = 1.6, SIMY = 1.2;   // sim half-extent (viewport shows ±1.0) -> off-frame bleed
 const TILT = 0.06;              // tiny fixed tilt for life (hands stay readable)
 const BANDS = 6;
+// Hand placement. The fixtures are cropped hand-dominant (~1.78 aspect); spanX ≈ aspect*spanY
+// keeps the mapping UNDISTORTED so the long fingers render long (not squished stubby). Single
+// hand: fingertips reach centre, the wrist/stub runs off toward its entry edge. Both: scaled
+// down so two hands fit, fingertips meeting at centre with a small gap + vertical offset.
+const SPANX = 1.64, SPANY = 0.92, OFFA = -0.30, OFFB = -1.34;
+const BSPANX = 0.95, BSPANY = 0.53, BOFFA = -0.16, BOFFB = -0.786, BDY = 0.10;
 
 export class PurposeMaker extends Scene {
   constructor() {
@@ -22,7 +28,7 @@ export class PurposeMaker extends Scene {
     this.modes = [{ name: 'Cycle' }, { name: 'Right' }, { name: 'Left' }, { name: 'Both' }];
     this.modeGroups = [{ key: 'audio', label: 'Audio', options: ['OFF', 'ON'], index: 1 }];
     this.defineParam('count', 42000, 10000, MAXN, 1000, 'Particles');
-    this.defineParam('recruit', 0.50, 0.3, 0.9, 0.05, 'Recruit');
+    this.defineParam('recruit', 0.45, 0.3, 0.9, 0.05, 'Recruit');
     this.defineParam('flow', 0.62, 0.1, 1.5, 0.05, 'Flow Speed');
     this.defineParam('scale', 1.6, 0.6, 3.2, 0.1, 'Field Scale');
     this.defineParam('cohesion', 1.0, 0.3, 2.0, 0.1, 'Cohesion');
@@ -118,8 +124,7 @@ export class PurposeMaker extends Scene {
     const zt = this.t * 0.05;
     const cohK = this.p('cohesion') * 8.0;
     const noise = this.noise;
-    // hand placement (narrower spanX so long fingers aren't stretched sideways).
-    const H = this.hands, SPANX = 1.08, SPANY = 1.0, OFFA = -0.18, OFFB = -0.90;
+    const H = this.hands;
 
     for (let i = 0; i < n; i++) {
       this.PX[i] = this.X[i]; this.PY[i] = this.Y[i]; this.PZ[i] = this.Z[i];
@@ -143,9 +148,15 @@ export class PurposeMaker extends Scene {
         else if (st.station === 'L') { hand = 1; cloud = H.B; }
         else { hand = this._h(i * 3 + 1) < 0.5 ? 0 : 1; cloud = hand === 0 ? H.A : H.B; }
         const idx = i % cloud.n;
-        const tx = (hand === 0 ? OFFA : OFFB) + SPANX * (cloud.u[idx] / 32767);
-        let ty = (0.5 - cloud.v[idx] / 32767) * SPANY;
-        if (st.station === 'Both') ty += hand === 0 ? 0.11 : -0.11;
+        const u = cloud.u[idx] / 32767, vv = cloud.v[idx] / 32767;
+        let tx, ty;
+        if (st.station === 'Both') {
+          tx = (hand === 0 ? BOFFA : BOFFB) + BSPANX * u;
+          ty = (0.5 - vv) * BSPANY + (hand === 0 ? BDY : -BDY);
+        } else {
+          tx = (hand === 0 ? OFFA : OFFB) + SPANX * u;
+          ty = (0.5 - vv) * SPANY;
+        }
         vx += dirx * comb; vy += diry * comb;
         const qv = cc > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
         vx = vx * sp * (1 - cc) + ((tx - x) * cohK + qv) * cc * dt;
@@ -204,7 +215,12 @@ export class PurposeMaker extends Scene {
       if (isHand) {
         // hands = the luminous focal point; drawn prev->cur (crisp grains; convergence on gather).
         bx = pxs; by = pys;
-        bv = 0.86 * (0.5 + 0.5 * d) * (1 + 0.25 * flash);
+        // the wrist/stub DISSOLVES into the field: the hand stays full bright out to ax≈0.55
+        // (fingertips→palm), then tapers so the arm-root fades off — kills the blocky-forearm
+        // read and makes the hand the focal mass. (fingertips sit near centre where Both meet.)
+        const ax = Math.abs(sxc - cx) / R;
+        const armFade = ax < 0.55 ? 1 : Math.max(0.25, 1 - 1.5 * (ax - 0.55));
+        bv = 0.90 * armFade * (0.5 + 0.5 * d) * (1 + 0.25 * flash);
       } else {
         // ambient: positional waveform + treble displacement applied to the head.
         if (ripAmp || shAmp) {
