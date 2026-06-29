@@ -47,6 +47,7 @@ export class Oscilloscope extends Scene {
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
       { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
       { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA'], index: 0 },
+      { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD'], index: 0 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
     this._spin = 0; // accumulated rotation, radians
@@ -100,6 +101,45 @@ export class Oscilloscope extends Scene {
     const raw = idx === 0 ? this.bass : idx === 1 ? this.treble : this.level;
     const b = raw < 0 ? 0 : raw > 1 ? 1 : raw;
     return Math.pow(b, 0.6); // lift small bands so treble still reads
+  }
+
+  // Spread mode for LISSA: 0 raw self-correlation, 1 sphere, 2 toroid, 3 quad.
+  // Auto walks through them irregularly (deterministic — varied order + dwell).
+  _effSpread() {
+    if (this.mg('auto') === 1) {
+      const order = [1, 2, 0, 3, 2, 1, 3, 0];
+      const k = (((Math.floor(this.beats / 11 + 0.6 * Math.sin(this.beats * 0.17))) % order.length) + order.length) % order.length;
+      return order[k];
+    }
+    return this.mg('spread');
+  }
+
+  // Map a waveform window to a 3D point per the spread mode. Modes 1-3 break the
+  // bass diagonal-collapse of raw self-correlation (mode 0) into real volume.
+  // All normalised to ~unit extent so they swap without resizing the figure.
+  _spreadPoint(w, i, lag, s, flip, N, mode) {
+    const a = (w[i] - 128) / 128;
+    if (mode === 1) { // SPHERE — two samples drive sphere angles, third the radius
+      const th = a * Math.PI * 0.95;
+      const ph = ((w[i + lag] - 128) / 128) * Math.PI * 0.95 * flip;
+      const r = s * (0.55 + 0.45 * Math.abs((w[i + 2 * lag] - 128) / 128));
+      return [r * Math.cos(th) * Math.cos(ph), r * Math.sin(th), r * Math.cos(th) * Math.sin(ph)];
+    }
+    if (mode === 2) { // TOROID — index sweeps a ring, samples drive the tube
+      const u = (i / N) * TWO_PI * 3;
+      const rr = 0.30 * s + a * s * 0.34;
+      const v = ((w[i + lag] - 128) / 128) * Math.PI * flip;
+      const ring = 0.36 * s + rr * Math.cos(v);
+      return [ring * Math.cos(u), rr * Math.sin(v), ring * Math.sin(u)];
+    }
+    if (mode === 3) { // QUAD — a large decorrelating lag opens the diagonal to a loop
+      const q = Math.max(1, Math.round(lag * 4)) % N;
+      const b = ((w[(i + q) % N] - 128) / 128) * flip;
+      const c = (w[(i + lag) % N] - 128) / 128;
+      return [a * s, b * s, c * s];
+    }
+    // LISSA — raw self-correlation (three delayed copies)
+    return [a * s, ((w[i + lag] - 128) / 128) * s * flip, ((w[i + 2 * lag] - 128) / 128) * s];
   }
 
   draw(ctx, alpha) {
@@ -237,24 +277,24 @@ export class Oscilloscope extends Scene {
       }
       strokeSegs(pts);
     } else {
-      // LISSA — XY's self-correlation in 3D (three delayed waveform copies),
-      // expanding wide and breathing with the drive band. The CORE is the SAME
-      // figure scaled down to the centre with a tighter lag: a concentrated
-      // nucleus made of the same live waveform, rotation and depth shading — so
-      // core + outer read as ONE unified 3D object, not a separate prop. Being
-      // built from the live waveform, it moves every frame like the outer figure.
-      // Core slider sets the nucleus scale (0 = off).
+      // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
+      // the drive band. The point mapping has 4 Spread modes (Spread group):
+      // LISSA (raw self-correlation), SPHERE, TOROID, QUAD — the latter three
+      // break the bass diagonal-collapse into real 3D volume; Auto walks through
+      // them irregularly. The CORE is the SAME figure+spread scaled down to the
+      // centre with a tighter lag: a concentrated nucleus sharing the live
+      // waveform, rotation, depth and spread — so core + outer read as ONE
+      // object. Core slider sets the nucleus scale (0 = off).
       const reach = gain * (1.15 + this.p('drive') * band * 1.1); // wide, audio-breathing extent
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
-      // Same self-correlation figure at any scale/lag — core and outer share it.
+      const spread = this._effSpread();
+      // Same figure+spread at any scale/lag — core and outer share it.
       const drawFig = (scale, lg, intensity) => {
         const pts = [];
         for (let i = 0; i + 2 * lg < N; i += step) {
-          const ux = ((wave[i] - 128) / 128) * scale;
-          const uy = ((wave[i + lg] - 128) / 128) * scale * flip;
-          const uz = ((wave[i + 2 * lg] - 128) / 128) * scale;
-          pts.push(project(ux, uy, uz));
+          const p = this._spreadPoint(wave, i, lg, scale, flip, N, spread);
+          pts.push(project(p[0], p[1], p[2]));
         }
         strokeSegs(pts, intensity);
       };
