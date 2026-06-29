@@ -1,5 +1,7 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { PurposeMaker } from '../../src/scenes/dots/PurposeMaker.js';
 
 // Minimal mock 2D context: records nothing, just satisfies the calls draw() makes.
@@ -35,9 +37,12 @@ test('draw runs against a mock context without throwing', () => {
   assert.doesNotThrow(() => s.draw(mockCtx(), 1));
 });
 
-import { createScenes } from '../../src/scenes/registry.js';
-
-test('PurposeMaker is registered in the scene list', () => {
-  const ids = createScenes().map((s) => s.id);
-  assert.ok(ids.includes('purposeMaker'), 'registry includes purposeMaker');
+// registry.js statically imports CityScene, which transitively `import`s 'three'
+// (resolved in-browser by index.html's importmap, but unresolvable under `node --test`).
+// Per the repo convention (cf. tests/cityproto/cityCore.test.mjs), assert on the source
+// text instead of importing the module, so the check is honest on a fresh clone.
+test('PurposeMaker is imported and registered in registry.js', () => {
+  const src = readFileSync(fileURLToPath(new URL('../../src/scenes/registry.js', import.meta.url)), 'utf8');
+  assert.match(src, /import\s*\{\s*PurposeMaker\s*\}\s*from\s*['"]\.\/dots\/PurposeMaker\.js['"]/);
+  assert.match(src, /new\s+PurposeMaker\(\)/);
 });
