@@ -17,9 +17,14 @@ const TILT = 0.40;                 // X軸の基準チルト(rad) — 回転0で
 const ROT2 = 0.618;                // 第2軸(X)の速度比 — 黄金比で非反復 tumble
 const BANDS = 8;                   // 明度量子化 — 1バンド=1 stroke
 const MAXN = 32000;                // Particles スライダー上限ぶん事前確保
-const CONV_PULL = 0.88;            // 収束の引き込み強さ (1=完全に中心へ)
+const CONV_PULL = 0.92;            // 画面内(x,y)の引き込み強さ (1=完全に中心へ)
+const CONV_PULL_Z = 0.55;          // 奥行き(z)は緩く引く → 紡錘状の3D核
+const CONV_SWIRL = 2.4;            // 収束時のスワール量(rad) — 内側ほど速い渦
 const PULSE_AMT = 0.18;            // キック鼓動の最大膨張率
 const RESEED_JUMP = 0.25;          // ワールド空間で再投入(瞬間移動)とみなす二乗距離
+
+// smootherstep (Perlin) — 等速をなくす滑らかな S 字 0→1。
+function smoother(t) { return t <= 0 ? 0 : t >= 1 ? 1 : t * t * t * (t * (t * 6 - 15) + 10); }
 
 export class FlowField extends Scene {
   constructor() {
@@ -99,7 +104,14 @@ export class FlowField extends Scene {
       const bf = clock.beats + (clock.beatPhase || 0);
       const ev = bf * 0.045 + 0.5 * Math.sin(bf * 0.041) + 0.3 * Math.sin(bf * 0.017 + 1.7);
       const ph = ev - Math.floor(ev);
-      this._conv = ph > 0.80 ? Math.sin(((ph - 0.80) / 0.20) * Math.PI) : 0; // 周期の20%で 0→1→0
+      // 周期の後半30%が収束イベント。前2/3=ゆっくり集まり加速、後1/3=滑らかに解放。
+      const W0 = 0.70, COLL = 0.66;
+      if (ph > W0) {
+        const u = (ph - W0) / (1 - W0);
+        this._conv = u < COLL ? smoother(u / COLL) : 1 - smoother((u - COLL) / (1 - COLL));
+      } else {
+        this._conv = 0;
+      }
     } else {
       this._conv = 0;
     }
@@ -151,10 +163,12 @@ export class FlowField extends Scene {
     // Pulse(鼓動): キック/低音で投影半径が膨張→減衰。
     const pulse = this.mg('pulse') === 1 ? (1 + this.beatHold * PULSE_AMT + this.bass * 0.05) : 1;
     const R = Math.min(W, H) * 0.46 * pulse;
-    // Converge(収束): prev は前フレーム値、cur は今フレーム値で縮める →
-    // 内側へ流れる streak＋密な核、解放時は外への爆発。
-    const aScale = 1 - this._convPrev * CONV_PULL;
-    const bScale = 1 - this._conv * CONV_PULL;
+    // Converge(収束): 一律スケールでなく、中心へ寄せつつ内側ほど速いスワール(渦)で
+    // 巻き込む真の3D funnel。奥行きは緩く引いて紡錘核に。prev/cur で曲がった spiral streak。
+    const cvP = this._convPrev, cvC = this._conv;
+    const converging = cvP > 0.0002 || cvC > 0.0002;
+    const sxyP = 1 - cvP * CONV_PULL, szP = 1 - cvP * CONV_PULL_Z, swP = cvP * CONV_SWIRL;
+    const sxyC = 1 - cvC * CONV_PULL, szC = 1 - cvC * CONV_PULL_Z, swC = cvC * CONV_SWIRL;
     // 二軸回転: Y軸=_spin, X軸=TILT+_spin2 (黄金比で非反復に tumble)。
     const ay1 = this._spin, cY = Math.cos(ay1), sY = Math.sin(ay1);
     const ax1 = TILT + this._spin2, cX = Math.cos(ax1), sX = Math.sin(ax1);
@@ -164,11 +178,18 @@ export class FlowField extends Scene {
       // ワールド空間の移動量で再投入(瞬間移動)を判定 — 収束 streak は除外しない。
       const wdx = this.X[i] - this.PX[i], wdy = this.Y[i] - this.PY[i], wdz = this.Z[i] - this.PZ[i];
       if (wdx * wdx + wdy * wdy + wdz * wdz > RESEED_JUMP) { this.svalid[i] = 0; continue; }
-      const ax = this.PX[i] * aScale, ay = this.PY[i] * aScale, az = this.PZ[i] * aScale;
+      let ax = this.PX[i], ay = this.PY[i], az = this.PZ[i];
+      let bx = this.X[i], by = this.Y[i], bz = this.Z[i];
+      if (converging) {
+        // 内側ほど速い渦＋非一様な引き込み (XZ面でスワール, z は緩く)。
+        const rA = Math.sqrt(ax * ax + az * az) + 0.15, anA = swP / rA, cA = Math.cos(anA), sA = Math.sin(anA);
+        ax = (ax * cA + az * sA) * sxyP; const azA = (-this.PX[i] * sA + az * cA) * szP; ay = ay * sxyP; az = azA;
+        const rB = Math.sqrt(bx * bx + bz * bz) + 0.15, anB = swC / rB, cB = Math.cos(anB), sB = Math.sin(anB);
+        const bxN = (bx * cB + bz * sB) * sxyC; const bzN = (-bx * sB + bz * cB) * szC; by = by * sxyC; bx = bxN; bz = bzN;
+      }
       const arx = ax * cY + az * sY, arz = -ax * sY + az * cY;
       const aty = ay * cX - arz * sX;
       const asx = cx + arx * R, asy = cy - aty * R;
-      const bx = this.X[i] * bScale, by = this.Y[i] * bScale, bz = this.Z[i] * bScale;
       const brx = bx * cY + bz * sY, brz = -bx * sY + bz * cY;
       const bty = by * cX - brz * sX, btz = by * sX + brz * cX;
       const bsx = cx + brx * R, bsy = cy - bty * R;
