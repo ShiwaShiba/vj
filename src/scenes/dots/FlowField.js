@@ -17,6 +17,9 @@ const TILT = 0.40;                 // X軸の基準チルト(rad) — 回転0で
 const ROT2 = 0.618;                // 第2軸(X)の速度比 — 黄金比で非反復 tumble
 const BANDS = 8;                   // 明度量子化 — 1バンド=1 stroke
 const MAXN = 32000;                // Particles スライダー上限ぶん事前確保
+const CONV_PULL = 0.88;            // 収束の引き込み強さ (1=完全に中心へ)
+const PULSE_AMT = 0.18;            // キック鼓動の最大膨張率
+const RESEED_JUMP = 0.25;          // ワールド空間で再投入(瞬間移動)とみなす二乗距離
 
 export class FlowField extends Scene {
   constructor() {
@@ -30,6 +33,10 @@ export class FlowField extends Scene {
     this.defineParam('thread', 0.8, 0.4, 2.0, 0.1, 'Thread');        // 線幅 (小=精緻)
     this.defineParam('rotate', 0.16, -0.5, 0.5, 0.02, 'Rotate');     // 体積の回転速度 (0=静止)
     this.defineParam('react', 2.0, 0, 6, 0.5, 'React');              // 音で流速/濃度
+    this.modeGroups = [
+      { key: 'pulse', label: 'Pulse', options: ['OFF', 'ON'], index: 0 },      // キック/低音で鼓動
+      { key: 'converge', label: 'Converge', options: ['OFF', 'ON'], index: 0 }, // 不定期に中心収束
+    ];
     this.noise = new SimplexNoise(7);
     // 3D 粒子状態 (正規化立方体内)。
     this.X = null; this.Y = null; this.Z = null;
@@ -39,7 +46,8 @@ export class FlowField extends Scene {
     this.sax = null; this.say = null; this.sbx = null; this.sby = null;
     this.sband = null; this.svalid = null;
     this.n = 0; this._spin = 0; this._spin2 = 0; this.t = 0;
-    this.level = 0; this.bass = 0; this.treble = 0;
+    this.level = 0; this.bass = 0; this.treble = 0; this.beatHold = 0;
+    this._conv = 0; this._convPrev = 0; // 中心収束エンベロープ (前フレームも保持)
   }
 
   init(ctx, w, h) { super.init(ctx, w, h); this._spawn(); }
@@ -84,6 +92,17 @@ export class FlowField extends Scene {
   update(dt, audio, palette, clock) {
     this.t = clock.time;
     this.level = audio.level; this.bass = audio.bass; this.treble = audio.treble;
+    this.beatHold = audio.beatHold || 0;
+    // 不定期な中心収束: clock.beats 駆動の決定論ベル波 (Math.random 不使用)。
+    this._convPrev = this._conv;
+    if (this.mg('converge') === 1) {
+      const bf = clock.beats + (clock.beatPhase || 0);
+      const ev = bf * 0.045 + 0.5 * Math.sin(bf * 0.041) + 0.3 * Math.sin(bf * 0.017 + 1.7);
+      const ph = ev - Math.floor(ev);
+      this._conv = ph > 0.80 ? Math.sin(((ph - 0.80) / 0.20) * Math.PI) : 0; // 周期の20%で 0→1→0
+    } else {
+      this._conv = 0;
+    }
     const quality = clock.quality || 1;
     const n = Math.min(MAXN, Math.max(2000, Math.round(this.p('count') * quality)));
     this.n = n;
@@ -128,24 +147,31 @@ export class FlowField extends Scene {
     const n = this.n || 0;
     if (!n) return;
     const W = this.w, H = this.h;
-    const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.46;
+    const cx = W / 2, cy = H / 2;
+    // Pulse(鼓動): キック/低音で投影半径が膨張→減衰。
+    const pulse = this.mg('pulse') === 1 ? (1 + this.beatHold * PULSE_AMT + this.bass * 0.05) : 1;
+    const R = Math.min(W, H) * 0.46 * pulse;
+    // Converge(収束): prev は前フレーム値、cur は今フレーム値で縮める →
+    // 内側へ流れる streak＋密な核、解放時は外への爆発。
+    const aScale = 1 - this._convPrev * CONV_PULL;
+    const bScale = 1 - this._conv * CONV_PULL;
     // 二軸回転: Y軸=_spin, X軸=TILT+_spin2 (黄金比で非反復に tumble)。
     const ay1 = this._spin, cY = Math.cos(ay1), sY = Math.sin(ay1);
     const ax1 = TILT + this._spin2, cX = Math.cos(ax1), sX = Math.sin(ax1);
-    const maxSeg = R * R * 0.5; // 投入直後/巻き戻りの長飛びを除外
     const flickT = this.t * 5.0; // フリッカー速度
     // 投影 → 画面座標・統合明度バンド・有効フラグをキャッシュ。
     for (let i = 0; i < n; i++) {
-      const ax = this.PX[i], ay = this.PY[i], az = this.PZ[i];
+      // ワールド空間の移動量で再投入(瞬間移動)を判定 — 収束 streak は除外しない。
+      const wdx = this.X[i] - this.PX[i], wdy = this.Y[i] - this.PY[i], wdz = this.Z[i] - this.PZ[i];
+      if (wdx * wdx + wdy * wdy + wdz * wdz > RESEED_JUMP) { this.svalid[i] = 0; continue; }
+      const ax = this.PX[i] * aScale, ay = this.PY[i] * aScale, az = this.PZ[i] * aScale;
       const arx = ax * cY + az * sY, arz = -ax * sY + az * cY;
       const aty = ay * cX - arz * sX;
       const asx = cx + arx * R, asy = cy - aty * R;
-      const bx = this.X[i], by = this.Y[i], bz = this.Z[i];
+      const bx = this.X[i] * bScale, by = this.Y[i] * bScale, bz = this.Z[i] * bScale;
       const brx = bx * cY + bz * sY, brz = -bx * sY + bz * cY;
       const bty = by * cX - brz * sX, btz = by * sX + brz * cX;
       const bsx = cx + brx * R, bsy = cy - bty * R;
-      const dx = bsx - asx, dy = bsy - asy;
-      if (dx * dx + dy * dy > maxSeg) { this.svalid[i] = 0; continue; }
       this.sax[i] = asx; this.say[i] = asy; this.sbx[i] = bsx; this.sby[i] = bsy;
       // 奥行き (0 奥 .. 1 手前)。
       let d = btz * 0.5 + 0.5; if (d < 0) d = 0; else if (d > 1) d = 1;
@@ -165,7 +191,7 @@ export class FlowField extends Scene {
     const fg = (this.palette && this.palette.fg) || [240, 240, 240];
     const fr = Math.round(fg[0]), fgc = Math.round(fg[1]), fb = Math.round(fg[2]);
     const thread = this.p('thread');
-    const aMul = (1 + this.bass * 0.35) * alpha; // 低音で少し濃く
+    const aMul = (1 + this.bass * 0.35 + this._conv * 0.35) * alpha; // 低音＋収束で濃く
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     // 統合明度バンドごとに 1 stroke — 明るい糸ほど太い (手前/生きてる)。
