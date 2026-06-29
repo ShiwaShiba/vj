@@ -39,7 +39,7 @@ export class Oscilloscope extends Scene {
     this.defineParam('rotate', 0, -0.5, 0.5, 0.02, 'Rotate'); // spin rev/s — XY figure or Sphere self-rotation (centre dead-zone)
     this.defineParam('drive', 0.6, 0, 1.5, 0.05, 'Drive');    // band-driven breathing depth
     this.defineParam('density', 9, 3, 24, 1, 'Density');      // Sphere only: GLOBE ring count / WRAP winding count
-    this.defineParam('core', 0.12, 0, 0.45, 0.01, 'Core');    // LISSA only: central nucleus-sphere radius (0 = off)
+    this.defineParam('core', 0.12, 0, 0.45, 0.01, 'Core');    // LISSA only: central nucleus scale (same figure, tighter lag; 0 = off)
     // Button groups (rendered by ControlPanel; mainly meaningful in XY/Sphere).
     // Spin OFF freezes the figure/sphere instantly regardless of the Rotate slider.
     this.modeGroups = [
@@ -203,46 +203,6 @@ export class Oscilloscope extends Scene {
         ctx.stroke();
       }
     };
-    // Compact wireframe nucleus sphere of the given radius (unit fraction),
-    // drawn at the centre as the LISSA core. It's ALIVE, not a frozen prop: a
-    // steady self-spin independent of the Rotate slider, a breathe that pulses
-    // its size with level (plus a faint idle pulse so it moves even in silence),
-    // and a waveform ripple that shimmers across its surface. Latitude rings +
-    // meridians; depth dimming makes the little ball read as solid. Deterministic
-    // (self-spin/idle pulse from clock time — no Math.random/Date).
-    const coreSphere = (radius, intensity) => {
-      const M = 36, latRings = 4, meridians = 6, P = 26;
-      const cs = this.t * 0.28 * TWO_PI;          // ~0.28 rev/s steady self-spin
-      const cc = Math.cos(cs), sc = Math.sin(cs);
-      const pulse = radius * (1 + 0.45 * this.level + 0.05 * Math.sin(this.t * 1.7)); // breathe
-      // local Y-spin (core's own rotation) then the shared scene projection
-      const spun = (ux, uy, uz) => project(ux * cc + uz * sc, uy, -ux * sc + uz * cc);
-      for (let r = 1; r <= latRings; r++) {
-        const lat = -Math.PI / 2 + Math.PI * (r / (latRings + 1));
-        const cosLat = Math.cos(lat), sinLat = Math.sin(lat);
-        const pts = [];
-        for (let m = 0; m <= M; m++) {
-          const f = m / M, lon = f * TWO_PI;
-          const wi = (Math.floor(f * (N - 1)) + r * 53) % N;
-          const rr = pulse * (1 + ((wave[wi] - 128) / 128) * 0.10); // surface ripple
-          pts.push(spun(cosLat * Math.cos(lon) * rr, sinLat * rr, cosLat * Math.sin(lon) * rr));
-        }
-        strokeSegs(pts, intensity);
-      }
-      for (let k = 0; k < meridians; k++) {
-        const lon = (k / meridians) * TWO_PI;
-        const pts = [];
-        for (let j = 0; j <= P; j++) {
-          const f = j / P, lat = -Math.PI / 2 + Math.PI * f;
-          const cosLat = Math.cos(lat);
-          const wi = (Math.floor(f * (N - 1)) + k * 71) % N;
-          const rr = pulse * (1 + ((wave[wi] - 128) / 128) * 0.10);
-          pts.push(spun(cosLat * Math.cos(lon) * rr, Math.sin(lat) * rr, cosLat * Math.sin(lon) * rr));
-        }
-        strokeSegs(pts, intensity);
-      }
-    };
-
     const form = this.mg('sphere');
     if (form === 0) {
       // GLOBE — stacked latitude rings, each a circular waveform scope.
@@ -277,23 +237,34 @@ export class Oscilloscope extends Scene {
       }
       strokeSegs(pts);
     } else {
-      // LISSA — a small nucleus sphere at the CENTRE is the core (size set by the
-      // Core slider, 0 = off), with XY's self-correlation expanding AROUND it in
-      // 3D (three delayed waveform copies). The effect reaches well past the core
-      // and breathes with the drive band, so its range is wide.
-      const coreR = this.p('core');
-      if (coreR > 0.005) coreSphere(coreR, 0.7);
+      // LISSA — XY's self-correlation in 3D (three delayed waveform copies),
+      // expanding wide and breathing with the drive band. The CORE is the SAME
+      // figure scaled down to the centre with a tighter lag: a concentrated
+      // nucleus made of the same live waveform, rotation and depth shading — so
+      // core + outer read as ONE unified 3D object, not a separate prop. Being
+      // built from the live waveform, it moves every frame like the outer figure.
+      // Core slider sets the nucleus scale (0 = off).
       const reach = gain * (1.15 + this.p('drive') * band * 1.1); // wide, audio-breathing extent
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
-      const pts = [];
-      for (let i = 0; i + 2 * lag < N; i += step) {
-        const ux = ((wave[i] - 128) / 128) * reach;
-        const uy = ((wave[i + lag] - 128) / 128) * reach * flip;
-        const uz = ((wave[i + 2 * lag] - 128) / 128) * reach;
-        pts.push(project(ux, uy, uz));
+      // Same self-correlation figure at any scale/lag — core and outer share it.
+      const drawFig = (scale, lg, intensity) => {
+        const pts = [];
+        for (let i = 0; i + 2 * lg < N; i += step) {
+          const ux = ((wave[i] - 128) / 128) * scale;
+          const uy = ((wave[i + lg] - 128) / 128) * scale * flip;
+          const uz = ((wave[i + 2 * lg] - 128) / 128) * scale;
+          pts.push(project(ux, uy, uz));
+        }
+        strokeSegs(pts, intensity);
+      };
+      const coreR = this.p('core');
+      if (coreR > 0.005) {
+        const coreScale = coreR * (1 + this.p('drive') * band * 0.6); // breathe in sync with outer
+        const coreLag = Math.max(1, Math.round(lag * 0.4)); // tighter knot = a dense heart
+        drawFig(coreScale, coreLag, 0.95);
       }
-      strokeSegs(pts);
+      drawFig(reach, lag, 1);
     }
     ctx.globalAlpha = alpha; // restore for anything drawn after
   }
