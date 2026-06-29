@@ -2,6 +2,7 @@ import { DancersScene } from './dancers/DancersScene.js';
 import { SineGrid } from './dots/SineGrid.js';
 import { FlowField } from './dots/FlowField.js';
 import { ParticleField } from './dots/ParticleField.js';
+import { PurposeMaker } from './dots/PurposeMaker.js';
 import { Tunnel } from './dots/Tunnel.js';
 import { FallingCubes } from './dots/FallingCubes.js';
 import { CityScene } from './city/CityScene.js';
@@ -21,6 +22,7 @@ export function createScenes() {
     new SineGrid(),
     new FlowField(),
     new ParticleField(),
+    new PurposeMaker(),
     new Tunnel(),
     new FallingCubes(),
     new CityScene(),
