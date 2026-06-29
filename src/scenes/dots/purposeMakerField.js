@@ -62,7 +62,9 @@ export function breathAt(t, audio, opts) {
     elong: 0.04 + 1.90 * K * K,                    // streak length: ~dot (dust) .. long (line)
     bright: 0.45 + 0.55 * K + 0.35 * energy,       // line state & loud -> brighter
     advance: K,                                    // directional stretch weight 0..1
-    scatter: 1 - 0.85 * K,                         // curl/noise amplitude (dust -> high)
+    scatter: 0.25 + 0.68 * (1 - K),                // curl amplitude (dust high); floored so the
+                                                   // LINE plume keeps some swirl and doesn't contract
+
     forward: 0.02 + 0.10 * K,                      // net forward drift along flow
     shimmer: audioOn ? treble : 0,                 // hi-freq positional jitter (hats)
     ripple: audioOn ? clamp01(0.4 * level + 0.6 * bass) : 0, // transverse waveform amp

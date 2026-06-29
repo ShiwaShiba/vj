@@ -19,7 +19,9 @@ const BANDS = 6;
 // hand: fingertips reach centre, the wrist/stub runs off toward its entry edge. Both: scaled
 // down so two hands fit, fingertips meeting at centre with a small gap + vertical offset.
 const SPANX = 1.64, SPANY = 0.92, OFFA = -0.30, OFFB = -1.34;
-const BSPANX = 0.95, BSPANY = 0.53, BOFFA = -0.16, BOFFB = -0.786, BDY = 0.10;
+// Both: kept large enough (undistorted) that the long fingers still separate; fingertips meet
+// just off-centre with a small vertical offset so the two hands read distinctly, not as a knot.
+const BSPANX = 1.20, BSPANY = 0.67, BOFFA = -0.224, BOFFB = -0.976, BDY = 0.13;
 
 export class PurposeMaker extends Scene {
   constructor() {
@@ -189,10 +191,11 @@ export class PurposeMaker extends Scene {
     const B = this._B;
     const elong = B ? B.elong : 0.5, flash = B ? B.flash : 0, ambB = B ? B.bright : 0.7;
     const recruit = this.p('recruit');
-    const streakMax = R * 0.052;                    // px length of a fully-extended LINE streak
+    const streakMax = R * 0.075;                    // px length of a fully-extended LINE streak
     // light conservation: a longer streak spreads one particle's light over more pixels, so its
     // per-stroke brightness must fall ~1/length. => DUST = bright compact grains, LINE = faint
-    // long strands (sparse, not a bright bank); the beat-flash is a separate controlled boost.
+    // long strands (sparse, not a bright bank). The beat-flash is ADDITIVE (below) so it is not
+    // swallowed by this division.
     const lenComp = 0.62 / (0.30 + elong);
     const fa = this.turb.flowAngle, dirx = Math.cos(fa), diry = -Math.sin(fa);
     const perpx = -diry, perpy = dirx;
@@ -241,12 +244,15 @@ export class PurposeMaker extends Scene {
         if (mag < 1e-3) { mvx = dirx; mvy = -diry; mag = Math.sqrt(mvx * mvx + mvy * mvy) || 1; }
         const L = streakMax * elong;
         bx = sxc - (mvx / mag) * L; by = syc - (mvy / mag) * L;
-        // edge falloff: the field fades toward the frame edges -> plume in black space.
+        // edge falloff (plume in black space) + a luminous central nucleus the dust sprays from.
         const ex = (sxc - cx) / R, ey = (syc - cy) / R;
         const rr = Math.sqrt(ex * ex + ey * ey);
         const fall = rr < 1.0 ? 1 : rr > 1.7 ? 0.14 : 1 - ((rr - 1.0) / 0.7) * 0.86;
-        // beat-flash brightness boost so the kick reads as BRIGHTER (not just longer).
-        bv = (0.42 * ambB) * (0.4 + 0.6 * d) * fall * lenComp * (1 + 0.8 * flash);
+        const core = 1 + 0.9 * Math.exp(-rr * rr * 1.8);   // bright nucleus -> fainter spray
+        const depth = 0.4 + 0.6 * d;
+        // conserved field light + an ADDITIVE beat flash (outside length-conservation, so the
+        // kick is unmistakably BRIGHTER, not cancelled by the streak-length division).
+        bv = (0.40 * ambB) * depth * fall * core * lenComp + 0.42 * flash * depth * fall;
       }
       this.psx[i] = bx; this.psy[i] = by; this.sx[i] = sxc; this.sy[i] = syc;
       let band = (bv * BANDS) | 0; if (band >= BANDS) band = BANDS - 1; if (band < 0) band = 0;
