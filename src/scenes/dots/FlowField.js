@@ -18,7 +18,7 @@ const ROT2 = 0.618;                // 第2軸(X)の速度比 — 黄金比で非
 const BANDS = 8;                   // 明度量子化 — 1バンド=1 stroke
 const MAXN = 32000;                // Particles スライダー上限ぶん事前確保
 const CONV_PULL = 0.98;            // 画面内(x,y)の引き込み強さ (1=中心2%まで) — ギュッと
-const CONV_PULL_Z = 0.8;           // 奥行き(z)は緩く引く → 紡錘状の3D核
+const CONV_PULL_Z = 0.96;          // 奥行きもほぼ同等に引く → 高密度な球体核
 const CONV_SWIRL = 2.0;            // 収束時のスワール量(rad) — 内側ほど速い渦
 const QUIVER = 0.05;               // 微生物の細動: 微小トレモロ振幅(world)
 const QFREQ = 22.0;                // 細動の速さ(rad/s)
@@ -240,7 +240,7 @@ export class FlowField extends Scene {
     const fg = (this.palette && this.palette.fg) || [240, 240, 240];
     const fr = Math.round(fg[0]), fgc = Math.round(fg[1]), fb = Math.round(fg[2]);
     const thread = this.p('thread');
-    const aMul = (1 + this.bass * 0.35 + this._conv * 0.35) * alpha; // 低音＋収束で濃く
+    const aMul = (1 + this.bass * 0.35 + this._conv * 0.45) * alpha; // 低音＋収束(高密度球)で濃く
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     // 統合明度バンドごとに 1 stroke — 明るい糸ほど太い (手前/生きてる)。
