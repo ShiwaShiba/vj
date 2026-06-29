@@ -35,7 +35,7 @@ const PROP_GFX = {
   neck: 0.068,
   head: 0.058,
   upperArm: 0.205, foreArm: 0.185, hand: 0.10,
-  thigh: 0.27, shin: 0.255, foot: 0.085,
+  thigh: 0.211, shin: 0.199, foot: 0.085,   // leg ≈ 0.78× former (leg≈1.45×torso was a ~9-head fashion figure → too long; numeric trace showed no dynamic stretch, only constant over-length)
   rod: 0.020,
   joint: 0.028,
 };
@@ -286,9 +286,18 @@ export class DancerRig {
     // leg doesn't drop its hip. Lives in the SHARED skeleton so BOTH the pictogram
     // and the graphic articulate the pelvis as two parts. (-y = up.)
     const roll = L.swayX * 0.6;
+    // ANATOMICAL HIP LIMIT: forward flexion stops at ~horizontal thigh (knee no higher
+    // than the hip), back extension at a split-leap arabesque. The pose pipeline scales
+    // the airborne hip targets by poseAmp·style.scale·jitter (up to ~1.57×), which drives
+    // e.g. KICK's hipR 1.42 → ~2.2 = the thigh rotating ABOVE horizontal toward the head
+    // (a dislocated look). Clamp at the consumption point so a big-amplitude leap reads as
+    // a strong kick, not a broken leg — catches every amplification path (amp/jitter/spring).
+    const HIP_FLEX_MAX = 1.45, HIP_EXT_MIN = -1.2;
+    const clampHip = (h) => (h > HIP_FLEX_MAX ? HIP_FLEX_MAX : h < HIP_EXT_MIN ? HIP_EXT_MIN : h);
+    const hipFR = clampHip(L.hipR), hipFL = clampHip(L.hipL);
     const PEL_HIKE = 0.12;   // subtle pelvic tilt with leg lift; kept low so the pelvis does NOT ride up like an extension of the thigh
-    const hikeR = Math.max(0, L.hipR) * PROP.pelvisHalf * PEL_HIKE * H;
-    const hikeL = Math.max(0, L.hipL) * PROP.pelvisHalf * PEL_HIKE * H;
+    const hikeR = Math.max(0, hipFR) * PROP.pelvisHalf * PEL_HIKE * H;
+    const hikeL = Math.max(0, hipFL) * PROP.pelvisHalf * PEL_HIKE * H;
     // ILIAC CRESTS: the wide top corners of the pelvis = its silhouette. FIXED pelvis
     // points (they do NOT follow the thigh) so a lifting leg can't drag the pelvis out of
     // shape; each crest hikes with its own side (pelvic tilt).
@@ -306,12 +315,12 @@ export class DancerRig {
     // planted-forward = a turned-out crouch, not a fanned-out leg. At stance=0 the
     // azimuths fall back to the original fixed 0.08 (identical to before).
     const splayR = 0.08 + L.stance, splayL = -0.08 - L.stance;
-    const knR = A(hipR, splayR, L.hipR, PROP.thigh * H);
-    const anR = A(knR, 0.08 + L.stance * 0.5, L.hipR - L.kneeR, PROP.shin * H);
-    const ftR = A(anR, 0.08, L.hipR - L.kneeR + 0.95, PROP.foot * H);
-    const knL = A(hipL, splayL, L.hipL, PROP.thigh * H);
-    const anL = A(knL, -(0.08 + L.stance * 0.5), L.hipL - L.kneeL, PROP.shin * H);
-    const ftL = A(anL, -0.08, L.hipL - L.kneeL + 0.95, PROP.foot * H);
+    const knR = A(hipR, splayR, hipFR, PROP.thigh * H);
+    const anR = A(knR, 0.08 + L.stance * 0.5, hipFR - L.kneeR, PROP.shin * H);
+    const ftR = A(anR, 0.08, hipFR - L.kneeR + 0.95, PROP.foot * H);
+    const knL = A(hipL, splayL, hipFL, PROP.thigh * H);
+    const anL = A(knL, -(0.08 + L.stance * 0.5), hipFL - L.kneeL, PROP.shin * H);
+    const ftL = A(anL, -0.08, hipFL - L.kneeL + 0.95, PROP.foot * H);
 
     // --- Twist winds up the spine: pelvis (pelYaw) -> chest (shYaw) ---
     const yaw = (p, ang) => { const c = Math.cos(ang), s = Math.sin(ang); return [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c]; };
