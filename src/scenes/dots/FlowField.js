@@ -13,9 +13,9 @@ import { SimplexNoise } from '../../lib/noise.js';
 //     → operator/output 二画面のミラー一致＆リロード再現性 (invariant 順守)
 //
 // Modes: Streams = 静かに回る体積 / Swarm = 速く密に渦巻く。
-const TILT = 0.40;                 // X軸チルト(rad) — 極を中心から外す
-const CT = Math.cos(TILT), ST = Math.sin(TILT);
-const BANDS = 6;                   // 奥行き量子化 — 1バンド=1 stroke
+const TILT = 0.40;                 // X軸の基準チルト(rad) — 回転0でも奥行きを残す
+const ROT2 = 0.618;                // 第2軸(X)の速度比 — 黄金比で非反復 tumble
+const BANDS = 8;                   // 明度量子化 — 1バンド=1 stroke
 const MAXN = 32000;                // Particles スライダー上限ぶん事前確保
 
 export class FlowField extends Scene {
@@ -34,11 +34,11 @@ export class FlowField extends Scene {
     // 3D 粒子状態 (正規化立方体内)。
     this.X = null; this.Y = null; this.Z = null;
     this.PX = null; this.PY = null; this.PZ = null;
-    this.life = null; this.sv = null; this._rc = null;
+    this.life = null; this.L0 = null; this.sv = null; this.lev = null; this._rc = null;
     // 投影キャッシュ (描画用)。
     this.sax = null; this.say = null; this.sbx = null; this.sby = null;
     this.sband = null; this.svalid = null;
-    this.n = 0; this._spin = 0; this.t = 0;
+    this.n = 0; this._spin = 0; this._spin2 = 0; this.t = 0;
     this.level = 0; this.bass = 0; this.treble = 0;
   }
 
@@ -59,14 +59,17 @@ export class FlowField extends Scene {
     this.X[i] = this.PX[i] = this._h(k + 1) * 2 - 1;
     this.Y[i] = this.PY[i] = this._h(k + 2) * 2 - 1;
     this.Z[i] = this.PZ[i] = this._h(k + 3) * 2 - 1;
-    this.life[i] = 0.45 + this._h(k + 4) * 0.95;
-    this.sv[i] = this._h(k + 5);
+    const L = 0.45 + this._h(k + 4) * 0.95;
+    this.life[i] = this.L0[i] = L;      // L0 = 出生時の寿命 (明滅エンベロープの基準)
+    this.sv[i] = this._h(k + 5);        // フリッカー位相
+    this.lev[i] = 0.55 + this._h(k + 6) * 0.45; // 個体ごとの明度差
   }
   _spawn() {
     if (!this.X) {
       this.X = new Float32Array(MAXN); this.Y = new Float32Array(MAXN); this.Z = new Float32Array(MAXN);
       this.PX = new Float32Array(MAXN); this.PY = new Float32Array(MAXN); this.PZ = new Float32Array(MAXN);
-      this.life = new Float32Array(MAXN); this.sv = new Float32Array(MAXN); this._rc = new Uint16Array(MAXN);
+      this.life = new Float32Array(MAXN); this.L0 = new Float32Array(MAXN);
+      this.sv = new Float32Array(MAXN); this.lev = new Float32Array(MAXN); this._rc = new Uint16Array(MAXN);
       this.sax = new Float32Array(MAXN); this.say = new Float32Array(MAXN);
       this.sbx = new Float32Array(MAXN); this.sby = new Float32Array(MAXN);
       this.sband = new Uint8Array(MAXN); this.svalid = new Uint8Array(MAXN);
@@ -74,7 +77,7 @@ export class FlowField extends Scene {
     for (let i = 0; i < MAXN; i++) {
       this._rc[i] = 0; this._reseed(i);
       // 初期の life をばらして再投入のタイミングを散らす (同時消失を防ぐ)。
-      this.life[i] = this._h(Math.imul(i + 7, 0x27d4eb2d) + 9) * 1.4;
+      this.life[i] = this.L0[i] = this._h(Math.imul(i + 7, 0x27d4eb2d) + 9) * 1.4 + 0.05;
     }
   }
 
@@ -91,7 +94,9 @@ export class FlowField extends Scene {
     const baseSp = this.p('speed') * (swarm ? 1.5 : 1);
     const sp = baseSp * (1 + react * 0.25 * (this.level + this.bass)) * dt; // 音で流速
     const oct = this.p('detail');
-    this._spin = this.t * this.p('rotate') * (swarm ? 1.3 : 1);
+    const rot = this.p('rotate') * (swarm ? 1.3 : 1);
+    this._spin = this.t * rot;             // 第1軸 (Y)
+    this._spin2 = this.t * rot * ROT2;     // 第2軸 (X) — 非反復 tumble
     const f3 = f * 3;
     const noise = this.noise;
     for (let i = 0; i < n; i++) {
@@ -124,23 +129,36 @@ export class FlowField extends Scene {
     if (!n) return;
     const W = this.w, H = this.h;
     const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.46;
-    const spin = this._spin, ca = Math.cos(spin), sa = Math.sin(spin);
+    // 二軸回転: Y軸=_spin, X軸=TILT+_spin2 (黄金比で非反復に tumble)。
+    const ay1 = this._spin, cY = Math.cos(ay1), sY = Math.sin(ay1);
+    const ax1 = TILT + this._spin2, cX = Math.cos(ax1), sX = Math.sin(ax1);
     const maxSeg = R * R * 0.5; // 投入直後/巻き戻りの長飛びを除外
-    // 投影 → 画面座標・奥行きバンド・有効フラグをキャッシュ。
+    const flickT = this.t * 5.0; // フリッカー速度
+    // 投影 → 画面座標・統合明度バンド・有効フラグをキャッシュ。
     for (let i = 0; i < n; i++) {
       const ax = this.PX[i], ay = this.PY[i], az = this.PZ[i];
-      const arx = ax * ca + az * sa, arz = -ax * sa + az * ca;
-      const aty = ay * CT - arz * ST;
+      const arx = ax * cY + az * sY, arz = -ax * sY + az * cY;
+      const aty = ay * cX - arz * sX;
       const asx = cx + arx * R, asy = cy - aty * R;
       const bx = this.X[i], by = this.Y[i], bz = this.Z[i];
-      const brx = bx * ca + bz * sa, brz = -bx * sa + bz * ca;
-      const bty = by * CT - brz * ST, btz = by * ST + brz * CT;
+      const brx = bx * cY + bz * sY, brz = -bx * sY + bz * cY;
+      const bty = by * cX - brz * sX, btz = by * sX + brz * cX;
       const bsx = cx + brx * R, bsy = cy - bty * R;
       const dx = bsx - asx, dy = bsy - asy;
       if (dx * dx + dy * dy > maxSeg) { this.svalid[i] = 0; continue; }
       this.sax[i] = asx; this.say[i] = asy; this.sbx[i] = bsx; this.sby[i] = bsy;
-      let d = btz * 0.5 + 0.5; if (d < 0) d = 0; else if (d > 1) d = 1; // 0 奥 .. 1 手前
-      let band = (d * BANDS) | 0; if (band >= BANDS) band = BANDS - 1;
+      // 奥行き (0 奥 .. 1 手前)。
+      let d = btz * 0.5 + 0.5; if (d < 0) d = 0; else if (d > 1) d = 1;
+      const depthF = 0.25 + 0.75 * d; // 奥も僅かに残す
+      // 寿命エンベロープ: 生まれ(淡)→中盤(濃)→死(消) — 奥から来て無くなる質感。
+      let frac = this.L0[i] > 0 ? this.life[i] / this.L0[i] : 0;
+      if (frac < 0) frac = 0; else if (frac > 1) frac = 1;
+      let env = (frac < 0.25 ? frac / 0.25 : 1) * ((1 - frac) < 0.10 ? (1 - frac) / 0.10 : 1);
+      // 個体明度差＋微細フリッカー。
+      const flick = 0.82 + 0.18 * Math.sin(flickT + this.sv[i] * TWO_PI);
+      let bv = depthF * env * this.lev[i] * flick;
+      if (bv < 0) bv = 0; else if (bv > 1) bv = 1;
+      let band = (bv * BANDS) | 0; if (band >= BANDS) band = BANDS - 1;
       this.sband[i] = band; this.svalid[i] = 1;
     }
     // mono インク色 (palette.fg)。
@@ -150,11 +168,11 @@ export class FlowField extends Scene {
     const aMul = (1 + this.bass * 0.35) * alpha; // 低音で少し濃く
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    // 奥行きバンドごとに 1 stroke — 手前ほど太く明るい。
+    // 統合明度バンドごとに 1 stroke — 明るい糸ほど太い (手前/生きてる)。
     for (let b = 0; b < BANDS; b++) {
-      const dc = (b + 0.5) / BANDS;
-      ctx.lineWidth = thread * (0.45 + 1.0 * dc);
-      ctx.strokeStyle = `rgba(${fr},${fgc},${fb},${(0.07 + 0.5 * dc) * aMul})`;
+      const bc = (b + 0.5) / BANDS;
+      ctx.lineWidth = thread * (0.4 + 1.1 * bc);
+      ctx.strokeStyle = `rgba(${fr},${fgc},${fb},${(0.05 + 0.6 * bc) * aMul})`;
       ctx.beginPath();
       for (let i = 0; i < n; i++) {
         if (this.svalid[i] && this.sband[i] === b) {
