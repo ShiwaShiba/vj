@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { deflateSync } from 'node:zlib';
 import { decodePng, toLum } from '../png.mjs';
 import { importanceSample, paperLevel } from '../sample.mjs';
+import { measureTurb, structureTensor, centroidDrift, downsample } from '../turb.mjs';
 
 // Build a minimal 8-bit RGB PNG in-memory (filter 0 per row) so the test needs no fixture file.
 function crc32(buf) {
@@ -80,4 +81,45 @@ test('importanceSample is deterministic for a fixed seed', () => {
   const a = importanceSample({ w, h, lum }, 500, 3);
   const b = importanceSample({ w, h, lum }, 500, 3);
   assert.deepStrictEqual(Array.from(a.u), Array.from(b.u));
+});
+
+function frame(w, h, fn) { const lum = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) lum[y * w + x] = fn(x, y); return { w, h, lum }; }
+
+test('downsample averages into a dim×dim grid', () => {
+  const f = frame(64, 64, () => 128);
+  const g = downsample(f, 8);
+  assert.strictEqual(g.length, 64);
+  for (const v of g) assert.ok(Math.abs(v - 128) < 1e-3);
+});
+
+test('structureTensor reports high coherence for vertical stripes and ~0 for flat', () => {
+  const dim = 32;
+  const stripes = new Float32Array(dim * dim);
+  for (let y = 0; y < dim; y++) for (let x = 0; x < dim; x++) stripes[y * dim + x] = (x % 4 < 2) ? 255 : 0;
+  const st = structureTensor(stripes, dim);
+  assert.ok(st.coherence > 0.5, 'stripes are directional');
+  const flat = new Float32Array(dim * dim).fill(120);
+  assert.ok(structureTensor(flat, dim).coherence < 0.2, 'flat is isotropic');
+});
+
+test('centroidDrift detects rightward motion', () => {
+  const w = 40, h = 40; const frames = [];
+  for (let t = 0; t < 6; t++) frames.push(frame(w, h, (x, y) => {
+    const cx = 8 + t * 4; return Math.exp(-((x - cx) ** 2 + (y - 20) ** 2) / 30) * 255; }));
+  const { angle, streak } = centroidDrift(frames);
+  assert.ok(Math.abs(angle) < 0.4, 'near-horizontal (cos~1)'); // rightward ≈ angle 0
+  assert.ok(streak > 0, 'positive displacement');
+});
+
+test('measureTurb returns a full profile with masked corners and valid ranges', () => {
+  const w = 48, h = 48; const frames = [];
+  for (let t = 0; t < 5; t++) frames.push(frame(w, h, (x, y) =>
+    Math.exp(-((x - 24) ** 2 + (y - 24) ** 2) / 200) * 200));
+  const p = measureTurb(frames, 16);
+  assert.strictEqual(p.density.length, 16 * 16);
+  assert.ok(p.coherence >= 0 && p.coherence <= 1);
+  assert.ok(p.scale > 0 && p.scale < 1);
+  assert.ok(p.mean >= 0 && p.mean <= 1);
+  assert.ok(Number.isFinite(p.flowAngle));
 });
