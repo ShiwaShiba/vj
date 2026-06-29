@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { test } from 'node:test';
 import { deflateSync } from 'node:zlib';
 import { decodePng, toLum } from '../png.mjs';
+import { importanceSample, paperLevel } from '../sample.mjs';
 
 // Build a minimal 8-bit RGB PNG in-memory (filter 0 per row) so the test needs no fixture file.
 function crc32(buf) {
@@ -53,4 +54,30 @@ test('toLum produces luminance 0..255 with expected length', () => {
   const { w, h, lum } = toLum(decodePng(new Uint8Array(png)));
   assert.strictEqual(w, 2); assert.strictEqual(h, 2); assert.strictEqual(lum.length, 4);
   for (const v of lum) assert.ok(Math.abs(v - 255) < 0.5, 'white -> ~255');
+});
+
+test('paperLevel finds the bright paper tone', () => {
+  const lum = new Float32Array(1000).fill(240);
+  for (let i = 0; i < 100; i++) lum[i] = 20; // some dark ink
+  assert.ok(Math.abs(paperLevel(lum) - 240) <= 2);
+});
+
+test('importanceSample puts most points in the dark region', () => {
+  // left half dark (ink), right half paper
+  const w = 100, h = 40; const lum = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) lum[y * w + x] = x < w / 2 ? 30 : 240;
+  const { n, u, v } = importanceSample({ w, h, lum }, 4000, 7);
+  assert.ok(n > 3000, 'collected most of K');
+  let left = 0;
+  for (let i = 0; i < n; i++) if (u[i] < 32767 / 2) left++;
+  assert.ok(left / n > 0.9, 'over 90% of points land in the dark left half');
+  assert.ok(v.length === u.length);
+});
+
+test('importanceSample is deterministic for a fixed seed', () => {
+  const w = 30, h = 30; const lum = new Float32Array(w * h);
+  for (let i = 0; i < lum.length; i++) lum[i] = (i % 7) * 30;
+  const a = importanceSample({ w, h, lum }, 500, 3);
+  const b = importanceSample({ w, h, lum }, 500, 3);
+  assert.deepStrictEqual(Array.from(a.u), Array.from(b.u));
 });
