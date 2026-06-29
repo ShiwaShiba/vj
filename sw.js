@@ -1,6 +1,6 @@
 // Network-first service worker for offline use. Bump CACHE_VERSION on deploy to
 // invalidate. All paths are relative so it works under a GitHub Pages subpath.
-const CACHE_VERSION = 'vj-v34';
+const CACHE_VERSION = 'vj-v35';
 
 const ASSETS = [
   './',
@@ -74,11 +74,14 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  // Network-FIRST: online always serves the latest code, so a normal reload shows new work with
-  // NO manual cache-busting (DevTools/unregister dance gone). Each success refreshes the cache so
-  // the PWA still works offline; only when the network fails do we fall back to cache → index.html.
+  // Network-FIRST with HTTP-cache BYPASS ({cache:'reload'}): GitHub Pages stamps every asset with
+  // `cache-control: max-age=600`, so a plain fetch() can return a <=10-min-stale copy and hide a
+  // fresh deploy even though we're online. 'reload' forces each GET to hit the network, so a single
+  // reload always shows the latest code — no DevTools/unregister dance. Each success still refreshes
+  // the Cache Storage copy, so the PWA works offline; only when the network fails do we fall back to
+  // cache → index.html.
   e.respondWith(
-    fetch(e.request).then((res) => {
+    fetch(e.request, { cache: 'reload' }).then((res) => {
       const copy = res.clone();
       caches.open(CACHE_VERSION).then((c) => c.put(e.request, copy)).catch(() => {});
       return res;
