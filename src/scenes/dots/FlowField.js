@@ -17,8 +17,8 @@ const TILT = 0.40;                 // X軸の基準チルト(rad) — 回転0で
 const ROT2 = 0.618;                // 第2軸(X)の速度比 — 黄金比で非反復 tumble
 const BANDS = 8;                   // 明度量子化 — 1バンド=1 stroke
 const MAXN = 32000;                // Particles スライダー上限ぶん事前確保
-const CONV_PULL = 0.965;           // 画面内(x,y)の引き込み強さ (1=完全に中心へ) — ギュッと
-const CONV_PULL_Z = 0.6;           // 奥行き(z)は緩く引く → 紡錘状の3D核
+const CONV_PULL = 0.98;            // 画面内(x,y)の引き込み強さ (1=中心2%まで) — ギュッと
+const CONV_PULL_Z = 0.8;           // 奥行き(z)は緩く引く → 紡錘状の3D核
 const CONV_SWIRL = 2.0;            // 収束時のスワール量(rad) — 内側ほど速い渦
 const QUIVER = 0.05;               // 微生物の細動: 微小トレモロ振幅(world)
 const QFREQ = 22.0;                // 細動の速さ(rad/s)
@@ -54,7 +54,8 @@ export class FlowField extends Scene {
     this.sband = null; this.svalid = null;
     this.n = 0; this._spin = 0; this._spin2 = 0; this.t = 0;
     this.level = 0; this.bass = 0; this.treble = 0; this.beatHold = 0;
-    this._conv = 0; this._convPrev = 0; // 中心収束エンベロープ (前フレームも保持)
+    this._conv = 0; this._convPrev = 0; // 中心収束エンベロープ xy (前フレームも保持)
+    this._convZ = 0; this._convZPrev = 0; // 奥行き用 (解放時に先行して開く)
   }
 
   init(ctx, w, h) { super.init(ctx, w, h); this._spawn(); }
@@ -100,29 +101,30 @@ export class FlowField extends Scene {
     this.t = clock.time;
     this.level = audio.level; this.bass = audio.bass; this.treble = audio.treble;
     this.beatHold = audio.beatHold || 0;
-    // 不定期な中心収束: clock.beats 駆動の決定論ベル波 (Math.random 不使用)。
-    this._convPrev = this._conv;
+    // 不定期な中心収束: clock.beats 駆動の決定論エンベロープ (Math.random 不使用)。
+    // 収束(中心ほど減速=力溜め) → 数秒キープ → じわっと開花(両端velocity0=継ぎ目なし)。
+    this._convPrev = this._conv; this._convZPrev = this._convZ;
     if (this.mg('converge') === 1) {
       const bf = clock.beats + (clock.beatPhase || 0);
-      const ev = bf * 0.045 + 0.5 * Math.sin(bf * 0.041) + 0.3 * Math.sin(bf * 0.017 + 1.7);
+      const ev = bf * 0.021 + 0.5 * Math.sin(bf * 0.020) + 0.3 * Math.sin(bf * 0.0095 + 1.7);
       const ph = ev - Math.floor(ev);
-      // 周期の後半が収束イベント。収束=中心ほど減速(力が溜まる ease-out)、
-      // 解放=一気に放出して減衰。
-      const W0 = 0.66, COLL = 0.72;
+      const W0 = 0.62, C0 = 0.22, C1 = 0.50; // 収束 / HOLD / 開花 の境界(イベント内比率)
       if (ph > W0) {
         const u = (ph - W0) / (1 - W0);
-        if (u < COLL) {
-          const c = u / COLL;
-          this._conv = 1 - Math.pow(1 - c, 2.6); // 加速→中心手前で強く減速(停滞=力溜め)
+        if (u < C0) {
+          this._conv = this._convZ = smoother(u / C0); // 静かに集まり中心で減速(両端velocity0)
+        } else if (u < C1) {
+          this._conv = this._convZ = 1;                        // 数秒キープ(細動で生きてる)
         } else {
-          const r = (u - COLL) / (1 - COLL);
-          this._conv = Math.pow(1 - r, 1.7);      // 解放: 速く抜けて減衰
+          const r = (u - C1) / (1 - C1);
+          this._conv = 1 - smoother(r);                        // じわっと開花(速度0で戻る)
+          this._convZ = 1 - smoother(r < 0.74 ? r / 0.74 : 1); // 奥行きが先に開く(奥側から)
         }
       } else {
-        this._conv = 0;
+        this._conv = this._convZ = 0;
       }
     } else {
-      this._conv = 0;
+      this._conv = this._convZ = 0;
     }
     const quality = clock.quality || 1;
     const n = Math.min(MAXN, Math.max(2000, Math.round(this.p('count') * quality)));
@@ -175,9 +177,10 @@ export class FlowField extends Scene {
     // Converge(収束): 一律スケールでなく、中心へ寄せつつ内側ほど速いスワール(渦)で
     // 巻き込む真の3D funnel。奥行きは緩く引いて紡錘核に。prev/cur で曲がった spiral streak。
     const cvP = this._convPrev, cvC = this._conv;
+    const cvzP = this._convZPrev, cvzC = this._convZ;
     const converging = cvP > 0.0002 || cvC > 0.0002;
-    const sxyP = 1 - cvP * CONV_PULL, szP = 1 - cvP * CONV_PULL_Z, swP = cvP * CONV_SWIRL;
-    const sxyC = 1 - cvC * CONV_PULL, szC = 1 - cvC * CONV_PULL_Z, swC = cvC * CONV_SWIRL;
+    const sxyP = 1 - cvP * CONV_PULL, szP = 1 - cvzP * CONV_PULL_Z, swP = cvP * CONV_SWIRL;
+    const sxyC = 1 - cvC * CONV_PULL, szC = 1 - cvzC * CONV_PULL_Z, swC = cvC * CONV_SWIRL;
     // 二軸回転: Y軸=_spin, X軸=TILT+_spin2 (黄金比で非反復に tumble)。
     const ay1 = this._spin, cY = Math.cos(ay1), sY = Math.sin(ay1);
     const ax1 = TILT + this._spin2, cX = Math.cos(ax1), sX = Math.sin(ax1);
