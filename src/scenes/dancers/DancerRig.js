@@ -40,6 +40,7 @@ const PROP_GFX = {
   joint: 0.028,
 };
 const SH_DROP_GFX = 0.5;   // なで肩 shoulder-drop factor for graphic (0 = level/pictogram)
+const LEAN_DEPTH = 0.6;    // damping on lean's forward depth-fold (flat trunk can't go fully edge-on)
 const FOCAL = 4.5;
 const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -106,6 +107,13 @@ export class DancerRig {
     this.choreo = new Choreographer(seed);
     this.spine = SPINE;      // spine bend weights (tunable per rig)
     this.elFlex = EL_FLEX;   // elbow hinge fold strength, radians/flex (tunable per rig)
+    // Pelvis / leg-root placement (× pelvisHalf), tunable per rig for visual fitting. Legs
+    // descend from near the pelvis's WIDEST point (greater trochanter) so the outer thigh
+    // continues the hip edge — no "shelf" where the iliac flares wider than the leg attaches.
+    this.sockIn = 0.82;      // hip-socket lateral position = leg root width
+    this.sockDown = 0.50;    // hip-socket drop below the iliac crest
+    this.pubDrop = 0.72;     // pubic point depth below root
+    this.iliacW = 0.95;      // iliac crest width
     this._g = {};            // reused groove output
     this._wSign = -1;        // weighted side (pre-groove), with hysteresis
   }
@@ -190,7 +198,11 @@ export class DancerRig {
     // the chest segment COUNTER-bends (-cTop*) so the torso curls back into an S
     // and a deep fold doesn't face-plant. Neck/head inherit only a FRACTION of the
     // chest bend (anti-crowd) so the head clears the shoulders on a deep contract.
-    const lb = L.lateralBend, ln = L.lean, W = this.spine;
+    // lean folds the spine into DEPTH (+z). The trunk lobes are flat coronal sheets, so a
+    // deep fold rotated toward edge-on (side / 3-4 camera) collapses to a thin sliver — the
+    // "pelvis stretches" artifact. Damp the depth fold so the trunk keeps on-screen width
+    // from those angles while still reading as a forward lean.
+    const lb = L.lateralBend, ln = L.lean * LEAN_DEPTH, W = this.spine;
     const s1 = A(root, Math.PI + cl(lb * W.latW[0]), cl(ln * W.leanW[0]), PROP.waist * H);
     const s2 = A(s1, Math.PI + cl(lb * W.latW[1]), cl(ln * W.leanW[1]), PROP.torsoH * 0.34 * H);
     const s3 = A(s2, Math.PI + cl(lb * W.latW[2]), cl(ln * W.leanW[2]), PROP.torsoH * 0.33 * H);
@@ -199,17 +211,54 @@ export class DancerRig {
     const neckTop = A(chestC, Math.PI + neckLb, neckLn, PROP.neck * H);
     const headC = A(neckTop, Math.PI + neckLb + L.headYaw, neckLn + L.head, PROP.head * H);
 
-    // --- SCAPULA: shoulders lift (shrug) + protract (forward) with the arm ---
-    const liftR = (L.raise * 0.10 + Math.max(0, L.armR) * 0.10) * H;
-    const liftL = (L.raise * 0.10 + Math.max(0, L.armL) * 0.10) * H;
-    // なで肩 (sloping shoulders): the shoulder joints sit BELOW the neck base
-    // (chestC) and slope down-outward, and the arm-raise lift is damped so they
-    // don't square up. chestC stays the silhouette peak (neck emerges between).
+    // --- SCAPULA (scapulohumeral rhythm): the shoulder point (ACROMION) is NOT a
+    // fixed bracket on the chest — it rides an ARC about the sternoclavicular joint
+    // (≈ chestC, the neck base) as the scapula UPWARDLY ROTATES with arm elevation.
+    // Anatomy: total arm elevation is ~1/3 scapular travel + ~2/3 glenohumeral, so
+    // the socket itself climbs up-and-inward by (raise·SCAP_K) while the upper arm
+    // swings only GH_FRAC of `raise` from that TRAVELLING socket (see uR/uL below).
+    // なで肩 lives in the REST acromion (arm down = out + dropped by shDrop); raising
+    // the arm rotates that rest vector up toward the ear — unifying なで肩 (rest) and
+    // the drive (motion) in one structure. armR/L depth PROTRACTS (slides forward).
     const shDrop = PROP.shoulderHalf * shDropK * H;
-    const shR = [chestC[0] + PROP.shoulderHalf * H, chestC[1] + shDrop - liftR * 0.45, chestC[2] + L.armR * 0.10 * H];
-    const shL = [chestC[0] - PROP.shoulderHalf * H, chestC[1] + shDrop - liftL * 0.45, chestC[2] + L.armL * 0.10 * H];
-    const wsR = [s1[0] + PROP.waistHalf * H, s1[1], s1[2]];
-    const wsL = [s1[0] - PROP.waistHalf * H, s1[1], s1[2]];
+    const RAISE0 = 0.22;    // baseline elevation below which the scapula stays neutral (preserves なで肩 idle)
+    const SCAP_K = 0.5;     // scapular upward-rotation gain (rad per unit raise above RAISE0)
+    const GH_FRAC = 0.7;    // glenohumeral share of frontal elevation (the rest is the scapula's)
+    const PROTRACT = 0.12;  // forward slide of the acromion per unit arm depth
+    const acromion = (sg, armV) => {
+      const phi = Math.max(0, L.raise - RAISE0) * SCAP_K;   // scapular upward rotation
+      const cs = Math.cos(phi), sn = Math.sin(phi);
+      const x0 = sg * PROP.shoulderHalf * H, y0 = shDrop;   // rest acromion: out + なで肩 drop
+      // rotate the rest vector up about chestC (sg flips handedness; -y = up)
+      const x = x0 * cs + sg * y0 * sn;
+      const y = -sg * x0 * sn + y0 * cs;
+      return [chestC[0] + x, chestC[1] + y, chestC[2] + armV * PROTRACT * H];
+    };
+    const shR = acromion(1, L.armR);
+    const shL = acromion(-1, L.armL);
+    // WAIST: the trunk pinches into a narrow くびれ that DIVIDES the thorax (above) from
+    // the pelvis (below). Two stacked waist rings a short span apart — an upper RIB ring
+    // and a lower PELVIS ring — let the thorax rotate with the chest twist (ys3) and the
+    // pelvis with the pelvis twist (ys1), so the short waist band between them SHEARS like
+    // a wrung towel on counter-rotation, instead of one fused slab merely skewing. Pinched
+    // narrow so the division — and the twist — reads.
+    // Anterior PELVIC TILT (hip hinge): the pelvis tips forward WITH the lean so the trunk
+    // folds as one piece instead of leaving a stretched gap between a leaned rib cage and a
+    // static pelvis. Applied to every pelvis-anchored point (rotation about root's x-axis),
+    // including the hip sockets — so the legs hinge with the pelvis, as in a real forward bow.
+    const pelTilt = -ln * 0.55;
+    const ctp = Math.cos(pelTilt), stp = Math.sin(pelTilt);
+    const tilt = (q) => [q[0], q[1] * ctp - q[2] * stp, q[1] * stp + q[2] * ctp];
+    const waistHi = [lerp(s1[0], s2[0], 0.30), lerp(s1[1], s2[1], 0.30), lerp(s1[2], s2[2], 0.30)];
+    const rwHalf = PROP.waistHalf * 0.70 * H, wsHalf = PROP.waistHalf * 0.80 * H;
+    const rwR = [waistHi[0] + rwHalf, waistHi[1], waistHi[2]];   // rib (upper) waist — on the spine, LEANS
+    const rwL = [waistHi[0] - rwHalf, waistHi[1], waistHi[2]];
+    // PELVIS waist = TOP of the pelvis girdle, anchored to the PELVIS (no spine lean) so the
+    // pelvis stays a compact rigid mass; it follows the lean only via the pelvic tilt above,
+    // so the short waist-core band between rib and pelvis flexes (= the lumbar) without the
+    // pelvis bones elongating into a long thin spike.
+    const wsR = tilt([wsHalf, -PROP.waist * H, 0]);
+    const wsL = tilt([-wsHalf, -PROP.waist * H, 0]);
 
     // The shoulder sets the upper-arm direction (raise = elevation in the frontal
     // plane, armR = depth toward camera). The ELBOW then folds the forearm forward
@@ -218,8 +267,8 @@ export class DancerRig {
     // continues the curl by a fraction of its cock. Left mirrors right: its upper
     // arm uses -raise, and the cross-product hinge folds it anteriorly all the same;
     // wrL is negated so a symmetric pose breaks both wrists symmetrically.
-    const uR = dir(L.raise, L.armR);
-    const uL = dir(-L.raise, L.armL);
+    const uR = dir(L.raise * GH_FRAC, L.armR);
+    const uL = dir(-L.raise * GH_FRAC, L.armL);
     const elR = vadd(shR, uR, PROP.upperArm * H);
     const elL = vadd(shL, uL, PROP.upperArm * H);
     const faR = foldHinge(uR, Math.max(0, L.elR - EL_STRAIGHT) * this.elFlex);
@@ -237,11 +286,21 @@ export class DancerRig {
     // leg doesn't drop its hip. Lives in the SHARED skeleton so BOTH the pictogram
     // and the graphic articulate the pelvis as two parts. (-y = up.)
     const roll = L.swayX * 0.6;
-    const PEL_HIKE = 0.30;
+    const PEL_HIKE = 0.12;   // subtle pelvic tilt with leg lift; kept low so the pelvis does NOT ride up like an extension of the thigh
     const hikeR = Math.max(0, L.hipR) * PROP.pelvisHalf * PEL_HIKE * H;
     const hikeL = Math.max(0, L.hipL) * PROP.pelvisHalf * PEL_HIKE * H;
-    const hipR = [PROP.pelvisHalf * H, roll * H - hikeR, 0];
-    const hipL = [-PROP.pelvisHalf * H, -roll * H - hikeL, 0];
+    // ILIAC CRESTS: the wide top corners of the pelvis = its silhouette. FIXED pelvis
+    // points (they do NOT follow the thigh) so a lifting leg can't drag the pelvis out of
+    // shape; each crest hikes with its own side (pelvic tilt).
+    const iliR = tilt([PROP.pelvisHalf * this.iliacW * H, roll * H - hikeR, 0]);
+    const iliL = tilt([-PROP.pelvisHalf * this.iliacW * H, -roll * H - hikeL, 0]);
+    // HIP SOCKETS (acetabula) = the true LEG ROOT: set LOWER and more MEDIAL than the
+    // iliac crest (≈ a femoral-head spacing, near pubic level), where the femur hangs. A
+    // too-high, too-wide root (socket == crest) is what splayed the leg root and broke the
+    // pelvis when the thigh swung up; dropping/narrowing the socket fixes both.
+    const sockDown = PROP.pelvisHalf * this.sockDown * H;
+    const hipR = tilt([PROP.pelvisHalf * this.sockIn * H, roll * H - hikeR + sockDown, 0]);
+    const hipL = tilt([-PROP.pelvisHalf * this.sockIn * H, -roll * H - hikeL + sockDown, 0]);
     // `stance` opens the thighs outward (plié / second position); the splay decays
     // down the chain so the shin returns toward vertical and the foot stays
     // planted-forward = a turned-out crouch, not a fanned-out leg. At stance=0 the
@@ -276,7 +335,9 @@ export class DancerRig {
 
     const Proot = pr(root);
     const Ps1 = P(s1, ys1), Ps2 = P(s2, ys2), Ps3 = P(s3, ys3), PchestC = P(chestC, yU), PneckTop = P(neckTop, yU), PheadC = P(headC, yU);
-    const PshR = P(shR, yU), PshL = P(shL, yU), PwsR = P(wsR, ys1), PwsL = P(wsL, ys1);
+    const PshR = P(shR, yU), PshL = P(shL, yU);
+    const PwsR = P(wsR, yLp), PwsL = P(wsL, yLp);   // pelvis waist — twists with the pelvis (pelYaw)
+    const PrwR = P(rwR, ys3), PrwL = P(rwL, ys3);   // rib waist (chest twist)
     const PelR = P(elR, yU), PwrR = P(wrR, yU), PhaR = P(haR, yU);
     const PelL = P(elL, yU), PwrL = P(wrL, yU), PhaL = P(haL, yU);
     // TENSEGRITY ANCHOR: feet RESIST the pelvis twist so a contrapposto winds up as
@@ -293,8 +354,9 @@ export class DancerRig {
     // (the pubic symphysis where the two pelvic bones meet) — only a soft groin
     // notch, deliberately NOT a deep downward spike (which read as a sacral triangle).
     // The graphic pelvis is built as two iliac halves meeting here (see _renderBrush).
-    const pub = [0, PROP.pelvisHalf * 0.3 * H, 0];
+    const pub = tilt([0, PROP.pelvisHalf * this.pubDrop * H, 0]);
     const Ppub = P(pub, yLp);
+    const PiliR = P(iliR, yLp), PiliL = P(iliL, yLp);   // iliac crests (pelvis silhouette)
     const PknR = P(knR, kneeYaw), PanR = P(anR, ankYaw), PftR = P(ftR, turnYaw);
     const PknL = P(knL, kneeYaw), PanL = P(anL, ankYaw), PftL = P(ftL, turnYaw);
 
@@ -312,9 +374,9 @@ export class DancerRig {
     return {
       H, hx, hy,
       Proot, Ps1, Ps2, Ps3, PchestC, PneckTop, PheadC,
-      PshR, PshL, PwsR, PwsL,
+      PshR, PshL, PwsR, PwsL, PrwR, PrwL,
       PelR, PwrR, PhaR, PelL, PwrL, PhaL,
-      PhipR, PhipL, Ppub, PknR, PanR, PftR, PknL, PanL, PftL,
+      PhipR, PhipL, PiliR, PiliL, Ppub, PknR, PanR, PftR, PknL, PanL, PftL,
     };
   }
 
@@ -322,8 +384,8 @@ export class DancerRig {
     const H = sk.H;
     const {
       Proot, Ps1, Ps2, Ps3, PchestC, PneckTop, PheadC,
-      PshR, PshL, PwsR, PwsL, PelR, PwrR, PhaR, PelL, PwrL, PhaL,
-      PhipR, PhipL, Ppub, PknR, PanR, PftR, PknL, PanL, PftL, hx, hy,
+      PshR, PshL, PwsR, PwsL, PrwR, PrwL, PelR, PwrR, PhaR, PelL, PwrL, PhaL,
+      PhipR, PhipL, PiliR, PiliL, Ppub, PknR, PanR, PftR, PknL, PanL, PftL, hx, hy,
     } = sk;
     ctx.save();
     ctx.translate(hx, hy);
@@ -342,7 +404,15 @@ export class DancerRig {
     // inverted-V girdle), and each socket HIKES with its own thigh (skeleton level)
     // so the two halves tilt independently — the same two-bone pelvis the graphic
     // uses, expressed in rods.
-    this._rod(ctx, PhipR, Ppub, rod * 1.5); this._rod(ctx, PhipL, Ppub, rod * 1.5);
+    // Pelvis as ONE compact solid girdle (waist → iliac crest → socket → pub), FILLED —
+    // a single clean mass instead of a web of crossing rods. The legs hang from the sockets
+    // (drawn above); the socket joints redraw on top so the leg root still reads.
+    ctx.beginPath();
+    ctx.moveTo(PwsL[0], PwsL[1]); ctx.lineTo(PwsR[0], PwsR[1]);
+    ctx.lineTo(PiliR[0], PiliR[1]); ctx.lineTo(PhipR[0], PhipR[1]);
+    ctx.lineTo(Ppub[0], Ppub[1]);
+    ctx.lineTo(PhipL[0], PhipL[1]); ctx.lineTo(PiliL[0], PiliL[1]);
+    ctx.closePath(); ctx.fill();
     // Spine chain (root -> s1 -> s2 -> s3 -> chest), curved & twisting.
     this._rod(ctx, Proot, Ps1, rod); this._rod(ctx, Ps1, Ps2, rod);
     this._rod(ctx, Ps2, Ps3, rod); this._rod(ctx, Ps3, PchestC, rod);
@@ -353,14 +423,20 @@ export class DancerRig {
     this._rod(ctx, PwrR, PhaR, rod * 1.15); this._rod(ctx, PwrL, PhaL, rod * 1.15);
     this._rod(ctx, PchestC, PneckTop, rod);
 
-    // Torso trapezoid (shoulders -> waist).
+    // Trunk as two masses: THORAX trapezoid (shoulders -> narrow rib waist, chest twist)
+    // and a short WAIST-CORE band down to the pelvis waist (pelvis twist) that shears on
+    // counter-rotation. The pelvis lobe is the inverted-V girdle below (drawn with the legs).
     ctx.lineWidth = rod;
     ctx.beginPath();
     ctx.moveTo(PshL[0], PshL[1]); ctx.lineTo(PshR[0], PshR[1]);
+    ctx.lineTo(PrwR[0], PrwR[1]); ctx.lineTo(PrwL[0], PrwL[1]);
+    ctx.closePath(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(PrwL[0], PrwL[1]); ctx.lineTo(PrwR[0], PrwR[1]);
     ctx.lineTo(PwsR[0], PwsR[1]); ctx.lineTo(PwsL[0], PwsL[1]);
     ctx.closePath(); ctx.stroke();
 
-    for (const j of [PshR, PshL, PelR, PelL, PwrR, PwrL, PhipR, PhipL, Ppub, PknR, PknL, PanR, PanL, Ps1, Ps2, Ps3, PneckTop]) this._joint(ctx, j, jr);
+    for (const j of [PshR, PshL, PelR, PelL, PwrR, PwrL, PhipR, PhipL, PknR, PknL, PanR, PanL, Ps1, Ps2, Ps3, PneckTop]) this._joint(ctx, j, jr);
     this._joint(ctx, PhaR, jr * 0.9); this._joint(ctx, PhaL, jr * 0.9);
 
     ctx.beginPath();
@@ -411,19 +487,24 @@ export class DancerRig {
     blob(sk.PanR, R.an); blob(sk.PanL, R.an);
     blob(sk.PwrR, R.wr); blob(sk.PwrL, R.wr);
     blob(sk.PshR, R.ua); blob(sk.PshL, R.ua); blob(sk.PhipR, R.th); blob(sk.PhipL, R.th);
-    // Slim torso (ribs → waist) whose top PEAKS at the neck base (なで肩 slope) and
-    // whose bottom comes to the shallow pubic point — NO deep sacral spike.
+    // TRUNK as TWO masses divided by a narrow waist. THORAX lobe: top PEAKS at the neck
+    // base (なで肩 slope) and tapers to the narrow rib waist (PrwR/PrwL, which carry the
+    // CHEST twist). A short WAIST-CORE band joins the rib waist to the pelvis waist
+    // (PwsR/PwsL, which carry the PELVIS twist); on counter-rotation the two rings rotate
+    // oppositely and the band SHEARS into a parallelogram = the body's wring made visible.
+    // PELVIS lobe: the pelvis waist flares to the two iliac halves and down to the shallow
+    // pubic point (the two-bone pelvis preserved) — NO deep sacral spike.
     p.moveTo(sk.PshL[0], sk.PshL[1]); p.lineTo(sk.PchestC[0], sk.PchestC[1]); p.lineTo(sk.PshR[0], sk.PshR[1]);
-    p.lineTo(sk.PwsR[0], sk.PwsR[1]); p.lineTo(sk.Ppub[0], sk.Ppub[1]); p.lineTo(sk.PwsL[0], sk.PwsL[1]); p.closePath();
-    // The pelvis is TWO bones: draw it as two iliac blades, each from the waist out
-    // to its (hiking) hip socket and in to the pubic center. The socket itself hikes
-    // with the thigh at the skeleton level, so a lifted leg carries its half of the
-    // pelvis; a small extra lerp toward the knee just feathers the blade smoothly
-    // into the thigh mass. The two halves articulate independently = suppleness.
-    const L2 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t)];
-    const ilR = L2(sk.PhipR, sk.PknR, 0.08), ilL = L2(sk.PhipL, sk.PknL, 0.08);
-    p.moveTo(sk.PwsR[0], sk.PwsR[1]); p.lineTo(ilR[0], ilR[1]); p.lineTo(sk.Ppub[0], sk.Ppub[1]); p.closePath();
-    p.moveTo(sk.PwsL[0], sk.PwsL[1]); p.lineTo(ilL[0], ilL[1]); p.lineTo(sk.Ppub[0], sk.Ppub[1]); p.closePath();
+    p.lineTo(sk.PrwR[0], sk.PrwR[1]); p.lineTo(sk.PrwL[0], sk.PrwL[1]); p.closePath();
+    p.moveTo(sk.PrwL[0], sk.PrwL[1]); p.lineTo(sk.PrwR[0], sk.PrwR[1]);
+    p.lineTo(sk.PwsR[0], sk.PwsR[1]); p.lineTo(sk.PwsL[0], sk.PwsL[1]); p.closePath();
+    // pelvis waist → out to each iliac CREST (wide, fixed) → in/down to the hip SOCKET
+    // (leg root) → pubic center. The crest holds the silhouette; the socket is where the
+    // thigh hangs, so a raised leg swings from the socket without dragging the crest.
+    p.moveTo(sk.PwsL[0], sk.PwsL[1]); p.lineTo(sk.PwsR[0], sk.PwsR[1]);
+    p.lineTo(sk.PiliR[0], sk.PiliR[1]); p.lineTo(sk.PhipR[0], sk.PhipR[1]);
+    p.lineTo(sk.Ppub[0], sk.Ppub[1]);
+    p.lineTo(sk.PhipL[0], sk.PhipL[1]); p.lineTo(sk.PiliL[0], sk.PiliL[1]); p.closePath();
     // Small egg-shaped head: a slim ellipse whose long axis follows the neck
     // (taller than wide, tilts with the head) — not a perfect circle/sphere.
     const hr = PROP_GFX.head * H * sk.PheadC[2];
