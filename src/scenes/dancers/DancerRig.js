@@ -16,8 +16,8 @@ const PROP = {
   torsoH: 0.26,      // split across two spine segments
   shoulderHalf: 0.115,
   waistHalf: 0.06,
-  neck: 0.10,
-  head: 0.072,
+  neck: 0.082,
+  head: 0.061,
   upperArm: 0.16, foreArm: 0.14, hand: 0.085,
   thigh: 0.21, shin: 0.19, foot: 0.07,
   rod: 0.020,
@@ -425,16 +425,17 @@ export class DancerRig {
 
     // Trunk as two masses: THORAX trapezoid (shoulders -> narrow rib waist, chest twist)
     // and a short WAIST-CORE band down to the pelvis waist (pelvis twist) that shears on
-    // counter-rotation. The pelvis lobe is the inverted-V girdle below (drawn with the legs).
-    ctx.lineWidth = rod;
+    // counter-rotation. FILLED as a solid mass (matching the pelvis girdle) so the trunk
+    // reads as one clean body, not an outlined box. The pelvis lobe is the inverted-V
+    // girdle below (drawn with the legs).
     ctx.beginPath();
     ctx.moveTo(PshL[0], PshL[1]); ctx.lineTo(PshR[0], PshR[1]);
     ctx.lineTo(PrwR[0], PrwR[1]); ctx.lineTo(PrwL[0], PrwL[1]);
-    ctx.closePath(); ctx.stroke();
+    ctx.closePath(); ctx.fill();
     ctx.beginPath();
     ctx.moveTo(PrwL[0], PrwL[1]); ctx.lineTo(PrwR[0], PrwR[1]);
     ctx.lineTo(PwsR[0], PwsR[1]); ctx.lineTo(PwsL[0], PwsL[1]);
-    ctx.closePath(); ctx.stroke();
+    ctx.closePath(); ctx.fill();
 
     for (const j of [PshR, PshL, PelR, PelL, PwrR, PwrL, PhipR, PhipL, PknR, PknL, PanR, PanL, Ps1, Ps2, Ps3, PneckTop]) this._joint(ctx, j, jr);
     this._joint(ctx, PhaR, jr * 0.9); this._joint(ctx, PhaL, jr * 0.9);
