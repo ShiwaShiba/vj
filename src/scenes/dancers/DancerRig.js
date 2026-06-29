@@ -114,6 +114,7 @@ export class DancerRig {
     this.sockDown = 0.50;    // hip-socket drop below the iliac crest
     this.pubDrop = 0.72;     // pubic point depth below root
     this.iliacW = 0.95;      // iliac crest width
+    this.hipFlexMax = 2.3;   // forward hip-flexion limit (rad): high enough for a real KNEE-UP (knee climbs toward the chest); the knee coupling tucks the shin so a big raise folds instead of spiking to the head
     this._g = {};            // reused groove output
     this._wSign = -1;        // weighted side (pre-groove), with hysteresis
   }
@@ -286,13 +287,14 @@ export class DancerRig {
     // leg doesn't drop its hip. Lives in the SHARED skeleton so BOTH the pictogram
     // and the graphic articulate the pelvis as two parts. (-y = up.)
     const roll = L.swayX * 0.6;
-    // ANATOMICAL HIP LIMIT: forward flexion stops at ~horizontal thigh (knee no higher
-    // than the hip), back extension at a split-leap arabesque. The pose pipeline scales
-    // the airborne hip targets by poseAmp·style.scale·jitter (up to ~1.57×), which drives
-    // e.g. KICK's hipR 1.42 → ~2.2 = the thigh rotating ABOVE horizontal toward the head
-    // (a dislocated look). Clamp at the consumption point so a big-amplitude leap reads as
-    // a strong kick, not a broken leg — catches every amplification path (amp/jitter/spring).
-    const HIP_FLEX_MAX = 1.45, HIP_EXT_MIN = -1.2;
+    // ANATOMICAL HIP LIMIT. The hip SOCKET stays anchored at the pelvis (computed below from
+    // root, not from the thigh); only the femur rotates about it, so a knee-up raises the KNEE
+    // while the hip stays low — never the leg-root riding up to the chest. The forward limit is
+    // set high enough for a real KNEE-UP (knee climbing toward the chest), not just a horizontal
+    // kick; the knee-flex coupling (below) tucks the shin so even a big-amplitude raise folds
+    // into a knee-up instead of spiking the foot to the head. Back extension stops at a
+    // split-leap arabesque. Clamping here catches every amplification path (amp/jitter/spring).
+    const HIP_FLEX_MAX = this.hipFlexMax, HIP_EXT_MIN = -1.2;
     const clampHip = (h) => (h > HIP_FLEX_MAX ? HIP_FLEX_MAX : h < HIP_EXT_MIN ? HIP_EXT_MIN : h);
     const hipFR = clampHip(L.hipR), hipFL = clampHip(L.hipL);
     const PEL_HIKE = 0.12;   // subtle pelvic tilt with leg lift; kept low so the pelvis does NOT ride up like an extension of the thigh
