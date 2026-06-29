@@ -230,9 +230,18 @@ export class DancerRig {
     const haL = vadd(wrL, foldHinge(faL, -L.wrL * WR_FOLD), PROP.hand * H);
 
     // --- PELVIS + LEGS: pelvis rolls with weight; thighs swing from the hip ---
+    // TWO-PART PELVIS: the pelvis is two iliac halves, so each hip socket HIKES with
+    // its OWN thigh's forward/upward lift (hip flexion tilts the pelvis toward the
+    // working leg) while the spine stays centred at root — a real pelvic tilt, not
+    // the whole girdle sliding up. Only positive (forward/up) lift hikes; a trailing
+    // leg doesn't drop its hip. Lives in the SHARED skeleton so BOTH the pictogram
+    // and the graphic articulate the pelvis as two parts. (-y = up.)
     const roll = L.swayX * 0.6;
-    const hipR = [PROP.pelvisHalf * H, roll * H, 0];
-    const hipL = [-PROP.pelvisHalf * H, -roll * H, 0];
+    const PEL_HIKE = 0.30;
+    const hikeR = Math.max(0, L.hipR) * PROP.pelvisHalf * PEL_HIKE * H;
+    const hikeL = Math.max(0, L.hipL) * PROP.pelvisHalf * PEL_HIKE * H;
+    const hipR = [PROP.pelvisHalf * H, roll * H - hikeR, 0];
+    const hipL = [-PROP.pelvisHalf * H, -roll * H - hikeL, 0];
     // `stance` opens the thighs outward (plié / second position); the splay decays
     // down the chain so the shin returns toward vertical and the foot stays
     // planted-forward = a turned-out crouch, not a fanned-out leg. At stance=0 the
@@ -280,6 +289,12 @@ export class DancerRig {
     const turnYaw = Math.sign(yLp) === Math.sign(yU) ? Math.sign(yLp) * Math.min(Math.abs(yLp), Math.abs(yU)) : 0;
     const kneeYaw = lerp(turnYaw, yLp, 0.48), ankYaw = lerp(turnYaw, yLp, 0.18);
     const PhipR = P(hipR, yLp), PhipL = P(hipL, yLp);
+    // PUBIC center: a SHALLOW point just below the hip sockets at the body midline
+    // (the pubic symphysis where the two pelvic bones meet) — only a soft groin
+    // notch, deliberately NOT a deep downward spike (which read as a sacral triangle).
+    // The graphic pelvis is built as two iliac halves meeting here (see _renderBrush).
+    const pub = [0, PROP.pelvisHalf * 0.3 * H, 0];
+    const Ppub = P(pub, yLp);
     const PknR = P(knR, kneeYaw), PanR = P(anR, ankYaw), PftR = P(ftR, turnYaw);
     const PknL = P(knL, kneeYaw), PanL = P(anL, ankYaw), PftL = P(ftL, turnYaw);
 
@@ -299,7 +314,7 @@ export class DancerRig {
       Proot, Ps1, Ps2, Ps3, PchestC, PneckTop, PheadC,
       PshR, PshL, PwsR, PwsL,
       PelR, PwrR, PhaR, PelL, PwrL, PhaL,
-      PhipR, PhipL, PknR, PanR, PftR, PknL, PanL, PftL,
+      PhipR, PhipL, Ppub, PknR, PanR, PftR, PknL, PanL, PftL,
     };
   }
 
@@ -308,7 +323,7 @@ export class DancerRig {
     const {
       Proot, Ps1, Ps2, Ps3, PchestC, PneckTop, PheadC,
       PshR, PshL, PwsR, PwsL, PelR, PwrR, PhaR, PelL, PwrL, PhaL,
-      PhipR, PhipL, PknR, PanR, PftR, PknL, PanL, PftL, hx, hy,
+      PhipR, PhipL, Ppub, PknR, PanR, PftR, PknL, PanL, PftL, hx, hy,
     } = sk;
     ctx.save();
     ctx.translate(hx, hy);
@@ -323,8 +338,11 @@ export class DancerRig {
     // Legs.
     this._rod(ctx, PhipR, PknR, rod); this._rod(ctx, PknR, PanR, rod); this._rod(ctx, PanR, PftR, rod * 1.4);
     this._rod(ctx, PhipL, PknL, rod); this._rod(ctx, PknL, PanL, rod); this._rod(ctx, PanL, PftL, rod * 1.4);
-    // Pelvis bar (separate part).
-    this._rod(ctx, PhipL, PhipR, rod * 1.5);
+    // Pelvis as TWO parts: each hip socket links to a central pubic joint (an
+    // inverted-V girdle), and each socket HIKES with its own thigh (skeleton level)
+    // so the two halves tilt independently — the same two-bone pelvis the graphic
+    // uses, expressed in rods.
+    this._rod(ctx, PhipR, Ppub, rod * 1.5); this._rod(ctx, PhipL, Ppub, rod * 1.5);
     // Spine chain (root -> s1 -> s2 -> s3 -> chest), curved & twisting.
     this._rod(ctx, Proot, Ps1, rod); this._rod(ctx, Ps1, Ps2, rod);
     this._rod(ctx, Ps2, Ps3, rod); this._rod(ctx, Ps3, PchestC, rod);
@@ -342,7 +360,7 @@ export class DancerRig {
     ctx.lineTo(PwsR[0], PwsR[1]); ctx.lineTo(PwsL[0], PwsL[1]);
     ctx.closePath(); ctx.stroke();
 
-    for (const j of [PshR, PshL, PelR, PelL, PwrR, PwrL, PhipR, PhipL, PknR, PknL, PanR, PanL, Ps1, Ps2, Ps3, PneckTop]) this._joint(ctx, j, jr);
+    for (const j of [PshR, PshL, PelR, PelL, PwrR, PwrL, PhipR, PhipL, Ppub, PknR, PknL, PanR, PanL, Ps1, Ps2, Ps3, PneckTop]) this._joint(ctx, j, jr);
     this._joint(ctx, PhaR, jr * 0.9); this._joint(ctx, PhaL, jr * 0.9);
 
     ctx.beginPath();
@@ -359,7 +377,11 @@ export class DancerRig {
   // なで肩 shoulders. Single Path2D, one fill (mono union).
   _renderBrush(ctx, color, sk, alpha) {
     const H = sk.H, p = new Path2D();
-    const R = { neck: 0.013, ua: 0.024, el: 0.014, fa: 0.014, wr: 0.008, th: 0.032, kn: 0.018, sh: 0.018, an: 0.010 };
+    // Sliver half-widths per joint (× H × depth). The leg taper is kept GENTLE and
+    // even (thigh only modestly thicker than shin) so a thigh never reads as a wide
+    // triangular fin when a raised knee foreshortens it; the shin holds a slim
+    // constant width down to the ankle, where a short foot tapers to a pointe.
+    const R = { neck: 0.013, ua: 0.024, el: 0.015, fa: 0.014, wr: 0.009, th: 0.027, kn: 0.016, sh: 0.014, an: 0.011 };
     const TIP = 0.0015;
     const seg = (a, b, ra, rb) => {
       const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
@@ -379,13 +401,29 @@ export class DancerRig {
     seg(sk.PchestC, sk.PneckTop, R.neck, R.neck);
     // Sloping shoulder line: a thin stroke from the neck base down to each shoulder.
     seg(sk.PchestC, sk.PshR, R.neck, R.ua); seg(sk.PchestC, sk.PshL, R.neck, R.ua);
-    // Smooth the major joints so the slivers connect without notches.
-    blob(sk.PknR, R.kn); blob(sk.PknL, R.kn); blob(sk.PelR, R.el); blob(sk.PelL, R.el);
+    // Smooth EVERY bending joint so two angled slivers fuse without a notch — this
+    // is what kills the "strange" look at a raised/folded knee (and a cocked wrist).
+    // Knees/elbows get a slightly fuller blob (kneecap/elbow) to round a sharp fold;
+    // ankles & wrists get their own node so the pointed foot/hand reads as a distinct
+    // appendage instead of merging into one long spike with the shin/forearm.
+    blob(sk.PknR, R.kn * 1.2); blob(sk.PknL, R.kn * 1.2);
+    blob(sk.PelR, R.el * 1.15); blob(sk.PelL, R.el * 1.15);
+    blob(sk.PanR, R.an); blob(sk.PanL, R.an);
+    blob(sk.PwrR, R.wr); blob(sk.PwrL, R.wr);
     blob(sk.PshR, R.ua); blob(sk.PshL, R.ua); blob(sk.PhipR, R.th); blob(sk.PhipL, R.th);
-    // Slim torso whose top PEAKS at the neck base (なで肩 slope to the shoulders).
+    // Slim torso (ribs → waist) whose top PEAKS at the neck base (なで肩 slope) and
+    // whose bottom comes to the shallow pubic point — NO deep sacral spike.
     p.moveTo(sk.PshL[0], sk.PshL[1]); p.lineTo(sk.PchestC[0], sk.PchestC[1]); p.lineTo(sk.PshR[0], sk.PshR[1]);
-    p.lineTo(sk.PwsR[0], sk.PwsR[1]); p.lineTo(sk.PhipR[0], sk.PhipR[1]);
-    p.lineTo(sk.PhipL[0], sk.PhipL[1]); p.lineTo(sk.PwsL[0], sk.PwsL[1]); p.closePath();
+    p.lineTo(sk.PwsR[0], sk.PwsR[1]); p.lineTo(sk.Ppub[0], sk.Ppub[1]); p.lineTo(sk.PwsL[0], sk.PwsL[1]); p.closePath();
+    // The pelvis is TWO bones: draw it as two iliac blades, each from the waist out
+    // to its (hiking) hip socket and in to the pubic center. The socket itself hikes
+    // with the thigh at the skeleton level, so a lifted leg carries its half of the
+    // pelvis; a small extra lerp toward the knee just feathers the blade smoothly
+    // into the thigh mass. The two halves articulate independently = suppleness.
+    const L2 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t)];
+    const ilR = L2(sk.PhipR, sk.PknR, 0.08), ilL = L2(sk.PhipL, sk.PknL, 0.08);
+    p.moveTo(sk.PwsR[0], sk.PwsR[1]); p.lineTo(ilR[0], ilR[1]); p.lineTo(sk.Ppub[0], sk.Ppub[1]); p.closePath();
+    p.moveTo(sk.PwsL[0], sk.PwsL[1]); p.lineTo(ilL[0], ilL[1]); p.lineTo(sk.Ppub[0], sk.Ppub[1]); p.closePath();
     // Small egg-shaped head: a slim ellipse whose long axis follows the neck
     // (taller than wide, tilts with the head) — not a perfect circle/sphere.
     const hr = PROP_GFX.head * H * sk.PheadC[2];

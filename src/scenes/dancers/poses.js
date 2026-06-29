@@ -115,6 +115,38 @@ export const POSES = {
   // --- KRUMP: hard arm swing (wide stomp stance) + chest pop (lean reversal) ---
   KRUMP_HIT_R: { swayX: 0.34, shYaw: 0.4, pelYaw: -0.3, raise: 0.5, armR: 0.9, elR: 0.2, wrR: -0.4, armL: -0.2, elL: 0.9, wrL: 0.4, stance: 0.4, kneeR: 0.16, kneeL: 0.6, hipL: 0.3, hipR: -0.05, lean: 0.14, head: 0.06, headYaw: 0.1 },
   CHEST_POP: { lean: -0.22, raise: 0.4, armR: -0.2, elR: 0.85, armL: -0.2, elL: 0.85, wrR: -0.4, wrL: 0.4, stance: 0.5, kneeR: 0.55, kneeL: 0.55, sink: 0.18, head: -0.06 },
+
+  // ============================================================
+  // AIRBORNE — croquis leap vocabulary. `lift` raises the WHOLE figure off the
+  // ground (shared skeleton, so it works in BOTH render styles). There is no
+  // foot-IK, so a thrown/folded leg + hip swing reads as a leap, kick, or split
+  // rather than a glitch. Traced from the gesture-drawing references — slender
+  // dancers caught mid-flight. poseAmp scales lift, so quiet passages barely
+  // leave the floor and only strong energy fully flies (gating for free).
+  // ============================================================
+  // Grand jeté: front-back split in the air. Lead thigh (R) thrown forward+up,
+  // rear thigh (L) driven back, both knees near-straight, arms in opposition,
+  // chest lifted, gaze up the leading line. The signature reference pose.
+  JETE_R: { lift: 0.5, swayX: -0.08, hipR: 1.26, hipL: -1.16, kneeR: 0.12, kneeL: 0.16, raise: 0.76, armR: 1.0, armL: 0.74, elR: 0.2, elL: 0.34, wrR: 0.34, wrL: -0.3, lean: 0.06, head: 0.14, headYaw: -0.12 },
+  // Stag leap: lead thigh high but the knee FOLDED (foot tucked under), trailing
+  // leg streamed straight back — the arched "deer" silhouette.
+  STAG_R: { lift: 0.54, hipR: 1.04, kneeR: 0.92, hipL: -1.04, kneeL: 0.12, raise: 0.8, armR: 0.92, armL: 0.46, elR: 0.3, elL: 0.66, wrR: 0.3, wrL: -0.28, lean: -0.04, head: 0.16, headYaw: -0.1 },
+  // Tuck / gather jump: both thighs drawn up toward the chest, knees folded, arms
+  // swept up — a curled, compact airborne ball. Symmetric (no twin).
+  TUCK_AIR: { lift: 0.62, hipR: 0.58, hipL: 0.58, kneeR: 1.02, kneeL: 1.02, raise: 0.74, armR: 0.78, armL: 0.78, elR: 0.3, elL: 0.3, wrR: 0.3, wrL: -0.3, stance: 0.16, lean: -0.05, head: 0.12 },
+  // High battement leap: a low hop while one leg whips up to a near-vertical front
+  // kick, the support leg trailing; arms framing the kicking line.
+  KICK_AIR_R: { lift: 0.3, swayX: 0.16, hipR: 1.42, kneeR: 0.08, hipL: -0.14, kneeL: 0.12, raise: 0.72, armR: 0.5, armL: 0.86, elR: 0.46, elL: 0.28, wrR: 0.3, wrL: -0.3, lean: -0.08, head: 0.12, headYaw: 0.1 },
+  // Arabesque leap: flying forward — torso pitched over, one leg streamed straight
+  // back, both arms reaching ahead along the line of flight.
+  ARAB_LEAP_R: { lift: 0.44, lean: 0.24, hipR: -0.72, kneeR: 0.12, hipL: 0.26, kneeL: 0.18, raise: 0.66, armR: 0.86, armL: 0.72, elR: 0.24, elL: 0.3, wrR: 0.32, wrL: -0.3, head: 0.18, headYaw: -0.08 },
+  // Straddle / second-position split jump: legs flung wide to the sides in the
+  // air, knees straight, arms lifted in a high V. Symmetric (no twin).
+  STRADDLE_AIR: { lift: 0.56, stance: 0.92, kneeR: 0.12, kneeL: 0.12, hipR: 0.22, hipL: 0.22, raise: 0.84, armR: 0.6, armL: 0.6, elR: 0.4, elL: 0.4, wrR: 0.3, wrL: -0.3, head: 0.1 },
+  // Plié wind-up / landing for leaps: a deep gather with the arms swept down-back
+  // (anticipation). The spring overshoot off this pose IS the launch pop, and
+  // returning to it reads as the landing absorb. Symmetric.
+  LEAP_PREP: { sink: 0.36, stance: 0.32, kneeR: 0.52, kneeL: 0.52, hipR: 0.18, hipL: 0.18, raise: 0.18, armR: -0.24, armL: -0.24, elR: 0.5, elL: 0.5, wrR: -0.2, wrL: 0.2, lean: 0.14, head: -0.06 },
 };
 
 // L/R twins (the alternation is the dance). Authored one side; mirror() flips the other.
@@ -144,6 +176,11 @@ POSES.WAVE_B_L = mirror(POSES.WAVE_B_R);
 POSES.ROBOT_FREEZE_L = mirror(POSES.ROBOT_FREEZE_R);
 POSES.JACK_L = mirror(POSES.JACK_R);
 POSES.KRUMP_HIT_L = mirror(POSES.KRUMP_HIT_R);
+// Airborne leap twins (TUCK_AIR / STRADDLE_AIR / LEAP_PREP are symmetric — no twin).
+POSES.JETE_L = mirror(POSES.JETE_R);
+POSES.STAG_L = mirror(POSES.STAG_R);
+POSES.KICK_AIR_L = mirror(POSES.KICK_AIR_R);
+POSES.ARAB_LEAP_L = mirror(POSES.ARAB_LEAP_R);
 
 // Phrases: snappy 1-beat hits (more frequent than before so joints move often),
 // always L/R balanced. `snap` triggers anticipation. DROP/IDLE are special
@@ -255,6 +292,27 @@ export const PHRASES = {
     { p: 'CONTORT_R', beats: 2, hold: 0.5, snap: true }, { p: 'DEEP_PLIE', beats: 1, hold: 0.4, snap: true },
     { p: 'CONTORT_L', beats: 2, hold: 0.5, snap: true }, { p: 'DEEP_PLIE', beats: 1, hold: 0.4, snap: true },
   ],
+  // --- AIRBORNE leap phrases: plié wind-up → leap (snap = the arm fling) →
+  // plié landing. The lift spring's slight overshoot makes rise→hang→land read
+  // organic. Alternates the leading side so a crowd never leaps in lock-step. ---
+  LEAP_JETE: [
+    { p: 'LEAP_PREP', beats: 1, hold: 0.4 }, { p: 'JETE_R', beats: 1, hold: 0.3, snap: true },
+    { p: 'LEAP_PREP', beats: 1, hold: 0.4 }, { p: 'JETE_L', beats: 1, hold: 0.3, snap: true },
+  ],
+  LEAP_STAG: [
+    { p: 'LEAP_PREP', beats: 1, hold: 0.4 }, { p: 'STAG_R', beats: 1, hold: 0.3, snap: true },
+    { p: 'LEAP_PREP', beats: 1, hold: 0.4 }, { p: 'STAG_L', beats: 1, hold: 0.3, snap: true },
+  ],
+  LEAP_KICK: [
+    { p: 'LEAP_PREP', beats: 1, hold: 0.3 }, { p: 'KICK_AIR_R', beats: 1, hold: 0.3, snap: true },
+    { p: 'WEIGHT_R', beats: 1, hold: 0.3 }, { p: 'KICK_AIR_L', beats: 1, hold: 0.3, snap: true },
+  ],
+  LEAP_MIX: [
+    { p: 'LEAP_PREP', beats: 1, hold: 0.4 }, { p: 'JETE_R', beats: 1, hold: 0.3, snap: true },
+    { p: 'LEAP_PREP', beats: 1, hold: 0.35 }, { p: 'STRADDLE_AIR', beats: 1, hold: 0.3, snap: true },
+    { p: 'LEAP_PREP', beats: 1, hold: 0.4 }, { p: 'TUCK_AIR', beats: 1, hold: 0.3, snap: true },
+    { p: 'LEAP_PREP', beats: 1, hold: 0.35 }, { p: 'ARAB_LEAP_R', beats: 1, hold: 0.3, snap: true },
+  ],
   DROP: [
     { p: 'CONTRACT', beats: 1, hold: 0.5 }, { p: 'RELEASE_UP', beats: 1, hold: 0.3, snap: true },
     { p: 'SCARECROW_T', beats: 1, hold: 0.3, snap: true }, { p: 'CONTRACT', beats: 1, hold: 0.5 },
@@ -267,10 +325,13 @@ export const PHRASES = {
 };
 
 // Tempo-band rotation pools (DROP and IDLE are special, excluded).
+// Leaps are gated by tempo here (none at slow, occasional at mid, frequent at
+// fast) AND by loudness via poseAmp scaling lift — so a quiet or slow passage
+// stays grounded and only strong/fast energy takes flight.
 const BAND_POOL = {
   slow: ['GROOVE', 'TWIST', 'TURN', 'STAB', 'TUT', 'FLOW'],
-  mid: ['GROOVE', 'TWIST', 'TURN', 'STEP', 'STAB', 'LOCK', 'TUT', 'WAACK', 'FLOW'],
-  fast: ['GROOVE', 'STEP', 'STAB', 'LOCK', 'WAACK'],
+  mid: ['GROOVE', 'TWIST', 'TURN', 'STEP', 'STAB', 'LOCK', 'TUT', 'WAACK', 'FLOW', 'LEAP_JETE', 'LEAP_MIX'],
+  fast: ['GROOVE', 'STEP', 'STAB', 'LOCK', 'WAACK', 'LEAP_JETE', 'LEAP_STAG', 'LEAP_KICK', 'LEAP_MIX'],
 };
 
 export function phrasesForBand(band, modeFavored) {

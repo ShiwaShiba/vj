@@ -12,6 +12,7 @@ export const MODES = [
   { name: 'House' },
   { name: 'Krump' },
   { name: 'Flex' },                   // 軟体 / contortion
+  { name: 'Ballet' },                 // バレエ跳躍 / airborne croquis leaps
   { name: 'Minimal' },
 ];
 
@@ -23,6 +24,7 @@ export const MODE_FAVORED = {
   House: ['HOUSE_FOOT', 'JACK'],                // footwork + torso jack
   Krump: ['KRUMP_HIT', 'CHEST_POP_PH'],         // hard hits + chest pops
   Flex: ['COIL_PH', 'CONTORT'],                 // coils + contortion freezes
+  Ballet: ['LEAP_JETE', 'LEAP_STAG', 'LEAP_KICK', 'LEAP_MIX'], // airborne leaps (croquis)
   Minimal: ['IDLE', 'GROOVE'],
 };
 
@@ -52,5 +54,9 @@ export const MODE_STYLE = {
   House:    { scale: 1.00, stepBeatsMul: 0.70, stiffMul: 1.05, zetaMul: 0.90, lagMul: 1.10, grooveMul: 1.30, stanceBias: 0.18, snapMul: 0.95 },
   Krump:    { scale: 1.15, stepBeatsMul: 0.80, stiffMul: 1.40, zetaMul: 0.85, lagMul: 0.70, grooveMul: 1.35, stanceBias: 0.28, snapMul: 1.55 },
   Flex:     { scale: 1.05, stepBeatsMul: 1.45, stiffMul: 0.82, zetaMul: 0.50, lagMul: 1.60, grooveMul: 0.70, stanceBias: 0.20, snapMul: 0.80 },
+  // Ballet: big excursions for the leaps (scale↑), a sustained hang (stepBeats↑),
+  // soft overshoot for graceful landings (zeta<1), unfurling épaulement (lag↑),
+  // narrow stance, calm groove so the line reads clean.
+  Ballet:   { scale: 1.12, stepBeatsMul: 1.10, stiffMul: 0.95, zetaMul: 0.80, lagMul: 1.30, grooveMul: 0.80, stanceBias: 0.00, snapMul: 1.05 },
   Minimal:  { scale: 0.60, stepBeatsMul: 1.60, stiffMul: 0.85, zetaMul: 1.05, lagMul: 0.80, grooveMul: 0.40, stanceBias: 0.00, snapMul: 0.60 },
 };
