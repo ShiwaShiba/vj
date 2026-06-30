@@ -25,6 +25,7 @@ const SPANX = 1.64, SPANY = 0.92, OFFA = -0.30, OFFB = -1.34;
 const BSPANX = 1.20, BSPANY = 0.67, BOFFA = -0.224, BOFFB = -0.976, BDY = 0.13;
 const ACT_SPAN = 0.35;          // convergence-front width: the fraction of g the edge->locus sweep spans
 const NSHEET = 4, SHEET_Z = 0.55, SHEET_K = 4.0; // depth slabs / half-depth / plane stiffness (面/帯)
+const DGRID = 24;               // coarse density grid for local clumping (粘り) during the struggle
 const SEQS = [['R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'R', 'L', 'Both']];
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -43,6 +44,7 @@ export class PurposeMaker extends Scene {
     this.defineParam('recruit', 0.60, 0.3, 0.9, 0.05, 'Recruit'); // dense hand mass = the star
     this.defineParam('flow', 0.62, 0.1, 1.5, 0.05, 'Hand Flow');
     this.defineParam('cohesion', 1.0, 0.3, 2.0, 0.1, 'Cohesion');
+    this.defineParam('grit', 1.0, 0, 2.5, 0.1, 'Grit'); // organic struggle/粘り/意志 intensity
     this.defineParam('react', 1.0, 0, 6, 0.5, 'Hand Audio');
     this.defineParam('pace', 1.0, 0.4, 2.0, 0.1, 'Pace');
     this.defineParam('thread', 0.9, 0.4, 2.0, 0.1, 'Thread');
@@ -151,6 +153,7 @@ export class PurposeMaker extends Scene {
     const recruit = this.p('recruit');
     const audioOn = this.mg('audio') === 1;
     const handReact = this.p('react'), ambReact = this.p('ambReact'); // hand vs 綿毛 audio, separate
+    const grit = this.p('grit'); // organic struggle intensity (粘り・意志)
     // station: Cycle = auto choreography over the chosen sequence; else lock to one station held.
     const mi = this.modeIndex;
     const seq = SEQS[this.mg('seq')] || SEQS[1];
@@ -214,6 +217,15 @@ export class PurposeMaker extends Scene {
     const strandsA = (st.station === 'R' || both) ? mkStrands(0) : null;
     const strandsB = (st.station === 'L' || both) ? mkStrands(1) : null;
     const smax = clamp01(g / GHOLD); // strands grow to full length by the time convergence onsets
+    // coarse density grid of the recruited mass (previous positions) so grains can clump toward
+    // their neighbours during the formation (粘り — surface tension, gathering together).
+    const dgrid = this._dgrid || (this._dgrid = new Float32Array(DGRID * DGRID));
+    dgrid.fill(0);
+    for (let i = 0; i < n; i++) {
+      if (this._h(i * 7 + 99) >= recruit) continue;
+      const gx = (this.X[i] / SIMX * 0.5 + 0.5) * DGRID | 0, gy = (this.Y[i] / SIMY * 0.5 + 0.5) * DGRID | 0;
+      if (gx >= 0 && gx < DGRID && gy >= 0 && gy < DGRID) dgrid[gy * DGRID + gx] += 1;
+    }
 
     for (let i = 0; i < n; i++) {
       this.PX[i] = this.X[i]; this.PY[i] = this.Y[i]; this.PZ[i] = this.Z[i];
@@ -272,6 +284,20 @@ export class PurposeMaker extends Scene {
         const wcx = curveX + (-tgy / tl) * wv, wcy = curveY + (tgx / tl) * wv;
         const aimX = wcx + (tx - wcx) * conv, aimY = wcy + (ty - wcy) * conv;
         const pw = clamp01(1.1 * F.line + conv);
+        // 有機的な粘り・意志: through the HARD middle of the formation (struggle peaks at conv~0.5)
+        // the grains fight a coherent resistance field, clump up the local density gradient (粘り —
+        // they gather TOGETHER), and hesitate individually (意志). All fade to 0 by the lock, so the
+        // hand is EARNED rather than a mechanical snap, yet still resolves cleanly.
+        const sg = 4 * conv * (1 - conv) * grit;         // struggle intensity (peaks conv~0.5), live-tunable
+        const rfx = noise.noise3D(x * 2.3 + zt, y * 2.3, 7.1) * sg;
+        const rfy = noise.noise3D(x * 2.3, y * 2.3 + zt, 3.4) * sg;
+        let clx = 0, cly = 0;
+        const gcx = (x / SIMX * 0.5 + 0.5) * DGRID | 0, gcy = (y / SIMY * 0.5 + 0.5) * DGRID | 0;
+        if (gcx > 0 && gcx < DGRID - 1 && gcy > 0 && gcy < DGRID - 1) {
+          clx = (dgrid[gcy * DGRID + gcx + 1] - dgrid[gcy * DGRID + gcx - 1]) * 0.03 * sg;
+          cly = (dgrid[(gcy + 1) * DGRID + gcx] - dgrid[(gcy - 1) * DGRID + gcx]) * 0.03 * sg;
+        }
+        const pwEff = pw * (1 - 0.6 * Math.min(1, sg) * (0.5 + 0.5 * Math.sin(this.t * 0.9 + hi * TWO_PI * 1.7)));
         // wavering advance/retreat before the grains lock (slow, deterministic, dies as conv->1)
         const waver = Math.sin(this.t * 0.7 + hi * TWO_PI) * 0.10 * (1 - conv);
         const adv = 0.9 * F.advance * (1 - conv);            // net streaming carry along entry axis
@@ -290,9 +316,9 @@ export class PurposeMaker extends Scene {
         vy += diry * lc;
         vz += (zTarget - z) * SHEET_K * F.sheet + 0.5 * waver; // gather onto the band plane
         const qv = conv > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
-        vx = vx * handSp * (1 - pw) + ((aimX - x) * cohK + qv) * pw * dt;
-        vy = vy * handSp * (1 - pw) + ((aimY - y) * cohK + qv * 0.5) * pw * dt;
-        vz = vz * handSp * (1 - pw) + ((zTarget - z) * cohK) * pw * dt;
+        vx = vx * handSp * (1 - pwEff) + ((aimX - x) * cohK + qv + rfx + clx) * pwEff * dt;
+        vy = vy * handSp * (1 - pwEff) + ((aimY - y) * cohK + qv * 0.5 + rfy + cly) * pwEff * dt;
+        vz = vz * handSp * (1 - pwEff) + ((zTarget - z) * cohK) * pwEff * dt;
         this.X[i] = x + vx; this.Y[i] = y + vy; this.Z[i] = z + vz;
         this.cv[i] = conv;
         continue;
