@@ -36,7 +36,7 @@ const scenes = new SceneManager(createScenes());
 
 const canvas = new Canvas(canvasEl, (w, h) => scenes.onResize(w, h));
 scenes.attach(canvas.ctx, canvas.w, canvas.h);
-scenes.start('dancers');
+scenes.start('scope');
 
 const engine = new Engine({ canvas, audio, clock, scenes, palette });
 window.__vj = { engine, scenes, audio, palette, clock, canvas, role: IS_OUTPUT ? 'output' : 'operator' };

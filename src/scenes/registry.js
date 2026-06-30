@@ -16,6 +16,7 @@ import { Datamatrix } from './dots/Datamatrix.js';
 // Ordered list of scene instances. The first is the default on launch.
 export function createScenes() {
   return [
+    new Oscilloscope(),
     new DancersScene(),
     new Datamatrix(),
     new SpectrumBars(),
@@ -29,6 +30,5 @@ export function createScenes() {
     new Kaleidoscope(),
     new Lissajous(),
     new Moire(),
-    new Oscilloscope(),
   ];
 }
