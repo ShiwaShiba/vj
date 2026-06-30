@@ -206,7 +206,7 @@ export class PurposeMaker extends Scene {
       for (let k = 0; k < 5; k++) {
         const fx = mx(tips[k].u), fy = my(tips[k].v);
         const cx2 = (wx + fx) / 2, cy2 = (wy + fy) / 2, ddx = fx - wx, ddy = fy - wy, L = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
-        const bow = 0.16 * (k - 2); // splayed perpendicular bow -> gentle, distinct curves
+        const bow = 0.09 * (k - 2); // splayed perpendicular bow -> gentle, distinct curves (not loops)
         fan.push([wx, wy, cx2 + (-ddy / L) * bow, cy2 + (ddx / L) * bow, fx, fy]);
       }
       return fan;
@@ -258,11 +258,19 @@ export class PurposeMaker extends Scene {
         // so the 5 curves literally open into the fingers. `ss` spreads grains along the growing
         // strand; `pw` is the strand pull (F.line) handing off to the target pull (conv).
         const fan = hand === 0 ? strandsA : strandsB;
-        const seg = fan[(this._h(i * 23 + 5) * 5) | 0];
+        const k = (this._h(i * 23 + 5) * 5) | 0;
+        const seg = fan[k];
         const ss = this._h(i * 29 + 13) * smax, oms = 1 - ss;
         const curveX = oms * oms * seg[0] + 2 * oms * ss * seg[2] + ss * ss * seg[4];
-        const curveY = oms * oms * seg[1] + 2 * oms * ss * seg[3] + ss * ss * seg[4 + 1];
-        const aimX = curveX + (tx - curveX) * conv, aimY = curveY + (ty - curveY) * conv;
+        const curveY = oms * oms * seg[1] + 2 * oms * ss * seg[3] + ss * ss * seg[5];
+        // ゆらゆら引っ張り: a slow transverse wave travels along the strand (as if someone off-frame
+        // is pulling it), displacing perpendicular to the strand tangent. It dies as the grain locks.
+        const tgx = 2 * oms * (seg[2] - seg[0]) + 2 * ss * (seg[4] - seg[2]);
+        const tgy = 2 * oms * (seg[3] - seg[1]) + 2 * ss * (seg[5] - seg[3]);
+        const tl = Math.sqrt(tgx * tgx + tgy * tgy) || 1;
+        const wv = Math.sin(ss * 3.0 - this.t * 1.3 + k * 1.7) * 0.13 * F.line * (1 - conv);
+        const wcx = curveX + (-tgy / tl) * wv, wcy = curveY + (tgx / tl) * wv;
+        const aimX = wcx + (tx - wcx) * conv, aimY = wcy + (ty - wcy) * conv;
         const pw = clamp01(1.1 * F.line + conv);
         // wavering advance/retreat before the grains lock (slow, deterministic, dies as conv->1)
         const waver = Math.sin(this.t * 0.7 + hi * TWO_PI) * 0.10 * (1 - conv);
