@@ -3,8 +3,10 @@
 // Seamless: cohesion is 0 with zero slope at every station boundary (gap before next gather).
 export const DURATIONS = { gather: 2.6, hold: 2.4, disperse: 2.2, gap: 0.5 };
 export const STATION = DURATIONS.gather + DURATIONS.hold + DURATIONS.disperse + DURATIONS.gap; // 7.7
-export const STATION_SEQ = ['R', 'L', 'Both'];
-export const CYCLE = STATION * STATION_SEQ.length; // 23.1
+export const STATION_SEQ = ['R', 'L', 'Both']; // module default (unchanged)
+export const CYCLE = STATION * STATION_SEQ.length; // 23.1 (unchanged)
+// Loop length for an arbitrary station sequence (the scene uses ['R','L','R','L','Both'] => 38.5s).
+export function cycleOf(seq) { return STATION * seq.length; }
 
 export function smoother(t) {
   if (t <= 0) return 0; if (t >= 1) return 1;
@@ -20,14 +22,18 @@ function localCohesion(local) {
   return { c: 0, phase: 'gap' };
 }
 
+// Returns the build-progress signal `c` (=g in the form coupling), the active station and its
+// R/L split, the phase, the station index, and the next station (for gap-staging). `opts.seq`
+// overrides the default sequence so the scene can run R,L,R,L,Both (or any arrangement).
 export function cohesionAt(time, opts) {
   const pace = (opts && opts.pace) || 1;
-  const T = time / pace;
-  let t = T % CYCLE; if (t < 0) t += CYCLE;
-  const idx = Math.min(STATION_SEQ.length - 1, (t / STATION) | 0);
-  const station = STATION_SEQ[idx];
+  const seq = (opts && opts.seq) || STATION_SEQ;
+  const cycle = STATION * seq.length;
+  let t = (time / pace) % cycle; if (t < 0) t += cycle;
+  const idx = Math.min(seq.length - 1, (t / STATION) | 0);
+  const station = seq[idx];
   const { c, phase } = localCohesion(t - idx * STATION);
   const cR = station === 'L' ? 0 : c;
   const cL = station === 'R' ? 0 : c;
-  return { station, cR, cL, phase };
+  return { station, c, cR, cL, phase, idx, next: seq[(idx + 1) % seq.length] };
 }
