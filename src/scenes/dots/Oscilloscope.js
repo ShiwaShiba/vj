@@ -81,6 +81,7 @@ export class Oscilloscope extends Scene {
     this.wave = audio.waveform;
     this.level = audio.level;
     this.bass = audio.bass;
+    this.mid = audio.mid;
     this.treble = audio.treble;
     this.t = clock.time;
     this.beats = clock.beats;
@@ -336,9 +337,10 @@ export class Oscilloscope extends Scene {
       }
       strokeSegs(pts);
     } else if (form === 3) {
-      // TERRAIN — a glowing wireframe globe whose surface is displaced into a
-      // rippling relief by the live waveform (honest) + flowing simplex + a
-      // travelling ring, breathing with the drive band. See _drawSphereTerrain.
+      // TERRAIN — a glowing wireframe globe whose surface erupts into deep relief,
+      // each frequency band driving its OWN motion (bass = big heaving lobes, mid =
+      // ridges marching pole→pole, treble = fine crackling spikes), over an honest
+      // live-waveform floor. See _drawSphereTerrain.
       this._drawSphereTerrain(ctx, wave, N, R, band, alpha, project);
     } else {
       // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
@@ -688,36 +690,57 @@ export class Oscilloscope extends Scene {
   // additive, deterministic.
   _drawSphereTerrain(ctx, wave, N, R, band, alpha, project) {
     const LAT = 36, LON = 72;
-    const energy = 0.30 + this.p('drive') * band * 1.15;   // strong, clear reactivity
+    // Each frequency band drives its OWN distinct surface motion, so you can SEE
+    // which band is loud: BASS = a few big, slow heaving lobes (low spatial freq);
+    // MID = ridges marching pole→pole (medium freq, travelling); TREBLE = fine
+    // fast crackling spikes (high freq simplex chop). The honest live waveform is
+    // a quiet floor that keeps the globe alive at silence; loud moments erupt into
+    // far deeper terrain than a gentle relief. Deterministic (seeded noise, clock).
+    const driveAmt = this.p('drive');
+    const gain = this.p('gain');
+    const eBass = this.bass, eMid = this.mid, eTre = this.treble;
+    const loud = Math.max(this.level, eBass, eMid, eTre);
+    const energy = 0.30 + driveAmt * loud * 1.15;          // overall breathing (brightness)
     const dens = Math.max(3, Math.round(this.p('density')));
-    const nScale = 1.3 + 0.10 * dens;                      // Density → finer relief
-    const rFreq = Math.max(2, Math.round(dens * 0.5));     // Density → travelling-ring count
-    const flow = this.t * 0.3;                             // deterministic noise flow
-    const AMP = 0.30 * (0.7 + 0.5 * this.p('gain'));       // Gain → relief depth
+    const nScale = 1.3 + 0.10 * dens;                      // Density → mid/coarse grain
+    const nFine = nScale * 2.4;                            // treble: finer grain
+    const rFreq = Math.max(2, Math.round(dens * 0.5));     // Density → mid ring count
+    const fast = this.t * 1.25;                            // fast flow → treble chop
+    const AMP = 0.34 * (0.6 + 0.7 * gain);                 // Gain → terrain depth (deeper than before)
+    const bandGain = 0.5 + driveAmt * 0.85;                // Drive cranks the band-driven 凹凸 hard
     const noise = this._noise;
     // 1) build the displaced, projected globe grid + per-vertex height
     const G = [];
     for (let i = 0; i <= LAT; i++) {
       const th = -Math.PI / 2 + Math.PI * (i / LAT);
       const ct = Math.cos(th), st2 = Math.sin(th);
-      const ripple = Math.sin((th + Math.PI / 2) * rFreq * 2 - this.t * 2.0);
+      const latu = th + Math.PI / 2;                       // 0..π pole→pole
+      const midBase = latu * rFreq * 2 - this.t * 2.4;     // MID ridge phase (marching)
+      const bassLat = 0.55 + 0.45 * Math.sin(th * 2 + this.t * 0.4);
       const row = [];
       for (let j = 0; j <= LON; j++) {
         const ph = (j / LON) * TWO_PI;
         const bx = ct * Math.cos(ph), by = st2, bz = ct * Math.sin(ph);
         const wi = Math.floor((j / LON) * (N - 1));
-        const relief = (wave[wi] - 128) / 128;             // HONEST live-signal relief
-        const tex = noise.noise3D(bx * nScale + flow, by * nScale, bz * nScale - flow * 0.5);
-        const disp = (tex * 0.42 + relief * 0.42 + ripple * 0.10) * AMP * energy;
+        const relief = (wave[wi] - 128) / 128;             // HONEST live-signal floor
+        // BASS — a few big, slow heaving lobes (low spatial freq) pumping radially
+        const bassPat = Math.cos(2 * ph - this.t * 0.6) * bassLat;
+        // MID — travelling latitudinal ridge with a slight longitudinal spiral
+        const midPat = Math.sin(midBase + ph * 0.5);
+        // TREBLE — fine, fast crackling spikes (high-freq simplex chop)
+        const treTex = noise.noise3D(bx * nFine + fast, by * nFine - fast, bz * nFine + fast * 0.7);
+        // each band adds its OWN motion, independently, cranked by Drive
+        const bandDisp = (bassPat * eBass * 0.80 + midPat * eMid * 0.62 + treTex * eTre * 0.50) * bandGain;
+        const disp = (relief * 0.30 + bandDisp) * AMP;
         const r = 1 + disp;
         row.push({ pr: project(bx * r, by * r, bz * r), h: disp });
       }
       G.push(row);
     }
     // 2) brightness from height (higher = brighter), scaled by energy + depth
-    const eb = 0.45 + 0.55 * Math.min(1.2, energy);
+    const eb = 0.45 + 0.55 * Math.min(1.3, energy);
     const segA = (ha, hb, d) => {
-      const inten = Math.max(0, (ha + hb) * 0.5 * 1.7 + 0.18);
+      const inten = Math.max(0, (ha + hb) * 0.5 * 1.5 + 0.18);
       const depthFac = 0.26 + 0.74 * (d * 0.5 + 0.5);      // strong back-dim → reads as a globe
       return Math.min(1, (0.07 + 0.95 * inten) * eb * depthFac);
     };
@@ -751,7 +774,7 @@ export class Oscilloscope extends Scene {
     if (coreR > 0.005) {
       const cx = this.w / 2, cy = this.h / 2, cr = R * (0.30 + 0.5 * coreR);
       const col = this.palette.colorAt((this.t * 0.1) % 1);
-      const ci = Math.min(0.5, 0.45 * coreR + 0.4 * this.p('drive') * band);
+      const ci = Math.min(0.5, 0.45 * coreR + 0.4 * driveAmt * loud);
       const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
       g.addColorStop(0, `rgba(${col[0] | 0},${col[1] | 0},${col[2] | 0},${ci})`);
       g.addColorStop(1, 'rgba(0,0,0,0)');
