@@ -178,11 +178,13 @@ export class PurposeMaker extends Scene {
           tx = (hand === 0 ? OFFA : OFFB) + SPANX * u;
           ty = (0.5 - vv) * SPANY;
         }
-        // convergence front: targets near the entry edge resolve first (low phi -> high gp); on
-        // disperse the far/fingertip side dissolves first. gp = this grain's staggered progress.
+        // convergence front: targets near the entry edge (low phi) resolve first. phi is a pure
+        // function of g, so disperse (g falling) replays the build in REVERSE for free — the
+        // fingertips (high phi, last to form) dissolve first, the wrist last (逆展開). `rev` is used
+        // only for the streaming DIRECTION below, not the front order.
         const entrySign = hand === 0 ? 1 : -1;
         const dEdge = entrySign > 0 ? (SIMX - tx) / (2 * SIMX) : (tx + SIMX) / (2 * SIMX);
-        const phi = rev ? (1 - dEdge) : dEdge;
+        const phi = dEdge;
         const gp = clamp01((g - phi * ACT_SPAN) / (1 - ACT_SPAN));
         let conv = smoother(clamp01((gp - GHOLD) / (1 - GHOLD)));
         conv = conv + F.snapConv * (1 - conv);               // a kick nudges convergence in
@@ -196,7 +198,10 @@ export class PurposeMaker extends Scene {
         const sIdx = (this._h(i * 5 + 3) * NSHEET) | 0;
         const sheetZ = (sIdx / (NSHEET - 1) - 0.5) * SHEET_Z;
         const zTarget = sheetZ * F.sheet * (1 - conv);
-        const lc = (F.line * (1 + 0.6 * F.snapLine)) * comb; // filament-comb, punched by the beat
+        // filament-comb: the LINE phase stretches grains along the flow into 複数の線. Give it its
+        // OWN directional floor (0.55) so it reads even when the ambient comb is weak, + the ambient
+        // comb, + a beat punch.
+        const lc = F.line * (1 + 0.6 * F.snapLine) * (0.55 + comb);
         vx += dirx * lc + dir * entrySign * adv + entrySign * waver;
         vy += diry * lc;
         vz += (zTarget - z) * SHEET_K * F.sheet + 0.5 * waver; // gather onto the band plane
@@ -230,7 +235,7 @@ export class PurposeMaker extends Scene {
     const R = Math.min(W, H) * 0.5; // world ±1 maps to half-min-dimension (sim ±1.6 bleeds off)
     const tilt = this._tilt != null ? this._tilt : TILT;
     const cX = Math.cos(tilt), sX = Math.sin(tilt);
-    const B = this._B;
+    const B = this._B, F = this._F;
     const elong = B ? B.elong : 0.5, flash = B ? B.flash : 0, ambB = B ? B.bright : 0.7;
     const recruit = this.p('recruit');
     const streakMax = R * 0.075;                    // px length of a fully-extended LINE streak
@@ -263,8 +268,13 @@ export class PurposeMaker extends Scene {
         // bright only as they resolve onto the silhouette, so the build reads as lines/bands
         // coalescing rather than a blown-out burst. The draw streak is capped so fast-converging
         // grains don't smear into bright bars.
+        const cv = this.cv[i];
+        const Fl = F ? F.line : 0;
         let mvx = sxc - pxs, mvy = syc - pys;
-        const mmRaw = Math.sqrt(mvx * mvx + mvy * mvy), cap = R * 0.05;
+        const mmRaw = Math.sqrt(mvx * mvx + mvy * mvy);
+        // the draw streak grows into a filament during the LINE phase (grain still unlocked) and
+        // tightens to a crisp grain as the hand resolves — so 複数の線 read, not a fuzzy cloud.
+        const cap = R * (0.05 + 0.22 * Fl * (1 - cv));
         if (mmRaw > cap) { const k2 = cap / mmRaw; mvx *= k2; mvy *= k2; }
         bx = sxc - mvx; by = syc - mvy;
         // the wrist/stub DISSOLVES into the field: full bright out to ax≈0.55 (fingertips→palm),
@@ -274,14 +284,13 @@ export class PurposeMaker extends Scene {
         // a grain is bright only when it is BOTH converged (emerge) AND settled (settle): the
         // resolved, still hand is the luminous payoff, while transiting/streaming grains stay
         // faint — so the build reads as a quiet coalescing, not bright motion trails.
-        const cv = this.cv[i];
         const emerge = 0.10 + 0.90 * cv * cv;
         const settle = 1 / (1 + 55 * mmRaw / R);
         bv = 1.40 * armFade * (0.5 + 0.5 * d) * (1 + 0.25 * flash) * emerge * settle;
       } else {
         // sparse calm field: draw only a fraction of ambient grains, so the converging mass is the
         // star and the background never reads as a pasted particle sheet (deterministic hash gate).
-        if (this._h(i * 11 + 7) >= ambDensity) { this.sval[i] = 0; continue; }
+        if (this._h(i * 101 + 37) >= ambDensity) { this.sval[i] = 0; continue; }
         // ambient: positional waveform + treble displacement applied to the head.
         if (ripAmp || shAmp) {
           let off = 0;

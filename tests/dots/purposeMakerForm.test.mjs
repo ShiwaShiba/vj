@@ -73,9 +73,14 @@ test('flash tracks the beat transient and is additive-ready (0..1)', () => {
   assert.strictEqual(formAt(0.5, { beatHold: 0.4 }, {}).flash, 0.4);
 });
 
-test('deterministic and a pure function of g (=> reverse-expand replays gather backwards)', () => {
+test('deterministic: formAt is a pure function of (g, audio, opts) — no hidden time/direction', () => {
+  // Because there is no direction parameter, disperse (g falling) reproduces the exact descriptors
+  // gather (g rising) produced at the same g — that pure-g symmetry is what makes 逆展開 free. This
+  // also keeps the operator/output mirror + reload reproducible. (A determinism guard, not a proof
+  // of the scene-level reverse, which is verified in the scene tests + headless.)
   assert.deepStrictEqual(formAt(0.37, KICK, { react: 2 }), formAt(0.37, KICK, { react: 2 }));
-  // Same g reached on gather (g rising) or disperse (g falling) yields the identical descriptor,
-  // so the dissolve is the build played in reverse with no extra code path.
   assert.deepStrictEqual(formAt(0.5, SILENT, {}), formAt(0.5, SILENT, {}));
+  // NaN audio must not poison the descriptor (defensive clamp).
+  const n = formAt(0.5, { beatHold: NaN, bass: NaN }, {});
+  assert.ok(n.snapLine === 0 && Number.isFinite(n.conv), 'NaN audio clamped to 0');
 });

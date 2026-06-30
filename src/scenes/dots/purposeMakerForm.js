@@ -18,7 +18,7 @@ function smoother(x) {
   if (x <= 0) return 0; if (x >= 1) return 1;
   return x * x * x * (x * (x * 6 - 15) + 10);
 }
-function clamp01(v) { return v == null ? 0 : v < 0 ? 0 : v > 1 ? 1 : v; }
+function clamp01(v) { return v == null || v !== v ? 0 : v < 0 ? 0 : v > 1 ? 1 : v; } // NaN -> 0 (defensive on external audio)
 
 // A smooth bell over g: 0 outside [lo,hi], 1 at mid. Exactly 0 at and beyond the rails so a
 // phase's weight fully vanishes at g=0 and g=1 (no stray lines on the flat hand or in dust).
