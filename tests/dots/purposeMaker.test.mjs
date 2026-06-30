@@ -209,6 +209,25 @@ test('mist audio (ambReact) and hand audio (react) are independent knobs', () =>
   assert.ok(meanCvAll(b) > meanCvAll(a) + 1e-6, 'a kick on the HAND audio advances convergence; the mist audio does not');
 });
 
+test('5 curved strands: the line phase organises recruited grains into 5 fanned groups', () => {
+  const s = freshScene(12000);
+  driveTo(s, 4.2);                          // line phase (g~0.30, F.line at its peak)
+  const rec = s.p('recruit');
+  const gm = [[], [], [], [], []];
+  for (let i = 0; i < s.n; i++) {
+    if (s._h(i * 7 + 99) >= rec) continue;  // ambient
+    const k = Math.min(4, (s._h(i * 23 + 5) * 5) | 0); // strand hash (mirrors PurposeMaker.js)
+    gm[k].push([s.X[i], s.Y[i]]);
+  }
+  const means = gm.map((a) => (a.length ? [a.reduce((p, q) => p + q[0], 0) / a.length, a.reduce((p, q) => p + q[1], 0) / a.length] : [0, 0]));
+  // the 5 strand means must fan apart (toward 5 fingertips), not sit on top of each other
+  let maxd = 0;
+  for (let a = 0; a < 5; a++) for (let b = a + 1; b < 5; b++) {
+    maxd = Math.max(maxd, Math.hypot(means[a][0] - means[b][0], means[a][1] - means[b][1]));
+  }
+  assert.ok(maxd > 0.35, `5 strands fan apart (max pairwise mean dist ${maxd.toFixed(2)})`);
+});
+
 test('full RLRLBoth cycle (incl. Both + disperse, with a kick) stays finite — no NaN', () => {
   const s = freshScene(6000);
   const kick = { level: 0.6, bass: 0.8, treble: 0.4, beat: true, beatHold: 1 };

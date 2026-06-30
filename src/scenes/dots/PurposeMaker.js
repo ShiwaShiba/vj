@@ -64,9 +64,34 @@ export class PurposeMaker extends Scene {
   init(ctx, w, h) {
     super.init(ctx, w, h);
     this.hands = decodeHandTargets();
+    this._deriveFingerAnchors();
     this.turb = decodeTurbProfile();
     this._alloc();
     this._seedAll();
+  }
+  // Derive, per hand, a wrist base + 5 fingertip anchors in (u,v) so the line phase can fan the
+  // grains into 5 curved strands that become the 5 fingers (動画と同一). Hand A's wrist is at high
+  // u (it enters +x), Hand B's at low u — fingers sit on the far side, binned by v into 5.
+  _deriveFingerAnchors() {
+    const derive = (cloud, wristHighU) => {
+      const n = cloud.n; let wu = 0, wv = 0, wc = 0;
+      for (let i = 0; i < n; i++) { const u = cloud.u[i] / 32767; if (wristHighU ? u > 0.7 : u < 0.3) { wu += u; wv += cloud.v[i] / 32767; wc++; } }
+      cloud.wrist = wc ? { u: wu / wc, v: wv / wc } : { u: wristHighU ? 0.85 : 0.15, v: 0.5 };
+      const tips = [];
+      for (let b = 0; b < 5; b++) {
+        const vlo = b / 5, vhi = (b + 1) / 5;
+        let best = wristHighU ? 2 : -1, bu = 0, bv = 0;
+        for (let i = 0; i < n; i++) {
+          const u = cloud.u[i] / 32767, v = cloud.v[i] / 32767;
+          if (v < vlo || v >= vhi) continue;
+          if (wristHighU ? (u < 0.5 && u < best) : (u > 0.5 && u > best)) { best = u; bu = u; bv = v; }
+        }
+        tips.push((wristHighU ? best < 2 : best > -1) ? { u: bu, v: bv } : { u: wristHighU ? 0.12 : 0.88, v: (vlo + vhi) / 2 });
+      }
+      cloud.tips = tips;
+    };
+    derive(this.hands.A, true);
+    derive(this.hands.B, false);
   }
   onResize(w, h) { super.onResize(w, h); } // normalized coords — no respawn
 
@@ -169,6 +194,26 @@ export class PurposeMaker extends Scene {
     const cohK = this.p('cohesion') * 8.0;
     const noise = this.noise;
     const H = this.hands;
+    // 5-finger strand anchors (sim coords) for the active hand(s): P0 wrist, P1 control/bow, P2
+    // fingertip. The line phase fans grains along these curves so 複数の線 read as the fingers.
+    const both = st.station === 'Both';
+    const mkStrands = (hand) => {
+      const cloud = hand === 0 ? H.A : H.B, w = cloud.wrist, tips = cloud.tips;
+      const offU = both ? (hand === 0 ? BOFFA : BOFFB) : (hand === 0 ? OFFA : OFFB);
+      const spanU = both ? BSPANX : SPANX, spanV = both ? BSPANY : SPANY, dy0 = both ? (hand === 0 ? BDY : -BDY) : 0;
+      const mx = (u) => offU + spanU * u, my = (v) => (0.5 - v) * spanV + dy0;
+      const wx = mx(w.u), wy = my(w.v), fan = [];
+      for (let k = 0; k < 5; k++) {
+        const fx = mx(tips[k].u), fy = my(tips[k].v);
+        const cx2 = (wx + fx) / 2, cy2 = (wy + fy) / 2, ddx = fx - wx, ddy = fy - wy, L = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+        const bow = 0.16 * (k - 2); // splayed perpendicular bow -> gentle, distinct curves
+        fan.push([wx, wy, cx2 + (-ddy / L) * bow, cy2 + (ddx / L) * bow, fx, fy]);
+      }
+      return fan;
+    };
+    const strandsA = (st.station === 'R' || both) ? mkStrands(0) : null;
+    const strandsB = (st.station === 'L' || both) ? mkStrands(1) : null;
+    const smax = clamp01(g / GHOLD); // strands grow to full length by the time convergence onsets
 
     for (let i = 0; i < n; i++) {
       this.PX[i] = this.X[i]; this.PY[i] = this.Y[i]; this.PZ[i] = this.Z[i];
@@ -208,6 +253,17 @@ export class PurposeMaker extends Scene {
         const gp = clamp01((g - phi * ACT_SPAN) / (1 - ACT_SPAN));
         let conv = smoother(clamp01((gp - GHOLD) / (1 - GHOLD)));
         conv = conv + F.snapConv * (1 - conv);               // a kick nudges convergence in
+        // 5 curved strands: during the LINE phase pull grains onto their fanned finger-curve (one
+        // of 5, by hash), then blend the aim across to the real hand target as the hand resolves —
+        // so the 5 curves literally open into the fingers. `ss` spreads grains along the growing
+        // strand; `pw` is the strand pull (F.line) handing off to the target pull (conv).
+        const fan = hand === 0 ? strandsA : strandsB;
+        const seg = fan[(this._h(i * 23 + 5) * 5) | 0];
+        const ss = this._h(i * 29 + 13) * smax, oms = 1 - ss;
+        const curveX = oms * oms * seg[0] + 2 * oms * ss * seg[2] + ss * ss * seg[4];
+        const curveY = oms * oms * seg[1] + 2 * oms * ss * seg[3] + ss * ss * seg[4 + 1];
+        const aimX = curveX + (tx - curveX) * conv, aimY = curveY + (ty - curveY) * conv;
+        const pw = clamp01(1.1 * F.line + conv);
         // wavering advance/retreat before the grains lock (slow, deterministic, dies as conv->1)
         const waver = Math.sin(this.t * 0.7 + hi * TWO_PI) * 0.10 * (1 - conv);
         const adv = 0.9 * F.advance * (1 - conv);            // net streaming carry along entry axis
@@ -226,9 +282,9 @@ export class PurposeMaker extends Scene {
         vy += diry * lc;
         vz += (zTarget - z) * SHEET_K * F.sheet + 0.5 * waver; // gather onto the band plane
         const qv = conv > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
-        vx = vx * handSp * (1 - conv) + ((tx - x) * cohK + qv) * conv * dt;
-        vy = vy * handSp * (1 - conv) + ((ty - y) * cohK + qv * 0.5) * conv * dt;
-        vz = vz * handSp * (1 - conv) + ((zTarget - z) * cohK) * conv * dt;
+        vx = vx * handSp * (1 - pw) + ((aimX - x) * cohK + qv) * pw * dt;
+        vy = vy * handSp * (1 - pw) + ((aimY - y) * cohK + qv * 0.5) * pw * dt;
+        vz = vz * handSp * (1 - pw) + ((zTarget - z) * cohK) * pw * dt;
         this.X[i] = x + vx; this.Y[i] = y + vy; this.Z[i] = z + vz;
         this.cv[i] = conv;
         continue;
@@ -310,8 +366,10 @@ export class PurposeMaker extends Scene {
         // a grain is bright only when it is BOTH converged (emerge) AND settled (settle): the
         // resolved, still hand is the luminous payoff, while transiting/streaming grains stay
         // faint — so the build reads as a quiet coalescing, not bright motion trails.
-        const emerge = 0.10 + 0.90 * cv * cv;
-        const settle = 1 / (1 + 55 * mmRaw / R);
+        // the 5 line strands GLOW even before they lock (they're organised, so no blow-out), and
+        // the motion-dimming eases during the line phase so the moving curves stay visible.
+        const emerge = Math.max(0.10 + 0.90 * cv * cv, 0.55 * Fl);
+        const settle = 1 / (1 + 55 * mmRaw / R * (1 - 0.7 * Fl));
         bv = 1.40 * armFade * (0.5 + 0.5 * d) * (1 + 0.25 * flash) * emerge * settle;
       } else {
         // sparse calm field: draw only a fraction of ambient grains, so the converging mass is the
