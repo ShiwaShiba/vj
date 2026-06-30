@@ -38,15 +38,19 @@ export class PurposeMaker extends Scene {
       { key: 'seq', label: 'Seq', options: ['R L Both', 'R L R L Both', 'R L R L R L Both'], index: 1 },
     ];
     this.defineParam('count', 42000, 10000, MAXN, 1000, 'Particles');
+    // — hand —
     this.defineParam('recruit', 0.60, 0.3, 0.9, 0.05, 'Recruit'); // dense hand mass = the star
-    this.defineParam('flow', 0.62, 0.1, 1.5, 0.05, 'Flow Speed');
-    this.defineParam('scale', 1.6, 0.6, 3.2, 0.1, 'Field Scale');
+    this.defineParam('flow', 0.62, 0.1, 1.5, 0.05, 'Hand Flow');
     this.defineParam('cohesion', 1.0, 0.3, 2.0, 0.1, 'Cohesion');
-    this.defineParam('thread', 0.9, 0.4, 2.0, 0.1, 'Thread');
-    this.defineParam('react', 1.0, 0, 6, 0.5, 'React');
+    this.defineParam('react', 1.0, 0, 6, 0.5, 'Hand Audio');
     this.defineParam('pace', 1.0, 0.4, 2.0, 0.1, 'Pace');
-    this.defineParam('ambient', 0.30, 0, 1, 0.05, 'Ambient'); // sparse calm field between events
+    this.defineParam('thread', 0.9, 0.4, 2.0, 0.1, 'Thread');
     this.defineParam('depth', 0.6, 0, 1, 0.05, 'Depth');      // z-sheet parallax during the band phase
+    // — 綿毛 (mist / ambient): its own knobs so operating it never fights the hand —
+    this.defineParam('ambient', 0.30, 0, 1, 0.05, 'Mist Density'); // sparse calm field between events
+    this.defineParam('ambFlow', 0.62, 0.1, 1.5, 0.05, 'Mist Flow');
+    this.defineParam('scale', 1.6, 0.6, 3.2, 0.1, 'Mist Scale');
+    this.defineParam('ambReact', 1.0, 0, 6, 0.5, 'Mist Audio'); // 明滅 strength + line-snap
     this.noise = new SimplexNoise(11);
     this.X = this.Y = this.Z = this.PX = this.PY = this.PZ = null;
     this.sx = this.sy = this.psx = this.psy = this.sval = this.sband = null;
@@ -111,7 +115,7 @@ export class PurposeMaker extends Scene {
     const n = this.n = Math.min(MAXN, Math.round(this.p('count') * q));
     const recruit = this.p('recruit');
     const audioOn = this.mg('audio') === 1;
-    const react = this.p('react');
+    const handReact = this.p('react'), ambReact = this.p('ambReact'); // hand vs 綿毛 audio, separate
     // station: Cycle = auto choreography over the chosen sequence; else lock to one station held.
     const mi = this.modeIndex;
     const seq = SEQS[this.mg('seq')] || SEQS[1];
@@ -122,14 +126,14 @@ export class PurposeMaker extends Scene {
     // line<->particle breathing: ONE coherence pulse K drives every texture cue at once
     // (frequency, comb, scatter, speed, persistence, brightness, streak length). Audio
     // (beat/bass) snaps K toward the LINE regime, so the STRUCTURE tracks the music.
-    const B = breathAt(this.t, { level: audio.level, bass: audio.bass, treble: audio.treble, beatHold: audio.beatHold }, { react, audioOn });
+    const B = breathAt(this.t, { level: audio.level, bass: audio.bass, treble: audio.treble, beatHold: audio.beatHold }, { react: ambReact, audioOn });
     this._B = B;
     // form coupling: ONE build progress g drives the recruited grains' texture AND convergence,
     // so the hand IS the fluid converging (dust->line->band->hand). g falls on disperse => the
     // dissolve is the build in reverse. Audio rides the same signal (snapLine/snapConv/flash).
     const g = st.c;
     const rev = st.phase === 'disperse';
-    const F = formAt(g, { beatHold: audio.beatHold, bass: audio.bass }, { react, audioOn });
+    const F = formAt(g, { beatHold: audio.beatHold, bass: audio.bass }, { react: handReact, audioOn });
     this._F = F;
     // depth cue: the band phase tilts the field for parallax (the slabs read as stacked planes),
     // easing back to a near-flat tilt at hold so the resolved hand is crisp. +a tiny sway for life.
@@ -144,7 +148,8 @@ export class PurposeMaker extends Scene {
     const fa = this.turb.flowAngle, dirx = Math.cos(fa), diry = -Math.sin(fa);
     const swirlAmp = 0.24 + 0.85 * B.scatter;      // line pole = little swirl -> smooth comb
     const comb = B.forward + 0.62 * B.advance;     // along-flow comb: stretch into filaments
-    const sp = this.p('flow') * B.speed * dt;
+    const handSp = this.p('flow') * dt;            // hand transit speed (decoupled from the 綿毛 breath)
+    const ambSp = this.p('ambFlow') * B.speed * dt; // 綿毛 flow speed (breathes with its own K)
     const zt = this.t * 0.05;
     const cohK = this.p('cohesion') * 8.0;
     const noise = this.noise;
@@ -206,9 +211,9 @@ export class PurposeMaker extends Scene {
         vy += diry * lc;
         vz += (zTarget - z) * SHEET_K * F.sheet + 0.5 * waver; // gather onto the band plane
         const qv = conv > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
-        vx = vx * sp * (1 - conv) + ((tx - x) * cohK + qv) * conv * dt;
-        vy = vy * sp * (1 - conv) + ((ty - y) * cohK + qv * 0.5) * conv * dt;
-        vz = vz * sp * (1 - conv) + ((zTarget - z) * cohK) * conv * dt;
+        vx = vx * handSp * (1 - conv) + ((tx - x) * cohK + qv) * conv * dt;
+        vy = vy * handSp * (1 - conv) + ((ty - y) * cohK + qv * 0.5) * conv * dt;
+        vz = vz * handSp * (1 - conv) + ((zTarget - z) * cohK) * conv * dt;
         this.X[i] = x + vx; this.Y[i] = y + vy; this.Z[i] = z + vz;
         this.cv[i] = conv;
         continue;
@@ -218,7 +223,7 @@ export class PurposeMaker extends Scene {
       const cn = Math.sin(x * 1.3 + zt * 1.5) * Math.cos(y * 1.1 - zt);
       const lcomb = comb * (0.5 + 0.55 * (cn + 1));
       vx += dirx * lcomb; vy += diry * lcomb;
-      let nx = x + vx * sp, ny = y + vy * sp, nz = z + vz * sp;
+      let nx = x + vx * ambSp, ny = y + vy * ambSp, nz = z + vz * ambSp;
       // off-box ambient particles re-enter on the inflow edge -> continuous off-frame flow.
       if (nx < -SIMX || nx > SIMX || ny < -SIMY || ny > SIMY || nz < -1.2 || nz > 1.2) {
         const p = this._ambientPos(i, true);
@@ -253,6 +258,7 @@ export class PurposeMaker extends Scene {
     const shAmp = (B ? B.shimmer : 0) * 0.05 * R;
     const tw = this.t;
     const ambDensity = this.p('ambient'); // fraction of ambient grains drawn (calm sparse field)
+    const ambFlash = this.p('ambReact');  // 綿毛 明滅 strength (beat flash brightness)
     for (let i = 0; i < n; i++) {
       const z = this.Z[i];
       const tyc = this.Y[i] * cX - z * sX;
@@ -318,7 +324,7 @@ export class PurposeMaker extends Scene {
         const depth = 0.4 + 0.6 * d;
         // conserved field light + an ADDITIVE beat flash (outside length-conservation, so the
         // kick is unmistakably BRIGHTER, not cancelled by the streak-length division).
-        bv = (0.40 * ambB) * depth * fall * core * lenComp + 0.42 * flash * depth * fall;
+        bv = (0.40 * ambB) * depth * fall * core * lenComp + 0.42 * flash * ambFlash * depth * fall;
       }
       this.psx[i] = bx; this.psy[i] = by; this.sx[i] = sxc; this.sy[i] = syc;
       let band = (bv * BANDS) | 0; if (band >= BANDS) band = BANDS - 1; if (band < 0) band = 0;

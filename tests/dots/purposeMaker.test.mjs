@@ -173,6 +173,25 @@ test('ambient density thins the calm background field (the converging mass stays
   assert.ok(sparse < 0.45, `ambient field thinned to calm at density 0.30 (${sparse.toFixed(2)})`);
 });
 
+test('the 綿毛 (mist/ambient) has its own sliders, separate from the hand', () => {
+  const s = new PurposeMaker();
+  for (const k of ['ambient', 'ambFlow', 'scale', 'ambReact']) assert.ok(s.p(k) !== undefined, `mist param ${k} defined`);
+  for (const k of ['recruit', 'cohesion', 'flow', 'react']) assert.ok(s.p(k) !== undefined, `hand param ${k} defined`);
+});
+
+test('mist audio (ambReact) and hand audio (react) are independent knobs', () => {
+  const kick = { level: 0.6, bass: 0.9, treble: 0.3, beat: true, beatHold: 1 };
+  const meanCvAll = (s) => {
+    const rec = s.p('recruit'); let sum = 0, k = 0;
+    for (let i = 0; i < s.n; i++) if (s._h(i * 7 + 99) < rec) { sum += s.cv[i]; k++; }
+    return k ? sum / k : 0;
+  };
+  // hand convergence must track the HAND audio (react), not the mist audio (ambReact)
+  const a = freshScene(8000); a.params.react.value = 0; a.params.ambReact.value = 6; driveTo(a, GATHER_MID, kick);
+  const b = freshScene(8000); b.params.react.value = 6; b.params.ambReact.value = 0; driveTo(b, GATHER_MID, kick);
+  assert.ok(meanCvAll(b) > meanCvAll(a) + 1e-6, 'a kick on the HAND audio advances convergence; the mist audio does not');
+});
+
 test('full RLRLBoth cycle (incl. Both + disperse, with a kick) stays finite — no NaN', () => {
   const s = freshScene(6000);
   const kick = { level: 0.6, bass: 0.8, treble: 0.4, beat: true, beatHold: 1 };
