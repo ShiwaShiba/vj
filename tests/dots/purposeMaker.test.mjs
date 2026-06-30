@@ -173,6 +173,23 @@ test('ambient density thins the calm background field (the converging mass stays
   assert.ok(sparse < 0.45, `ambient field thinned to calm at density 0.30 (${sparse.toFixed(2)})`);
 });
 
+test('mist flow modes: Radial emanates outward from centre (with a spread slider)', () => {
+  const s = freshScene(10000);
+  const grp = s.modeGroups.find((g) => g.key === 'flow');
+  assert.ok(grp && grp.options.length === 3, 'flow modeGroup with 3 options (Directional/Radial/Wander)');
+  assert.ok(s.p('spread') !== undefined, 'spread (range) param defined');
+  s.setModeGroup('flow', grp.options.indexOf('Radial'));
+  driveTo(s, 2.0);
+  const rec = s.p('recruit');
+  let outward = 0, k = 0;
+  for (let i = 0; i < s.n; i++) {
+    if (s._h(i * 7 + 99) < rec) continue; // ambient only
+    const r0 = Math.hypot(s.PX[i], s.PY[i]), r1 = Math.hypot(s.X[i], s.Y[i]);
+    if (Math.abs(r1 - r0) < 0.2) { if (r1 > r0) outward++; k++; } // skip reseed jumps
+  }
+  assert.ok(outward / k > 0.62, `most mist grains drift outward in Radial mode (${(outward / k).toFixed(2)})`);
+});
+
 test('the 綿毛 (mist/ambient) has its own sliders, separate from the hand', () => {
   const s = new PurposeMaker();
   for (const k of ['ambient', 'ambFlow', 'scale', 'ambReact']) assert.ok(s.p(k) !== undefined, `mist param ${k} defined`);

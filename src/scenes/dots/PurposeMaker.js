@@ -36,6 +36,7 @@ export class PurposeMaker extends Scene {
     this.modeGroups = [
       { key: 'audio', label: 'Audio', options: ['OFF', 'ON'], index: 1 },
       { key: 'seq', label: 'Seq', options: ['R L Both', 'R L R L Both', 'R L R L R L Both'], index: 1 },
+      { key: 'flow', label: 'Mist Flow', options: ['Directional', 'Radial', 'Wander'], index: 0 },
     ];
     this.defineParam('count', 42000, 10000, MAXN, 1000, 'Particles');
     // — hand —
@@ -51,6 +52,7 @@ export class PurposeMaker extends Scene {
     this.defineParam('ambFlow', 0.62, 0.1, 1.5, 0.05, 'Mist Flow');
     this.defineParam('scale', 1.6, 0.6, 3.2, 0.1, 'Mist Scale');
     this.defineParam('ambReact', 1.0, 0, 6, 0.5, 'Mist Audio'); // 明滅 strength + line-snap
+    this.defineParam('spread', 0.7, 0.2, 1.4, 0.05, 'Mist Spread'); // Radial: emanation radius / range
     this.noise = new SimplexNoise(11);
     this.X = this.Y = this.Z = this.PX = this.PY = this.PZ = null;
     this.sx = this.sy = this.psx = this.psy = this.sval = this.sband = null;
@@ -96,9 +98,17 @@ export class PurposeMaker extends Scene {
     // map grid (0..1) to sim space (wider than viewport)
     let x = (gx / dim) * 2 * SIMX - SIMX;
     let y = (gy / dim) * 2 * SIMY - SIMY;
-    if (fromEdge) { // reseed on the inflow edge so flow is continuous
-      const ang = this.turb.flowAngle;
-      x = -Math.cos(ang) * SIMX; y = Math.sin(ang) * SIMY * 0.6 + (this._h(i * 13 + 9) - 0.5) * SIMY;
+    if (fromEdge) { // reseed per flow mode so the mist keeps flowing continuously
+      const mode = this.mg('flow');
+      if (mode === 1) {                 // Radial: reseed near centre -> grains emanate outward
+        const ang = this._h(i * 13 + 9) * TWO_PI, rad = (0.04 + 0.12 * this._h(i * 13 + 11)) * SIMX;
+        x = Math.cos(ang) * rad; y = Math.sin(ang) * rad;
+      } else if (mode === 2) {          // Wander: density-scattered spawn (x,y already sampled)
+        /* keep the density-sampled position */
+      } else {                          // Directional: reseed on the inflow edge
+        const ang = this.turb.flowAngle;
+        x = -Math.cos(ang) * SIMX; y = Math.sin(ang) * SIMY * 0.6 + (this._h(i * 13 + 9) - 0.5) * SIMY;
+      }
     }
     return { x, y, z: this._h(i * 17 + 5) * 2 - 1 };
   }
@@ -146,6 +156,11 @@ export class PurposeMaker extends Scene {
     const fBase = baseFreq * (this.p('scale') / 1.6);
     const f = fBase * (1.35 - 0.95 * B.K);
     const fa = this.turb.flowAngle, dirx = Math.cos(fa), diry = -Math.sin(fa);
+    // 綿毛 flow mode: Directional keeps flowAngle; Wander slowly rotates the global direction.
+    const flowMode = this.mg('flow'), spread = this.p('spread');
+    let gdx = dirx, gdy = diry;
+    if (flowMode === 2) { const wa = fa + 1.6 * Math.sin(this.t * 0.05) + 0.9 * Math.sin(this.t * 0.017 + 1.3); gdx = Math.cos(wa); gdy = -Math.sin(wa); }
+    const spreadR2 = (spread * SIMX) * (spread * SIMX);
     const swirlAmp = 0.24 + 0.85 * B.scatter;      // line pole = little swirl -> smooth comb
     const comb = B.forward + 0.62 * B.advance;     // along-flow comb: stretch into filaments
     const handSp = this.p('flow') * dt;            // hand transit speed (decoupled from the 綿毛 breath)
@@ -218,14 +233,19 @@ export class PurposeMaker extends Scene {
         this.cv[i] = conv;
         continue;
       }
-      // ambient medium: comb into aligned LINES (coherent forward) or scatter into DUST.
-      // A cheap coarse spatial term lets some streamtubes comb before others.
+      // ambient medium ("綿毛"): comb into aligned LINES or scatter into DUST. The flow direction
+      // follows the mode — Directional (fixed), Radial (outward from centre), Wander (drifting).
+      let adx = gdx, ady = gdy, push;
       const cn = Math.sin(x * 1.3 + zt * 1.5) * Math.cos(y * 1.1 - zt);
       const lcomb = comb * (0.5 + 0.55 * (cn + 1));
-      vx += dirx * lcomb; vy += diry * lcomb;
+      if (flowMode === 1) { const rr = Math.sqrt(x * x + y * y) || 1e-3; adx = x / rr; ady = y / rr; push = lcomb + 0.7; } // firm outward drift dominates the swirl
+      else push = lcomb;
+      vx += adx * push; vy += ady * push;
       let nx = x + vx * ambSp, ny = y + vy * ambSp, nz = z + vz * ambSp;
-      // off-box ambient particles re-enter on the inflow edge -> continuous off-frame flow.
-      if (nx < -SIMX || nx > SIMX || ny < -SIMY || ny > SIMY || nz < -1.2 || nz > 1.2) {
+      // recycle: Radial grains reseed beyond the spread radius (concentric emanation); all modes
+      // also reseed when they leave the sim box -> continuous off-frame flow.
+      const offBox = nx < -SIMX || nx > SIMX || ny < -SIMY || ny > SIMY || nz < -1.2 || nz > 1.2;
+      if (offBox || (flowMode === 1 && nx * nx + ny * ny > spreadR2)) {
         const p = this._ambientPos(i, true);
         nx = p.x; ny = p.y; nz = p.z;
         this.PX[i] = nx; this.PY[i] = ny; this.PZ[i] = nz; // no streak across the jump
