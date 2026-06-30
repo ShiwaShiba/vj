@@ -244,6 +244,7 @@ export class PurposeMaker extends Scene {
     const ripAmp = (B ? B.ripple : 0) * 0.09 * R;
     const shAmp = (B ? B.shimmer : 0) * 0.05 * R;
     const tw = this.t;
+    const ambDensity = this.p('ambient'); // fraction of ambient grains drawn (calm sparse field)
     for (let i = 0; i < n; i++) {
       const z = this.Z[i];
       const tyc = this.Y[i] * cX - z * sX;
@@ -264,6 +265,9 @@ export class PurposeMaker extends Scene {
         const armFade = ax < 0.55 ? 1 : Math.max(0.25, 1 - 1.5 * (ax - 0.55));
         bv = 0.90 * armFade * (0.5 + 0.5 * d) * (1 + 0.25 * flash);
       } else {
+        // sparse calm field: draw only a fraction of ambient grains, so the converging mass is the
+        // star and the background never reads as a pasted particle sheet (deterministic hash gate).
+        if (this._h(i * 11 + 7) >= ambDensity) { this.sval[i] = 0; continue; }
         // ambient: positional waveform + treble displacement applied to the head.
         if (ripAmp || shAmp) {
           let off = 0;

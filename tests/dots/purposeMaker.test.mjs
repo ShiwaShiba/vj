@@ -137,6 +137,23 @@ test('dynamic tilt: the field tilts for depth during the band phase and is flat 
   assert.ok(tiltBand > tiltHold + 0.05, `tilt larger during bands (${tiltBand.toFixed(3)}) than at hold (${tiltHold.toFixed(3)})`);
 });
 
+test('ambient density thins the calm background field (the converging mass stays the star)', () => {
+  const s = freshScene(12000);
+  driveTo(s, 7.45);                        // a gap: the hand is gone, background is just ambient
+  const recruit = s.p('recruit');
+  const drawnAmbientFrac = () => {
+    let drawn = 0, amb = 0;
+    for (let i = 0; i < s.n; i++) if (s._h(i * 7 + 99) >= recruit) { amb++; if (s.sval[i]) drawn++; }
+    return drawn / amb;
+  };
+  s.params.ambient.value = 1.0; s.draw(mockCtx(), 1);
+  const full = drawnAmbientFrac();
+  s.params.ambient.value = 0.30; s.draw(mockCtx(), 1);
+  const sparse = drawnAmbientFrac();
+  assert.ok(full > 0.9, `all ambient grains drawn at density 1.0 (${full.toFixed(2)})`);
+  assert.ok(sparse < 0.45, `ambient field thinned to calm at density 0.30 (${sparse.toFixed(2)})`);
+});
+
 test('full RLRLBoth cycle (incl. Both + disperse, with a kick) stays finite — no NaN', () => {
   const s = freshScene(6000);
   const kick = { level: 0.6, bass: 0.8, treble: 0.4, beat: true, beatHold: 1 };
