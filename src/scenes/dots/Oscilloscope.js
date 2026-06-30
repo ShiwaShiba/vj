@@ -25,6 +25,22 @@ const SPHERE_TILT = 0.42; // fixed X-axis tilt, rad — keeps the pole off dead-
 const SPHERE_COS_TILT = Math.cos(SPHERE_TILT);
 const SPHERE_SIN_TILT = Math.sin(SPHERE_TILT);
 
+// Rare HELIX-ONLY accents (never on other spreads): a SHELL bloom — a waveform
+// sphere swelling out past the coil, then fading — and a coil XY-VIBRATION — the
+// whole coil swaying in a 3:2 Lissajous (the XY scope pattern), the figure
+// undulating then settling. A single timer ALTERNATES between the two so each
+// stays a distinct, sparse event (NOT per-beat). It advances only while HELIX is
+// the active spread; a bass rising-edge fires the next accent so it lands on a
+// hit; a fallback fires it anyway if the music never spikes. Deterministic.
+const ACCENT_COOLDOWN = 13;  // s — gap between HELIX accents (alternating → each kind ~2× rarer)
+const ACCENT_FALLBACK = 30;  // s — armed-but-silent this long → fire anyway
+const ACCENT_BASS_HI = 0.72; // a bass rising-edge above this = the "hit" that fires the next accent
+const SHELL_LIFE = 2.1;      // s — shell-bloom envelope (fast swell, slow fade)
+const VIBE_LIFE = 1.6;       // s — coil-sway envelope (fast swell, slow fade)
+const VIBE_FREQ = 3.2;       // rad/s — base rate of the Lissajous sway (×3 / ×2 on the two axes)
+const VIBE_WAVES = 2.5;      // Lissajous-phase wavelengths along the coil (the undulation count)
+const VIBE_AMP = 0.32;       // peak sway as a fraction of the figure scale
+
 export class Oscilloscope extends Scene {
   constructor() {
     super('scope', 'Oscilloscope');
@@ -52,6 +68,11 @@ export class Oscilloscope extends Scene {
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
     this._spin = 0; // accumulated rotation, radians
+    this._accentT = -1;      // scheduler clock for HELIX rare accents (<0 = re-arm on entering HELIX)
+    this._accentKind = 1;    // alternates 0/1 → shell vs vibration, so each stays a distinct rare event
+    this._shellFireT = -100; // clock time the shell bloom last fired (far past = not playing)
+    this._vibeFireT = -100;  // clock time the coil vibration last fired (far past = not playing)
+    this._prevBass = 0;      // previous-frame bass, for rising-edge (hit) detection
   }
 
   update(dt, audio, palette, clock) {
@@ -78,6 +99,24 @@ export class Oscilloscope extends Scene {
       spinRate = 0; // Spin OFF — frozen wherever it is, slider ignored
     }
     this._spin = (this._spin + dt * spinRate * TWO_PI) % TWO_PI;
+
+    // Rare HELIX-only accents (shell bloom + coil XY-vibration) — see ACCENT_*/
+    // VIBE_* and _drawSphere. One timer alternates between the two so each stays a
+    // distinct rare event; it only advances while HELIX is the active spread and
+    // fires on a bass hit (cooldown-gated, with a silent fallback). Deterministic.
+    const hit = this.bass > ACCENT_BASS_HI && this._prevBass <= ACCENT_BASS_HI;
+    if (this._effSpread() === 5) {
+      if (this._accentT < 0) this._accentT = this.t; // arm on entering HELIX
+      const since = this.t - this._accentT;
+      if (since > ACCENT_COOLDOWN && (hit || since > ACCENT_FALLBACK)) {
+        this._accentT = this.t;
+        this._accentKind ^= 1; // alternate: shell ↔ vibration (deterministic, no RNG)
+        if (this._accentKind) this._vibeFireT = this.t; else this._shellFireT = this.t;
+      }
+    } else {
+      this._accentT = -1; // re-arm next time HELIX becomes active
+    }
+    this._prevBass = this.bass;
   }
 
   // Effective XY controls. Auto overrides the manual values with deterministic
@@ -320,11 +359,25 @@ export class Oscilloscope extends Scene {
         const count = Math.max(1, Math.round(this.p('count')));
         this._drawRibbon(ctx, wave, step, N, reach, lag, flip, alpha, project, dirDepth, band, colorCss, count);
       } else {
+        // HELIX coil XY-VIBRATION (rare accent, HELIX only): the coil SWAYS in a 3:2
+        // Lissajous — the XY scope pattern — its x and z displaced by two sines in a
+        // 3:2 frequency ratio, with the Lissajous phase travelling along the strand so
+        // the column undulates. Swells in then settles over VIBE_LIFE. The central
+        // scope spine (_drawHelixScope) is left steady, so the coil sways around it.
+        const vibeAge = this.t - this._vibeFireT;
+        const vibeEnv = (spread === 5 && vibeAge >= 0 && vibeAge < VIBE_LIFE)
+          ? Math.min(1, vibeAge / 0.1) * Math.pow(1 - vibeAge / VIBE_LIFE, 1.4) : 0;
         // Same figure+spread at any scale/lag — core and outer share it.
         const drawFig = (scale, lg, intensity) => {
           const pts = [];
           for (let i = 0; i + 2 * lg < N; i += step) {
             const p = this._spreadPoint(wave, i, lg, scale, flip, N, spread);
+            if (vibeEnv > 0) { // sway in a 3:2 Lissajous (patternXY); louder = wider
+              const ph = (i / N) * TWO_PI * VIBE_WAVES;                  // phase travels along the coil
+              const va = vibeEnv * VIBE_AMP * scale * (0.55 + 0.45 * band);
+              p[0] += Math.sin(this.t * VIBE_FREQ * 3 + ph) * va;        // x axis at ×3
+              p[2] += Math.sin(this.t * VIBE_FREQ * 2 + ph + 1.3) * va;  // z axis at ×2 → 3:2 figure
+            }
             pts.push(project(p[0], p[1], p[2]));
           }
           strokeSegs(pts, intensity);
@@ -341,6 +394,13 @@ export class Oscilloscope extends Scene {
           drawFig(coreScale, coreLag, 0.95);
         }
         drawFig(reach, lag, 1);
+        // Rare SPHERE-shell accent — HELIX ONLY (see update()/ACCENT_*).
+        if (spread === 5) {
+          const shellAge = this.t - this._shellFireT;
+          if (shellAge >= 0 && shellAge < SHELL_LIFE) {
+            this._drawShellAccent(ctx, wave, N, reach, shellAge, band, alpha, project);
+          }
+        }
       }
     }
     ctx.globalAlpha = alpha; // restore for anything drawn after
@@ -371,6 +431,46 @@ export class Oscilloscope extends Scene {
     const baseW = Math.max(1, this.p('thickness') * 0.5);
     ctx.lineWidth = baseW + 2.4; ctx.globalAlpha = alpha * 0.10; trace(); // soft halo
     ctx.lineWidth = baseW; ctx.globalAlpha = alpha * 0.8; trace();         // crisp trace
+    ctx.restore();
+  }
+
+  // Rare SPHERE-shell accent (HELIX only): a waveform sphere that blooms over the
+  // HELIX coil on a hit, then fades (see ACCENT_*/SHELL_LIFE + update()). Globe-style
+  // latitude rings whose radius is relieved by the live waveform — reads instantly
+  // as a sphere and never collapses when quiet (unlike the angle-mapped SPHERE
+  // spread, which folds to a dot on a flat wave). It SWELLS outward past the
+  // figure (a shockwave shell) and fades over SHELL_LIFE. Faint, additive,
+  // depth-dimmed, mono. Shares the figure's spin/tilt via project. Deterministic.
+  _drawShellAccent(ctx, wave, N, reach, age, band, alpha, project) {
+    const f = age / SHELL_LIFE;                                 // 0..1 over the bloom
+    const env = Math.min(1, age / 0.14) * Math.pow(1 - f, 1.5); // fast swell, slow fade
+    if (env <= 0.002) return;
+    // Halo radius tracks the figure scale (`reach`) so the shell ENCLOSES it on
+    // every spread — even the tall HELIX coil — then swells outward past it as the
+    // bloom ages (a shockwave shell), with a touch of drive-band breath.
+    const baseR = reach * (1.06 + 0.32 * f) * (1 + 0.10 * this.p('drive') * band);
+    const amp = 0.13;                                           // waveform relief on the shell
+    const rings = 6, M = 60;
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(0.75, this.p('thickness') * 0.45);
+    for (let r = 0; r < rings; r++) {
+      const lat = -Math.PI / 2 + Math.PI * ((r + 0.5) / rings);
+      const cosLat = Math.cos(lat), sinLat = Math.sin(lat);
+      let prev = null;
+      for (let m = 0; m <= M; m++) {
+        const g = m / M, lon = g * TWO_PI;
+        const wi = (Math.floor(g * (N - 1)) + r * 53) % N;
+        const rad = baseR * (1 + ((wave[wi] - 128) / 128) * amp);
+        const p = project(cosLat * Math.cos(lon) * rad, sinLat * rad, cosLat * Math.sin(lon) * rad);
+        if (prev) {
+          const d = (prev.depth + p.depth) * 0.5;
+          ctx.globalAlpha = alpha * env * (0.20 + 0.56 * (d * 0.5 + 0.5)); // faint, back dimmer
+          ctx.beginPath(); ctx.moveTo(prev.sx, prev.sy); ctx.lineTo(p.sx, p.sy); ctx.stroke();
+        }
+        prev = p;
+      }
+    }
     ctx.restore();
   }
 
