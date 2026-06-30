@@ -83,6 +83,50 @@ test('importanceSample is deterministic for a fixed seed', () => {
   assert.deepStrictEqual(Array.from(a.u), Array.from(b.u));
 });
 
+test('importanceSample rejects near-paper background => no rectangular box around the silhouette', () => {
+  // A centered dark blob (the "hand") on a bright paper plateau, surrounded by a border/corner
+  // ring a little darker than paper. That ring is the real failure mode: a large near-paper area
+  // the old sampler scattered stray points into, drawing the crop rectangle. The plateau (=paper)
+  // is the histogram mode, so the ring keeps a small-but-positive ink the old code still accepts.
+  const w = 160, h = 120, paper = 240, cx = w / 2, cy = h / 2;
+  const inBlob = (x, y) => ((x - cx) / 24) ** 2 + ((y - cy) / 16) ** 2 < 1;
+  const isBorder = (x, y) => x < 16 || x > w - 16 || y < 12 || y > h - 12;
+  const isCorner = (x, y) => (x < 16 || x > w - 16) && (y < 12 || y > h - 12);
+  const lum = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    lum[y * w + x] = inBlob(x, y) ? 40 : isBorder(x, y) ? paper - 12 : paper;
+  }
+  const { n, u, v } = importanceSample({ w, h, lum }, 6000, 11);
+  assert.ok(n > 3500, `still collects plenty of silhouette points (${n})`);
+  let corner = 0, blob = 0;
+  for (let i = 0; i < n; i++) {
+    const px = (u[i] / 32767) * (w - 1), py = (v[i] / 32767) * (h - 1);
+    if (isCorner(px, py)) corner++;
+    if (inBlob(px, py)) blob++;
+  }
+  assert.ok(corner / n < 0.005, `<0.5% of points in the corners (got ${(100 * corner / n).toFixed(2)}%)`);
+  assert.ok(blob / n > 0.9, `>90% of points inside the silhouette (got ${(100 * blob / n).toFixed(1)}%)`);
+});
+
+test('importanceSample margin adapts to low contrast and still rejects background', () => {
+  // Soft overall contrast (blob only ~55 below paper) with a darker border ring.
+  const w = 100, h = 100, paper = 200, cx = 50, cy = 50;
+  const inBlob = (x, y) => ((x - cx) / 20) ** 2 + ((y - cy) / 20) ** 2 < 1;
+  // thin border so the bright paper plateau stays the histogram mode (= the scatter target)
+  const isBorder = (x, y) => x < 8 || x > w - 8 || y < 8 || y > h - 8;
+  const lum = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    lum[y * w + x] = inBlob(x, y) ? paper - 55 : isBorder(x, y) ? paper - 8 : paper;
+  }
+  const { n, u, v } = importanceSample({ w, h, lum }, 4000, 5);
+  let bg = 0;
+  for (let i = 0; i < n; i++) {
+    const px = (u[i] / 32767) * (w - 1), py = (v[i] / 32767) * (h - 1);
+    if (!inBlob(px, py)) bg++;
+  }
+  assert.ok(bg / n < 0.03, `background scatter rejected at low contrast (got ${(100 * bg / n).toFixed(2)}%)`);
+});
+
 function frame(w, h, fn) { const lum = new Float32Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) lum[y * w + x] = fn(x, y); return { w, h, lum }; }
 
