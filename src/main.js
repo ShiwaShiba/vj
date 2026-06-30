@@ -1,3 +1,9 @@
+/*!
+ * VJ — https://github.com/ShiwaShiba/vj
+ * Copyright (c) 2026 ShiwaShiba. All rights reserved.
+ * Proprietary & confidential. No license is granted — see LICENSE.
+ * Unauthorized copying, modification, or redistribution is prohibited.
+ */
 import { CONFIG } from './config.js';
 import { Canvas } from './engine/Canvas.js';
 import { Clock } from './engine/Clock.js';
