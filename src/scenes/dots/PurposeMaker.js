@@ -5,6 +5,7 @@ import { decodeHandTargets } from './handTargets.js';
 import { decodeTurbProfile } from './turbProfile.js';
 import { cohesionAt, smoother } from './purposeMakerChoreo.js';
 import { breathAt } from './purposeMakerField.js';
+import { formAt, GHOLD } from './purposeMakerForm.js';
 
 // PurposeMaker — hands coalesce out of a video-derived turbulence field (R→L→Both),
 // hold, then dissolve, seamlessly. A `recruit` fraction of particles condenses onto
@@ -22,13 +23,19 @@ const SPANX = 1.64, SPANY = 0.92, OFFA = -0.30, OFFB = -1.34;
 // Both: kept large enough (undistorted) that the long fingers still separate; fingertips meet
 // just off-centre with a small vertical offset so the two hands read distinctly, not as a knot.
 const BSPANX = 1.20, BSPANY = 0.67, BOFFA = -0.224, BOFFB = -0.976, BDY = 0.13;
+const ACT_SPAN = 0.45;          // convergence-front width: the fraction of g the edge->locus sweep spans
+const SEQS = [['R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'R', 'L', 'Both']];
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 export class PurposeMaker extends Scene {
   constructor() {
     super('purposeMaker', 'PurposeMaker');
     this.trail = 0.16;
     this.modes = [{ name: 'Cycle' }, { name: 'Right' }, { name: 'Left' }, { name: 'Both' }];
-    this.modeGroups = [{ key: 'audio', label: 'Audio', options: ['OFF', 'ON'], index: 1 }];
+    this.modeGroups = [
+      { key: 'audio', label: 'Audio', options: ['OFF', 'ON'], index: 1 },
+      { key: 'seq', label: 'Seq', options: ['R L Both', 'R L R L Both', 'R L R L R L Both'], index: 1 },
+    ];
     this.defineParam('count', 42000, 10000, MAXN, 1000, 'Particles');
     this.defineParam('recruit', 0.45, 0.3, 0.9, 0.05, 'Recruit');
     this.defineParam('flow', 0.62, 0.1, 1.5, 0.05, 'Flow Speed');
@@ -37,6 +44,8 @@ export class PurposeMaker extends Scene {
     this.defineParam('thread', 0.9, 0.4, 2.0, 0.1, 'Thread');
     this.defineParam('react', 1.0, 0, 6, 0.5, 'React');
     this.defineParam('pace', 1.0, 0.4, 2.0, 0.1, 'Pace');
+    this.defineParam('ambient', 0.30, 0, 1, 0.05, 'Ambient'); // sparse calm field between events
+    this.defineParam('depth', 0.6, 0, 1, 0.05, 'Depth');      // z-sheet parallax during the band phase
     this.noise = new SimplexNoise(11);
     this.X = this.Y = this.Z = this.PX = this.PY = this.PZ = null;
     this.sx = this.sy = this.psx = this.psy = this.sval = this.sband = null;
@@ -101,17 +110,25 @@ export class PurposeMaker extends Scene {
     const recruit = this.p('recruit');
     const audioOn = this.mg('audio') === 1;
     const react = this.p('react');
-    // station: Cycle = auto choreography; else lock to that station at full cohesion
+    // station: Cycle = auto choreography over the chosen sequence; else lock to one station held.
     const mi = this.modeIndex;
+    const seq = SEQS[this.mg('seq')] || SEQS[1];
     let st;
-    if (mi === 0) st = cohesionAt(this.t, { pace: this.p('pace') });
-    else { const map = [null, 'R', 'L', 'Both']; const s = map[mi]; st = { station: s, cR: s !== 'L' ? 1 : 0, cL: s !== 'R' ? 1 : 0, phase: 'hold' }; }
+    if (mi === 0) st = cohesionAt(this.t, { pace: this.p('pace'), seq });
+    else { const map = [null, 'R', 'L', 'Both']; const s = map[mi]; st = { station: s, c: 1, cR: s !== 'L' ? 1 : 0, cL: s !== 'R' ? 1 : 0, phase: 'hold' }; }
 
     // line<->particle breathing: ONE coherence pulse K drives every texture cue at once
     // (frequency, comb, scatter, speed, persistence, brightness, streak length). Audio
     // (beat/bass) snaps K toward the LINE regime, so the STRUCTURE tracks the music.
     const B = breathAt(this.t, { level: audio.level, bass: audio.bass, treble: audio.treble, beatHold: audio.beatHold }, { react, audioOn });
     this._B = B;
+    // form coupling: ONE build progress g drives the recruited grains' texture AND convergence,
+    // so the hand IS the fluid converging (dust->line->band->hand). g falls on disperse => the
+    // dissolve is the build in reverse. Audio rides the same signal (snapLine/snapConv/flash).
+    const g = st.c;
+    const rev = st.phase === 'disperse';
+    const F = formAt(g, { beatHold: audio.beatHold, bass: audio.bass }, { react, audioOn });
+    this._F = F;
     // persistence breathes too: lines linger (low trail = more persistence), dust is crisper.
     this.trail = 0.16 + 0.13 * (1 - B.K);
 
@@ -133,18 +150,14 @@ export class PurposeMaker extends Scene {
       const x = this.X[i], y = this.Y[i], z = this.Z[i];
       const hi = this._h(i * 7 + 99);
       const isHand = hi < recruit;
-      let cc = 0;
-      if (isHand) {
-        const which = st.station === 'L' ? st.cL : st.station === 'R' ? st.cR
-          : (this._h(i * 3 + 1) < 0.5 ? st.cR : st.cL);
-        cc = smoother(which);
-      }
       // shared turbulent swirl (amplitude breathes with scatter)
       let vx = noise.noise3D(x * f, y * f, z * f + zt) * swirlAmp;
       let vy = noise.noise3D(x * f + 5.2, y * f + 9.1, z * f + zt + 2.3) * swirlAmp;
       let vz = noise.noise3D(x * f + 2.7, y * f + 4.4, z * f + zt + 7.8) * swirlAmp * 0.7;
-      if (isHand && cc > 0.001) {
-        // coalesce onto the hand point-cloud (target computed inline -> no per-particle alloc).
+      // The hand is the fluid CONVERGING. While a station is active (not the gap) recruited grains
+      // stream in from the entry edge and morph dust->line->band->hand under formAt(g); in the gap
+      // they fall through to the ambient block and rejoin the calm field.
+      if (isHand && st.phase !== 'gap') {
         let hand, cloud;
         if (st.station === 'R') { hand = 0; cloud = H.A; }
         else if (st.station === 'L') { hand = 1; cloud = H.B; }
@@ -159,11 +172,26 @@ export class PurposeMaker extends Scene {
           tx = (hand === 0 ? OFFA : OFFB) + SPANX * u;
           ty = (0.5 - vv) * SPANY;
         }
-        vx += dirx * comb; vy += diry * comb;
-        const qv = cc > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
-        vx = vx * sp * (1 - cc) + ((tx - x) * cohK + qv) * cc * dt;
-        vy = vy * sp * (1 - cc) + ((ty - y) * cohK + qv * 0.5) * cc * dt;
-        vz = vz * sp * (1 - cc) + ((0 - z) * cohK) * cc * dt;
+        // convergence front: targets near the entry edge resolve first (low phi -> high gp); on
+        // disperse the far/fingertip side dissolves first. gp = this grain's staggered progress.
+        const entrySign = hand === 0 ? 1 : -1;
+        const dEdge = entrySign > 0 ? (SIMX - tx) / (2 * SIMX) : (tx + SIMX) / (2 * SIMX);
+        const phi = rev ? (1 - dEdge) : dEdge;
+        const gp = clamp01((g - phi * ACT_SPAN) / (1 - ACT_SPAN));
+        let conv = smoother(clamp01((gp - GHOLD) / (1 - GHOLD)));
+        conv = conv + F.snapConv * (1 - conv);               // a kick nudges convergence in
+        // wavering advance/retreat before the grains lock (slow, deterministic, dies as conv->1)
+        const waver = Math.sin(this.t * 0.7 + hi * TWO_PI) * 0.10 * (1 - conv);
+        const adv = 0.9 * F.advance * (1 - conv);            // net streaming carry along entry axis
+        const dir = rev ? 1 : -1;                            // edge->locus (gather) / locus->edge (disperse)
+        const lc = (F.line * (1 + 0.6 * F.snapLine)) * comb; // filament-comb, punched by the beat
+        vx += dirx * lc + dir * entrySign * adv + entrySign * waver;
+        vy += diry * lc;
+        vz += 0.5 * waver;
+        const qv = conv > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
+        vx = vx * sp * (1 - conv) + ((tx - x) * cohK + qv) * conv * dt;
+        vy = vy * sp * (1 - conv) + ((ty - y) * cohK + qv * 0.5) * conv * dt;
+        vz = vz * sp * (1 - conv) + ((0 - z) * cohK) * conv * dt;
         this.X[i] = x + vx; this.Y[i] = y + vy; this.Z[i] = z + vz;
         continue;
       }
