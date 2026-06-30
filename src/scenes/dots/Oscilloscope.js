@@ -38,8 +38,8 @@ export class Oscilloscope extends Scene {
     this.defineParam('phase', 8, 1, 64, 1, 'Phase');     // self-correlation lag = loop shape (XY + Sphere/LISSA)
     this.defineParam('rotate', 0, -0.5, 0.5, 0.02, 'Rotate'); // spin rev/s — XY figure or Sphere self-rotation (centre dead-zone)
     this.defineParam('drive', 0.6, 0, 1.5, 0.05, 'Drive');    // band-driven breathing depth
-    this.defineParam('density', 9, 3, 24, 1, 'Density');      // Sphere only: GLOBE ring count / WRAP winding count
-    this.defineParam('core', 0.12, 0, 0.45, 0.01, 'Core');    // LISSA only: central nucleus scale (same figure, tighter lag; 0 = off)
+    this.defineParam('density', 9, 3, 24, 1, 'Density');      // Sphere only: GLOBE ring count / WRAP winding count / HELIX coil turns
+    this.defineParam('core', 0.12, 0, 0.45, 0.01, 'Core');    // LISSA: central nucleus scale; HELIX: vertical Line-scope waveform amplitude (0 = off)
     this.defineParam('count', 1, 1, 10, 1, 'Count');          // RIBBON only: on-screen copies of the figure, grid-laid (like more dancers)
     // Button groups (rendered by ControlPanel; mainly meaningful in XY/Sphere).
     // Spin OFF freezes the figure/sphere instantly regardless of the Rotate slider.
@@ -48,7 +48,7 @@ export class Oscilloscope extends Scene {
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
       { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
       { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA'], index: 0 },
-      { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD', 'RIBBON'], index: 0 },
+      { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD', 'RIBBON', 'HELIX'], index: 0 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
     this._spin = 0; // accumulated rotation, radians
@@ -105,11 +105,12 @@ export class Oscilloscope extends Scene {
   }
 
   // Spread mode for LISSA: 0 raw self-correlation, 1 sphere, 2 toroid, 3 quad,
-  // 4 ribbon (a twisting foil body on the self-correlation centreline).
+  // 4 ribbon (a twisting foil body on the centreline), 5 helix (QUAD's open
+  // phase-portrait extruded along a time axis into a coil).
   // Auto walks through them irregularly (deterministic — varied order + dwell).
   _effSpread() {
     if (this.mg('auto') === 1) {
-      const order = [1, 2, 4, 0, 3, 2, 4, 1, 3, 0];
+      const order = [1, 2, 4, 0, 3, 5, 2, 4, 1, 5, 3, 0];
       const k = (((Math.floor(this.beats / 11 + 0.6 * Math.sin(this.beats * 0.17))) % order.length) + order.length) % order.length;
       return order[k];
     }
@@ -117,7 +118,8 @@ export class Oscilloscope extends Scene {
   }
 
   // Map a waveform window to a 3D point per the spread mode. Modes 1-3 break the
-  // bass diagonal-collapse of raw self-correlation (mode 0) into real volume.
+  // bass diagonal-collapse of raw self-correlation (mode 0) into real volume;
+  // mode 5 (helix) extrudes the open phase-portrait along a time axis (a coil).
   // All normalised to ~unit extent so they swap without resizing the figure.
   _spreadPoint(w, i, lag, s, flip, N, mode) {
     const a = (w[i] - 128) / 128;
@@ -139,6 +141,19 @@ export class Oscilloscope extends Scene {
       const b = ((w[(i + q) % N] - 128) / 128) * flip;
       const c = (w[(i + lag) % N] - 128) / 128;
       return [a * s, b * s, c * s];
+    }
+    if (mode === 5) { // HELIX — QUAD's honest self-correlation swept up a winding frame: each point is displaced radially, tangentially AND axially by the honest samples, so QUAD's small irregular wander (小刻みな不規則) rides a vertical coil around the central rod instead of being a sterile geometric spring
+      const turns = Math.max(2, Math.round(this.p('density'))); // windings over the strand — live via the Density slider (inert in other LISSA spreads)
+      const q = Math.max(1, Math.round(lag * 4)) % N;          // a large decorrelating lag (as in QUAD) → coarse irregular structure
+      const g = (w[(i + 5) % N] - 128) / 128;                  // a near-adjacent sample → high-frequency FINE grain (the 小刻み detail)
+      const b = ((w[(i + q) % N] - 128) / 128) * flip;         // QUAD decorrelated partner
+      const c = (w[(i + lag) % N] - 128) / 128;                // QUAD near partner
+      const wnd = (i / N) * TWO_PI * turns;                    // winding angle climbs with the index (the vertical coil)
+      const cw = Math.cos(wnd), sw = Math.sin(wnd);
+      const radial = 0.50 + 0.48 * a + 0.16 * g;               // honest radius wander (coarse a + fine g) about a mean — can cross the axis like QUAD
+      const tang = 0.46 * b + 0.14 * g;                        // honest tangential push → loops bunch / cross irregularly
+      const y = ((i / N) - 0.5) * 2.0 + 0.42 * c + 0.06 * g;   // climb + honest axial wander (uneven, organic spacing)
+      return [(radial * cw - tang * sw) * s, y * s, (radial * sw + tang * cw) * s];
     }
     // LISSA — raw self-correlation (three delayed copies)
     return [a * s, ((w[i + lag] - 128) / 128) * s * flip, ((w[i + 2 * lag] - 128) / 128) * s];
@@ -280,11 +295,12 @@ export class Oscilloscope extends Scene {
       strokeSegs(pts);
     } else {
       // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
-      // the drive band. The point mapping has 5 Spread modes (Spread group):
-      // LISSA (raw self-correlation), SPHERE, TOROID, QUAD, RIBBON — modes 1-3
-      // break the bass diagonal-collapse into real 3D volume; RIBBON gives the
-      // self-correlation centreline a twisting foil body; Auto walks through them
-      // irregularly. The CORE is the SAME figure+spread scaled down to the centre
+      // the drive band. The point mapping has 6 Spread modes (Spread group):
+      // LISSA (raw self-correlation), SPHERE, TOROID, QUAD, RIBBON, HELIX —
+      // modes 1-3 break the bass diagonal-collapse into real 3D volume; RIBBON
+      // gives the self-correlation centreline a twisting foil body; HELIX
+      // extrudes the open phase-portrait along a time axis into a coil; Auto
+      // walks through them irregularly. The CORE is the SAME figure+spread scaled down to the centre
       // with a tighter lag: a concentrated nucleus sharing the live waveform,
       // rotation, depth and spread — so core + outer read as ONE object. Core
       // slider sets the nucleus scale (0 = off; RIBBON ignores core).
@@ -314,7 +330,12 @@ export class Oscilloscope extends Scene {
           strokeSegs(pts, intensity);
         };
         const coreR = this.p('core');
-        if (coreR > 0.005) {
+        if (spread === 5) {
+          // HELIX — the core is a VERTICAL Line-oscilloscope (the raw live
+          // waveform as the central spine), not a mini-coil: the irregular coil
+          // winds around a readable scope. Core slider = its waveform amplitude.
+          if (coreR > 0.005) this._drawHelixScope(ctx, wave, N, step, reach, R, alpha, project);
+        } else if (coreR > 0.005) {
           const coreScale = coreR * (1 + this.p('drive') * band * 0.6); // breathe in sync with outer
           const coreLag = Math.max(1, Math.round(lag * 0.4)); // tighter knot = a dense heart
           drawFig(coreScale, coreLag, 0.95);
@@ -323,6 +344,34 @@ export class Oscilloscope extends Scene {
       }
     }
     ctx.globalAlpha = alpha; // restore for anything drawn after
+  }
+
+  // HELIX core: a Line-mode oscilloscope stood VERTICAL down the coil's axis —
+  // the raw live waveform as the central spine, displaced sideways (screen-x) by
+  // each sample, spanning the coil's axial extent (±1.2·reach, the "size" kept
+  // from the old rod). The irregular QUAD coil winds around this readable scope.
+  // Core slider = the waveform amplitude (0 = off); Thickness = its width. Two
+  // passes: a soft halo under a crisp trace. Drawn in screen space so it stays a
+  // clean vertical scope as the coil spins (the 3D axis projects to this same
+  // vertical line at centre). Mono, additive, deterministic.
+  _drawHelixScope(ctx, wave, N, step, reach, R, alpha, project) {
+    const top = project(0, 1.2 * reach, 0);
+    const bot = project(0, -1.2 * reach, 0);
+    const dx = top.sx - bot.sx, dy = top.sy - bot.sy;     // the projected axis (≈ vertical)
+    const amp = R * 0.9 * this.p('core');                 // wiggle amplitude (px) — Core adjusts the waveform
+    const pts = [];
+    for (let i = 0; i < N; i += step) {
+      const f = i / (N - 1);
+      const d = ((wave[i] - 128) / 128) * amp;
+      pts.push([bot.sx + dx * f + d, bot.sy + dy * f]);   // along the axis, displaced sideways by the sample
+    }
+    const trace = () => { ctx.beginPath(); for (let k = 0; k < pts.length; k++) { const p = pts[k]; if (k) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); } ctx.stroke(); };
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const baseW = Math.max(1, this.p('thickness') * 0.5);
+    ctx.lineWidth = baseW + 2.4; ctx.globalAlpha = alpha * 0.10; trace(); // soft halo
+    ctx.lineWidth = baseW; ctx.globalAlpha = alpha * 0.8; trace();         // crisp trace
+    ctx.restore();
   }
 
   // RIBBON spread (Sphere/LISSA form, spread index 4). Draws `count` on-screen
