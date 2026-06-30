@@ -5,14 +5,15 @@ import { PALETTES } from '../color/palettes.js';
 import { rgbCss } from '../lib/math.js';
 import { toggleFullscreen, isFullscreenSupported } from '../platform/fullscreen.js';
 
-// Auto-hiding overlay control panel. Wires the touch UI to the live engine
+// Overlay control panel. Opens on load and stays open until the user closes it
+// with the handle (≡) — no timed auto-hide. Wires the touch UI to the live engine
 // objects passed in via `ctx` = { scenes, palette, audio, engine, canvasEl, root }.
 export class ControlPanel {
   constructor(ctx) {
     this.ctx = ctx;
-    this._autoHideTimer = 0;
     this._build();
-    this._wireAutoHide();
+    // Open on load; from here only the handle (≡) opens/closes it.
+    this.show();
   }
 
   _section(title, content) {
@@ -185,17 +186,6 @@ export class ControlPanel {
     c.appendChild(sliders);
   }
 
-  _wireAutoHide() {
-    // Interacting with the panel keeps it open; the handle toggles it.
-    // Canvas taps don't reveal it, so the controls stay out of the way.
-    const keepOpen = (e) => {
-      if (e.type !== 'keydown' && e.target && !e.target.closest('.vj-panel')) return;
-      this.show();
-    };
-    ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, keepOpen, { passive: true }));
-    this.show();
-  }
-
   markAudioUnavailable() {
     if (this.audioSection) {
       this.audioSection.classList.add('vj-disabled');
@@ -211,15 +201,12 @@ export class ControlPanel {
     }
   }
 
-  // show() always (re)arms the auto-hide timer.
+  // No timed auto-hide: show()/hide()/toggle() are driven only by the handle (≡).
   show() {
     this.panel.classList.remove('hidden');
-    clearTimeout(this._autoHideTimer);
-    this._autoHideTimer = setTimeout(() => this.hide(), 4500);
   }
   hide() {
     this.panel.classList.add('hidden');
-    clearTimeout(this._autoHideTimer);
   }
   toggle() {
     if (this.panel.classList.contains('hidden')) this.show();
