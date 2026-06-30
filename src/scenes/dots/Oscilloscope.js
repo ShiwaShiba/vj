@@ -37,7 +37,7 @@ const SPHERE_SIN_TILT = Math.sin(SPHERE_TILT);
 // Ported 1:1 from the user-approved shots/blob-proto.html look.
 const BLOB_COUNT = 70000;   // Fibonacci points (perf-tuned for the live app)
 const BLOB_EDGEW = 0.17;    // Voronoi wall thickness (F2-F1 band)
-const BLOB_CULL = 0.04;     // drop dots dimmer than this → dark craters, solid walls, fewer draws
+const BLOB_CULL = 0.055;    // drop dots dimmer than this → dark craters, solid walls, tighter rim (less dust), fewer draws
 const BLOB_SCALE = 0.5;     // render the cloud to a half-res offscreen (4× cheaper bloom; the upscale softens the grain)
 let _wF1 = 0, _wF2 = 0;
 function _fract(v) { return v - Math.floor(v); }
@@ -688,7 +688,7 @@ export class Oscilloscope extends Scene {
     const loud = Math.max(this.level, eBass, eMid, eTre);
     // Reference params, mapped onto the existing levers so the panel stays usable:
     const noiseScale = 1.2 + dens * 0.10;        // Density → cell count   (≈2.1 @ default 9)
-    const displace = 0.26 + gain * 0.15;         // Gain → lumpiness depth (≈0.41 @ default 1)
+    const displace = 0.26 + gain * 0.30;         // Gain → lumpiness depth (2× authority; ≈0.56 @ default 1)
     const cellEdge = 0.7 * (1 + eMid * 0.7);     // MID → cell-wall flare
     const audioGain = driveAmt * 1.8;            // Drive → audio depth    (≈1.08 @ default 0.6)
     const audioPush = eBass * audioGain;         // BASS → radial swell
@@ -736,7 +736,7 @@ export class Oscilloscope extends Scene {
     this._blobPrimed = true;
 
     // ── per-frame draw: cheap re-projection of every cached point + live swell ──
-    const swell = audioPush * 0.28, briBoost = (1 + audioPush * 0.8) * exposure;
+    const swell = audioPush * 0.14, briBoost = (1 + audioPush * 0.8) * exposure; // swell = bass spatial push (range halved); briBoost keeps the beat-brightness punch
     const preCull = BLOB_CULL / (1.2 * briBoost);             // max fade factor ≈1.2 → skip definite craters before projecting
     for (let i = 0; i < NB; i++) {
       if (bri[i] < preCull) continue;                          // pre-cull dark craters (skip projection entirely)
@@ -765,8 +765,8 @@ export class Oscilloscope extends Scene {
     octx.globalCompositeOperation = 'source-over';
     // composite the half-res buffer onto the main canvas, upscaled (the upscale
     // softens the grain), with two blurred copies under a crisp one = bloom halo.
-    const bBig = Math.max(1, Math.round(R * 0.052 * bloomStr));
-    const bMid = Math.max(1, Math.round(R * 0.018 * bloomStr));
+    const bBig = Math.max(1, Math.round(R * 0.042 * bloomStr));   // tightened halo (was 0.052) → crisper silhouette, less fog
+    const bMid = Math.max(1, Math.round(R * 0.015 * bloomStr));
     const W = this.w, H = this.h;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
