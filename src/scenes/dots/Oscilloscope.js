@@ -1,5 +1,6 @@
 import { Scene } from '../Scene.js';
 import { rgbCss, TWO_PI } from '../../lib/math.js';
+import { SimplexNoise } from '../../lib/noise.js';
 
 // Time-domain waveform. Modes: horizontal scope, circular scope, XY (the
 // waveform plotted against a delayed copy of itself for Lissajous-like loops).
@@ -64,7 +65,7 @@ export class Oscilloscope extends Scene {
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
       { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
       { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA'], index: 0 },
-      { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD', 'RIBBON', 'HELIX'], index: 0 },
+      { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD', 'RIBBON', 'HELIX', 'MÖBIUS'], index: 0 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
     this._spin = 0; // accumulated rotation, radians
@@ -73,6 +74,7 @@ export class Oscilloscope extends Scene {
     this._shellFireT = -100; // clock time the shell bloom last fired (far past = not playing)
     this._vibeFireT = -100;  // clock time the coil vibration last fired (far past = not playing)
     this._prevBass = 0;      // previous-frame bass, for rising-edge (hit) detection
+    this._noise = new SimplexNoise(7); // MÖBIUS terrain texture (deterministic, seeded)
   }
 
   update(dt, audio, palette, clock) {
@@ -145,11 +147,12 @@ export class Oscilloscope extends Scene {
 
   // Spread mode for LISSA: 0 raw self-correlation, 1 sphere, 2 toroid, 3 quad,
   // 4 ribbon (a twisting foil body on the centreline), 5 helix (QUAD's open
-  // phase-portrait extruded along a time axis into a coil).
+  // phase-portrait extruded along a time axis into a coil), 6 möbius (a ½-twist
+  // closed sheet worn as a glowing wireframe terrain).
   // Auto walks through them irregularly (deterministic — varied order + dwell).
   _effSpread() {
     if (this.mg('auto') === 1) {
-      const order = [1, 2, 4, 0, 3, 5, 2, 4, 1, 5, 3, 0];
+      const order = [1, 2, 4, 6, 0, 3, 5, 2, 6, 4, 1, 5, 3, 0];
       const k = (((Math.floor(this.beats / 11 + 0.6 * Math.sin(this.beats * 0.17))) % order.length) + order.length) % order.length;
       return order[k];
     }
@@ -358,6 +361,12 @@ export class Oscilloscope extends Scene {
         const dirDepth = (nx, ny, nz) => { const rz = -nx * sinA + nz * cosA; return ny * st + rz * ct; };
         const count = Math.max(1, Math.round(this.p('count')));
         this._drawRibbon(ctx, wave, step, N, reach, lag, flip, alpha, project, dirDepth, band, colorCss, count);
+      } else if (spread === 6) {
+        // MÖBIUS — the twisting band widened into a one-sided SHEET, worn as a
+        // glowing wireframe terrain: a closed ½-twist ring whose surface relief is
+        // LED by the live waveform (honest), textured by flowing simplex + a
+        // travelling ripple, breathing with the drive band. See _drawMobius.
+        this._drawMobius(ctx, wave, N, reach, R, alpha, project, band, flip);
       } else {
         // HELIX coil XY-VIBRATION (rare accent, HELIX only): the coil SWAYS in a 3:2
         // Lissajous — the XY scope pattern — its x and z displaced by two sines in a
@@ -568,5 +577,98 @@ export class Oscilloscope extends Scene {
         ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
       }
     }
+  }
+
+  // MÖBIUS spread (Sphere/LISSA form, spread index 6). The twisting band widened
+  // into a one-sided SHEET and worn as a glowing wireframe terrain. A closed ring
+  // carries a flat cross-section whose width vector makes ONE half-turn over the
+  // lap (tw = u/2) → a true Möbius strip (the rails swap, the surface joins to
+  // itself). The (u × v) grid is displaced along its surface normal by THREE
+  // terms: the live waveform relief sampled around the loop (the HONEST,
+  // audio-driven ridge — the figure still emerges from the signal), flowing 3D
+  // simplex (organic texture, time = clock), and a travelling ripple (concentric
+  // rings). All breathe with the drive band; brightness rises where the terrain
+  // peaks. A wide faint halo under the crisp grid + an energy-gated bloom nucleus
+  // at the centre give the glow. Density = terrain busyness (hill / ring count);
+  // Core = the nucleus scale (0 = off). Mono, additive, deterministic.
+  _drawMobius(ctx, wave, N, reach, R, alpha, project, band, flip) {
+    const US = 144, VS = 11;             // steps around the loop × across the width
+    const RRm = 0.52, HWm = 0.44;        // ring radius, half-width (wide sheet), unit space
+    const scl = reach;                   // breathe size with audio like the other spreads
+    const energy = 0.30 + this.p('drive') * band * 1.15;   // strong, clear reactivity
+    const dens = Math.max(3, Math.round(this.p('density')));
+    const nScale = 1.2 + 0.13 * dens;    // Density → finer / busier hills
+    const rFreq = Math.max(2, Math.round(dens * 0.6));      // Density → travelling-ring count
+    const flow = this.t * 0.28;          // deterministic noise flow (clock time)
+    const AMP = 0.50;
+    const noise = this._noise;
+    // 1) build the displaced, projected grid + per-vertex height
+    const G = [];
+    for (let i = 0; i <= US; i++) {
+      const u = (i / US) * TWO_PI, tw = u * 0.5;            // ONE half-twist → Möbius
+      const cu = Math.cos(u), su = Math.sin(u);
+      const wvx = Math.sin(tw) * cu, wvy = Math.cos(tw) * flip, wvz = Math.sin(tw) * su; // width vec
+      const Tx = -su, Tz = cu;                              // loop tangent (xz)
+      let nx = -Tz * wvy, ny = Tz * wvx - Tx * wvz, nz = Tx * wvy;   // surface normal = T × Wv
+      const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+      const wi = Math.floor((i / US) * (N - 1));
+      const relief = (wave[wi] - 128) / 128;                // HONEST live-signal ridge
+      const ripple = Math.sin(u * rFreq - this.t * 2.0);    // travelling concentric rings
+      const row = [];
+      for (let j = 0; j < VS; j++) {
+        const v = (j / (VS - 1)) * 2 - 1;
+        const sx = RRm * cu + v * HWm * wvx, sy = v * HWm * wvy, sz = RRm * su + v * HWm * wvz;
+        const tex = noise.noise3D(sx * nScale + flow, sz * nScale, sy * nScale - flow * 0.5);
+        const edge = 1 - 0.26 * Math.abs(v);                // mild taper at the band edges
+        const disp = (relief * 0.60 + tex * 0.34 + ripple * 0.12) * AMP * edge * energy;
+        row.push({ pr: project((sx + nx * disp) * scl, (sy + ny * disp) * scl, (sz + nz * disp) * scl), h: disp });
+      }
+      G.push(row);
+    }
+    // 2) brightness from height (terrain: higher = brighter), scaled by energy + depth
+    const eb = 0.45 + 0.55 * Math.min(1.2, energy);
+    const segA = (ha, hb, d) => {
+      const inten = Math.max(0, (ha + hb) * 0.5 * 1.5 + 0.16);
+      const depthFac = 0.40 + 0.60 * (d * 0.5 + 0.5);
+      return Math.min(1, (0.10 + 0.92 * inten) * eb * depthFac);
+    };
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
+    const baseW = Math.max(0.75, this.p('thickness') * 0.45);
+    // 2a) wide faint HALO — one polyline per longitudinal line (cheap bloom)
+    ctx.lineWidth = baseW + 2.6;
+    for (let j = 0; j < VS; j++) {
+      ctx.globalAlpha = alpha * 0.12 * eb;
+      ctx.beginPath();
+      for (let i = 0; i <= US; i++) { const p = G[i][j].pr; if (i) ctx.lineTo(p.sx, p.sy); else ctx.moveTo(p.sx, p.sy); }
+      ctx.stroke();
+    }
+    // 2b) crisp wireframe — longitudinal (per-segment, so height drives brightness)
+    ctx.lineWidth = baseW;
+    for (let j = 0; j < VS; j++) for (let i = 0; i < US; i++) {
+      const a = G[i][j], b = G[i + 1][j];
+      ctx.globalAlpha = segA(a.h, b.h, (a.pr.depth + b.pr.depth) * 0.5);
+      ctx.beginPath(); ctx.moveTo(a.pr.sx, a.pr.sy); ctx.lineTo(b.pr.sx, b.pr.sy); ctx.stroke();
+    }
+    // 2c) crisp wireframe — transverse (sparser; ties the grid together)
+    for (let i = 0; i <= US; i += 7) for (let j = 0; j < VS - 1; j++) {
+      const a = G[i][j], b = G[i][j + 1];
+      ctx.globalAlpha = segA(a.h, b.h, (a.pr.depth + b.pr.depth) * 0.5) * 0.8;
+      ctx.beginPath(); ctx.moveTo(a.pr.sx, a.pr.sy); ctx.lineTo(b.pr.sx, b.pr.sy); ctx.stroke();
+    }
+    // 3) energy-gated bloom NUCLEUS at the loop centre (Core slider; 0 = off)
+    const coreR = this.p('core');
+    if (coreR > 0.005) {
+      const cx = this.w / 2, cy = this.h / 2, cr = R * (0.22 + 0.5 * coreR);
+      const col = this.palette.colorAt((this.t * 0.1) % 1);
+      const ci = Math.min(0.5, 0.5 * coreR + 0.4 * this.p('drive') * band);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+      g.addColorStop(0, `rgba(${col[0] | 0},${col[1] | 0},${col[2] | 0},${ci})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = alpha; ctx.fillStyle = g;
+      ctx.fillRect(cx - cr, cy - cr, 2 * cr, 2 * cr);
+    }
+    ctx.restore();
   }
 }
