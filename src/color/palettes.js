@@ -40,6 +40,12 @@ const RAW = [
   // Monochrome with one magenta accent. Raster-Noton.
   { id: 'violet', name: 'VIOLET', bg: '#08060c', fg: '#ece8f2', accent: '#d23bff',
     ramp: ['#f3eefb', '#c9b9e6', '#a274cc', '#d23bff', '#efe6fb'] },
+  // Full-field red on black — the whole scene goes red. Single-hue, Ikeda red.
+  { id: 'red', name: 'RED', bg: '#000000', fg: '#ff2a24', accent: '#ff6e52',
+    ramp: ['#ff9a86', '#ff2a24', '#b3140e', '#4d0805', '#ffccc0'] },
+  // Full-field pink on black — vivid rose. Single-hue (distinct from VIOLET's magenta).
+  { id: 'pink', name: 'PINK', bg: '#000000', fg: '#ff5e9c', accent: '#ff9ec8',
+    ramp: ['#ffb3d2', '#ff5e9c', '#cc2f70', '#5e1033', '#ffd9e8'] },
 ];
 
 export const PALETTES = RAW.map((p) => ({
