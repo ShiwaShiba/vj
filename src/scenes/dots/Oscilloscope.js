@@ -119,8 +119,8 @@ export class Oscilloscope extends Scene {
     this._prevBass = 0;      // previous-frame bass, for rising-edge (hit) detection
     this._noise = new SimplexNoise(7); // TERRAIN surface texture (deterministic, seeded)
     // TERRAIN "Noise Blob" lazy caches (built on first draw): Fibonacci point
-    // directions + per-point seed, a soft sprite stamp, and an offscreen buffer
-    // for the bloom composite (resized with the canvas).
+    // directions + per-point seed + structural radius/brightness caches, and a
+    // half-res offscreen buffer for the bloom composite (resized with the canvas).
     this._blobDir = null; this._blobSeed = null;
     this._blobOC = null; this._blobOCtx = null; this._blobW = 0; this._blobH = 0;
   }
@@ -388,10 +388,9 @@ export class Oscilloscope extends Scene {
       }
       strokeSegs(pts);
     } else if (form === 3) {
-      // TERRAIN — a glowing wireframe globe whose surface erupts into deep relief,
-      // each frequency band driving its OWN motion (bass = big heaving lobes, mid =
-      // ridges marching pole→pole, treble = fine crackling spikes), over an honest
-      // live-waveform floor. See _drawSphereTerrain.
+      // TERRAIN — the "Noise Blob": a glowing point-cloud globe whose surface is a
+      // Worley cell-wall network (bright walls, dark craters) over an FBM shape.
+      // BASS swells it, MID flares the walls, TREBLE shimmers. See _drawSphereTerrain.
       this._drawSphereTerrain(ctx, wave, N, R, band, alpha, project);
     } else {
       // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
@@ -631,18 +630,10 @@ export class Oscilloscope extends Scene {
     }
   }
 
-  // SPHERE TERRAIN form (Sphere → Form: TERRAIN). A glowing wireframe globe whose
-  // unit-sphere surface is pushed radially into a rippling relief by THREE terms:
-  // the live waveform sampled around longitude (HONEST, audio-driven), flowing 3D
-  // simplex (organic texture, time = clock) and a travelling ring (pole→pole).
-  // Relief and brightness breathe with the drive band; higher ground reads
-  // brighter, the back of the globe dims with depth. A wide faint halo per
-  // latitude ring + an energy-gated bloom nucleus give the glow. Density = relief
-  // detail / ring count; Gain = relief depth; Core = nucleus (0 = off). Mono,
-  // additive, deterministic.
-  // Lazily build the Fibonacci point directions + per-point seed, the soft
-  // sprite stamp, and the offscreen bloom buffer (rebuilt when the canvas
-  // resizes). Deterministic — the seed uses a fixed sin hash, not Math.random.
+  // Lazily build the Fibonacci point directions (jittered off the spiral so the
+  // lattice never shows) + per-point seed + the structural radius/brightness
+  // caches, and the half-res offscreen bloom buffer (rebuilt when the canvas
+  // resizes). Deterministic — offsets use a fixed integer hash, not Math.random.
   _ensureBlob() {
     if (!this._blobDir) {
       const NB = BLOB_COUNT;
