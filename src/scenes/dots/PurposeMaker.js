@@ -23,7 +23,7 @@ const SPANX = 1.64, SPANY = 0.92, OFFA = -0.30, OFFB = -1.34;
 // Both: kept large enough (undistorted) that the long fingers still separate; fingertips meet
 // just off-centre with a small vertical offset so the two hands read distinctly, not as a knot.
 const BSPANX = 1.20, BSPANY = 0.67, BOFFA = -0.224, BOFFB = -0.976, BDY = 0.13;
-const ACT_SPAN = 0.45;          // convergence-front width: the fraction of g the edge->locus sweep spans
+const ACT_SPAN = 0.35;          // convergence-front width: the fraction of g the edge->locus sweep spans
 const NSHEET = 4, SHEET_Z = 0.55, SHEET_K = 4.0; // depth slabs / half-depth / plane stiffness (面/帯)
 const SEQS = [['R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'R', 'L', 'Both']];
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -38,7 +38,7 @@ export class PurposeMaker extends Scene {
       { key: 'seq', label: 'Seq', options: ['R L Both', 'R L R L Both', 'R L R L R L Both'], index: 1 },
     ];
     this.defineParam('count', 42000, 10000, MAXN, 1000, 'Particles');
-    this.defineParam('recruit', 0.45, 0.3, 0.9, 0.05, 'Recruit');
+    this.defineParam('recruit', 0.60, 0.3, 0.9, 0.05, 'Recruit'); // dense hand mass = the star
     this.defineParam('flow', 0.62, 0.1, 1.5, 0.05, 'Flow Speed');
     this.defineParam('scale', 1.6, 0.6, 3.2, 0.1, 'Field Scale');
     this.defineParam('cohesion', 1.0, 0.3, 2.0, 0.1, 'Cohesion');
@@ -69,6 +69,7 @@ export class PurposeMaker extends Scene {
     const F = () => new Float32Array(MAXN);
     this.X = F(); this.Y = F(); this.Z = F(); this.PX = F(); this.PY = F(); this.PZ = F();
     this.sx = F(); this.sy = F(); this.psx = F(); this.psy = F();
+    this.cv = F(); // per-particle convergence (draw reads it so grains EMERGE rather than burst)
     this.sval = new Uint8Array(MAXN); this.sband = new Uint8Array(MAXN);
   }
   // deterministic hash -> [0,1)
@@ -154,6 +155,7 @@ export class PurposeMaker extends Scene {
       const x = this.X[i], y = this.Y[i], z = this.Z[i];
       const hi = this._h(i * 7 + 99);
       const isHand = hi < recruit;
+      this.cv[i] = 0; // default: ambient grains carry no convergence
       // shared turbulent swirl (amplitude breathes with scatter)
       let vx = noise.noise3D(x * f, y * f, z * f + zt) * swirlAmp;
       let vy = noise.noise3D(x * f + 5.2, y * f + 9.1, z * f + zt + 2.3) * swirlAmp;
@@ -203,6 +205,7 @@ export class PurposeMaker extends Scene {
         vy = vy * sp * (1 - conv) + ((ty - y) * cohK + qv * 0.5) * conv * dt;
         vz = vz * sp * (1 - conv) + ((zTarget - z) * cohK) * conv * dt;
         this.X[i] = x + vx; this.Y[i] = y + vy; this.Z[i] = z + vz;
+        this.cv[i] = conv;
         continue;
       }
       // ambient medium: comb into aligned LINES (coherent forward) or scatter into DUST.
@@ -256,14 +259,25 @@ export class PurposeMaker extends Scene {
       const isHand = hi < recruit;
       let bx, by, bv;
       if (isHand) {
-        // hands = the luminous focal point; drawn prev->cur (crisp grains; convergence on gather).
-        bx = pxs; by = pys;
-        // the wrist/stub DISSOLVES into the field: the hand stays full bright out to ax≈0.55
-        // (fingertips→palm), then tapers so the arm-root fades off — kills the blocky-forearm
-        // read and makes the hand the focal mass. (fingertips sit near centre where Both meet.)
+        // hands = the luminous focal point. Grains EMERGE: faint while transiting/forming, full
+        // bright only as they resolve onto the silhouette, so the build reads as lines/bands
+        // coalescing rather than a blown-out burst. The draw streak is capped so fast-converging
+        // grains don't smear into bright bars.
+        let mvx = sxc - pxs, mvy = syc - pys;
+        const mmRaw = Math.sqrt(mvx * mvx + mvy * mvy), cap = R * 0.05;
+        if (mmRaw > cap) { const k2 = cap / mmRaw; mvx *= k2; mvy *= k2; }
+        bx = sxc - mvx; by = syc - mvy;
+        // the wrist/stub DISSOLVES into the field: full bright out to ax≈0.55 (fingertips→palm),
+        // then tapers so the arm-root fades off — kills the blocky-forearm read.
         const ax = Math.abs(sxc - cx) / R;
         const armFade = ax < 0.55 ? 1 : Math.max(0.25, 1 - 1.5 * (ax - 0.55));
-        bv = 0.90 * armFade * (0.5 + 0.5 * d) * (1 + 0.25 * flash);
+        // a grain is bright only when it is BOTH converged (emerge) AND settled (settle): the
+        // resolved, still hand is the luminous payoff, while transiting/streaming grains stay
+        // faint — so the build reads as a quiet coalescing, not bright motion trails.
+        const cv = this.cv[i];
+        const emerge = 0.10 + 0.90 * cv * cv;
+        const settle = 1 / (1 + 55 * mmRaw / R);
+        bv = 1.40 * armFade * (0.5 + 0.5 * d) * (1 + 0.25 * flash) * emerge * settle;
       } else {
         // sparse calm field: draw only a fraction of ambient grains, so the converging mass is the
         // star and the background never reads as a pasted particle sheet (deterministic hash gate).

@@ -97,15 +97,26 @@ test('recruited grains converge onto the R hand at hold, then dissolve at the ga
   assert.ok(gap > 0.2 && gap > hold * 2.5, `gap far more dispersed than hold (${gap.toFixed(3)} vs ${hold.toFixed(3)})`);
 });
 
-test('directional convergence front: the wrist (entry edge) resolves before the fingertips', () => {
+test('directional convergence front: the wrist (entry edge) leads the fingertips', () => {
   // Hand A enters from +x; its wrist sits at high u (near the entry edge), fingertips at low u.
-  // The front sweeps edge->locus, so mid-gather the wrist side is converged while the tips are not.
+  // The front sweeps edge->locus, so mid-gather the wrist side has higher convergence progress
+  // (cv) than the tips. Measure cv directly (target POSITION confounds a distance metric, since
+  // the wrist targets sit far from the ambient cloud regardless of the front).
   const s = freshScene(11000);
-  driveTo(s, 1.6);                         // mid-gather, g ~ 0.67
-  const wrist = meanTargetDist(s, 0.6, 1.01); // near entry edge
-  const tips = meanTargetDist(s, 0.0, 0.4);   // far side
-  assert.ok(wrist < 0.12, `wrist (entry edge) has resolved (${wrist.toFixed(3)})`);
-  assert.ok(tips > wrist * 1.8, `fingertips still arriving (${tips.toFixed(3)} >> ${wrist.toFixed(3)})`);
+  driveTo(s, 1.3);                         // gather mid-sweep (g~0.5): wrist leading, tips not yet
+  const recruit = s.p('recruit');
+  const meanCv = (uLo, uHi) => {
+    let sum = 0, k = 0;
+    for (let i = 0; i < s.n; i++) {
+      if (s._h(i * 7 + 99) >= recruit) continue;
+      const t = targetOf(s, i);
+      if (t.u < uLo || t.u >= uHi) continue;
+      sum += s.cv[i]; k++;
+    }
+    return k ? sum / k : 0;
+  };
+  const wristCv = meanCv(0.6, 1.01), tipsCv = meanCv(0.0, 0.4);
+  assert.ok(wristCv > tipsCv + 0.15, `wrist leads the fingertips (cv ${wristCv.toFixed(2)} > tips ${tipsCv.toFixed(2)})`);
 });
 
 test('3D sheets: recruited grains layer into depth bands mid-build, then flatten at the hand plane', () => {
