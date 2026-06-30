@@ -64,7 +64,7 @@ export class Oscilloscope extends Scene {
       { key: 'drive', label: 'Drive', options: ['BASS', 'TREBLE', 'LEVEL'], index: 0 },
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
       { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
-      { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA'], index: 0 },
+      { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA', 'TERRAIN'], index: 0 },
       { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD', 'RIBBON', 'HELIX', 'MÖBIUS'], index: 0 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
@@ -335,6 +335,11 @@ export class Oscilloscope extends Scene {
         pts.push(project(cosLat * Math.cos(lon) * rad, Math.sin(lat) * rad, cosLat * Math.sin(lon) * rad));
       }
       strokeSegs(pts);
+    } else if (form === 3) {
+      // TERRAIN — a glowing wireframe globe whose surface is displaced into a
+      // rippling relief by the live waveform (honest) + flowing simplex + a
+      // travelling ring, breathing with the drive band. See _drawSphereTerrain.
+      this._drawSphereTerrain(ctx, wave, N, R, band, alpha, project);
     } else {
       // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
       // the drive band. The point mapping has 6 Spread modes (Spread group):
@@ -663,6 +668,90 @@ export class Oscilloscope extends Scene {
       const cx = this.w / 2, cy = this.h / 2, cr = R * (0.22 + 0.5 * coreR);
       const col = this.palette.colorAt((this.t * 0.1) % 1);
       const ci = Math.min(0.5, 0.5 * coreR + 0.4 * this.p('drive') * band);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+      g.addColorStop(0, `rgba(${col[0] | 0},${col[1] | 0},${col[2] | 0},${ci})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = alpha; ctx.fillStyle = g;
+      ctx.fillRect(cx - cr, cy - cr, 2 * cr, 2 * cr);
+    }
+    ctx.restore();
+  }
+
+  // SPHERE TERRAIN form (Sphere → Form: TERRAIN). A glowing wireframe globe whose
+  // unit-sphere surface is pushed radially into a rippling relief by THREE terms:
+  // the live waveform sampled around longitude (HONEST, audio-driven), flowing 3D
+  // simplex (organic texture, time = clock) and a travelling ring (pole→pole).
+  // Relief and brightness breathe with the drive band; higher ground reads
+  // brighter, the back of the globe dims with depth. A wide faint halo per
+  // latitude ring + an energy-gated bloom nucleus give the glow. Density = relief
+  // detail / ring count; Gain = relief depth; Core = nucleus (0 = off). Mono,
+  // additive, deterministic.
+  _drawSphereTerrain(ctx, wave, N, R, band, alpha, project) {
+    const LAT = 36, LON = 72;
+    const energy = 0.30 + this.p('drive') * band * 1.15;   // strong, clear reactivity
+    const dens = Math.max(3, Math.round(this.p('density')));
+    const nScale = 1.3 + 0.10 * dens;                      // Density → finer relief
+    const rFreq = Math.max(2, Math.round(dens * 0.5));     // Density → travelling-ring count
+    const flow = this.t * 0.3;                             // deterministic noise flow
+    const AMP = 0.30 * (0.7 + 0.5 * this.p('gain'));       // Gain → relief depth
+    const noise = this._noise;
+    // 1) build the displaced, projected globe grid + per-vertex height
+    const G = [];
+    for (let i = 0; i <= LAT; i++) {
+      const th = -Math.PI / 2 + Math.PI * (i / LAT);
+      const ct = Math.cos(th), st2 = Math.sin(th);
+      const ripple = Math.sin((th + Math.PI / 2) * rFreq * 2 - this.t * 2.0);
+      const row = [];
+      for (let j = 0; j <= LON; j++) {
+        const ph = (j / LON) * TWO_PI;
+        const bx = ct * Math.cos(ph), by = st2, bz = ct * Math.sin(ph);
+        const wi = Math.floor((j / LON) * (N - 1));
+        const relief = (wave[wi] - 128) / 128;             // HONEST live-signal relief
+        const tex = noise.noise3D(bx * nScale + flow, by * nScale, bz * nScale - flow * 0.5);
+        const disp = (tex * 0.42 + relief * 0.42 + ripple * 0.10) * AMP * energy;
+        const r = 1 + disp;
+        row.push({ pr: project(bx * r, by * r, bz * r), h: disp });
+      }
+      G.push(row);
+    }
+    // 2) brightness from height (higher = brighter), scaled by energy + depth
+    const eb = 0.45 + 0.55 * Math.min(1.2, energy);
+    const segA = (ha, hb, d) => {
+      const inten = Math.max(0, (ha + hb) * 0.5 * 1.7 + 0.18);
+      const depthFac = 0.26 + 0.74 * (d * 0.5 + 0.5);      // strong back-dim → reads as a globe
+      return Math.min(1, (0.07 + 0.95 * inten) * eb * depthFac);
+    };
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
+    const baseW = Math.max(0.75, this.p('thickness') * 0.45);
+    // 2a) wide faint HALO — one polyline per (other) latitude ring (cheap bloom)
+    ctx.lineWidth = baseW + 2.4;
+    for (let i = 0; i <= LAT; i += 2) {
+      ctx.globalAlpha = alpha * 0.10 * eb;
+      ctx.beginPath();
+      for (let j = 0; j <= LON; j++) { const p = G[i][j].pr; if (j) ctx.lineTo(p.sx, p.sy); else ctx.moveTo(p.sx, p.sy); }
+      ctx.stroke();
+    }
+    // 2b) crisp latitude rings (per-segment, so height drives brightness)
+    ctx.lineWidth = baseW;
+    for (let i = 0; i <= LAT; i++) for (let j = 0; j < LON; j++) {
+      const a = G[i][j], b = G[i][j + 1];
+      ctx.globalAlpha = segA(a.h, b.h, (a.pr.depth + b.pr.depth) * 0.5);
+      ctx.beginPath(); ctx.moveTo(a.pr.sx, a.pr.sy); ctx.lineTo(b.pr.sx, b.pr.sy); ctx.stroke();
+    }
+    // 2c) crisp longitude lines (sparser; ties the grid together)
+    for (let j = 0; j <= LON; j += 3) for (let i = 0; i < LAT; i++) {
+      const a = G[i][j], b = G[i + 1][j];
+      ctx.globalAlpha = segA(a.h, b.h, (a.pr.depth + b.pr.depth) * 0.5) * 0.82;
+      ctx.beginPath(); ctx.moveTo(a.pr.sx, a.pr.sy); ctx.lineTo(b.pr.sx, b.pr.sy); ctx.stroke();
+    }
+    // 3) energy-gated bloom NUCLEUS at the globe centre (Core slider; 0 = off)
+    const coreR = this.p('core');
+    if (coreR > 0.005) {
+      const cx = this.w / 2, cy = this.h / 2, cr = R * (0.30 + 0.5 * coreR);
+      const col = this.palette.colorAt((this.t * 0.1) % 1);
+      const ci = Math.min(0.5, 0.45 * coreR + 0.4 * this.p('drive') * band);
       const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
       g.addColorStop(0, `rgba(${col[0] | 0},${col[1] | 0},${col[2] | 0},${ci})`);
       g.addColorStop(1, 'rgba(0,0,0,0)');
