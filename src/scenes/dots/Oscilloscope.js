@@ -40,6 +40,7 @@ export class Oscilloscope extends Scene {
     this.defineParam('drive', 0.6, 0, 1.5, 0.05, 'Drive');    // band-driven breathing depth
     this.defineParam('density', 9, 3, 24, 1, 'Density');      // Sphere only: GLOBE ring count / WRAP winding count
     this.defineParam('core', 0.12, 0, 0.45, 0.01, 'Core');    // LISSA only: central nucleus scale (same figure, tighter lag; 0 = off)
+    this.defineParam('count', 1, 1, 10, 1, 'Count');          // RIBBON only: on-screen copies of the figure, grid-laid (like more dancers)
     // Button groups (rendered by ControlPanel; mainly meaningful in XY/Sphere).
     // Spin OFF freezes the figure/sphere instantly regardless of the Rotate slider.
     this.modeGroups = [
@@ -47,7 +48,7 @@ export class Oscilloscope extends Scene {
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
       { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
       { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA'], index: 0 },
-      { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD'], index: 0 },
+      { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD', 'RIBBON'], index: 0 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
     this._spin = 0; // accumulated rotation, radians
@@ -103,11 +104,12 @@ export class Oscilloscope extends Scene {
     return Math.pow(b, 0.6); // lift small bands so treble still reads
   }
 
-  // Spread mode for LISSA: 0 raw self-correlation, 1 sphere, 2 toroid, 3 quad.
+  // Spread mode for LISSA: 0 raw self-correlation, 1 sphere, 2 toroid, 3 quad,
+  // 4 ribbon (a twisting foil body on the self-correlation centreline).
   // Auto walks through them irregularly (deterministic — varied order + dwell).
   _effSpread() {
     if (this.mg('auto') === 1) {
-      const order = [1, 2, 0, 3, 2, 1, 3, 0];
+      const order = [1, 2, 4, 0, 3, 2, 4, 1, 3, 0];
       const k = (((Math.floor(this.beats / 11 + 0.6 * Math.sin(this.beats * 0.17))) % order.length) + order.length) % order.length;
       return order[k];
     }
@@ -278,34 +280,144 @@ export class Oscilloscope extends Scene {
       strokeSegs(pts);
     } else {
       // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
-      // the drive band. The point mapping has 4 Spread modes (Spread group):
-      // LISSA (raw self-correlation), SPHERE, TOROID, QUAD — the latter three
-      // break the bass diagonal-collapse into real 3D volume; Auto walks through
-      // them irregularly. The CORE is the SAME figure+spread scaled down to the
-      // centre with a tighter lag: a concentrated nucleus sharing the live
-      // waveform, rotation, depth and spread — so core + outer read as ONE
-      // object. Core slider sets the nucleus scale (0 = off).
+      // the drive band. The point mapping has 5 Spread modes (Spread group):
+      // LISSA (raw self-correlation), SPHERE, TOROID, QUAD, RIBBON — modes 1-3
+      // break the bass diagonal-collapse into real 3D volume; RIBBON gives the
+      // self-correlation centreline a twisting foil body; Auto walks through them
+      // irregularly. The CORE is the SAME figure+spread scaled down to the centre
+      // with a tighter lag: a concentrated nucleus sharing the live waveform,
+      // rotation, depth and spread — so core + outer read as ONE object. Core
+      // slider sets the nucleus scale (0 = off; RIBBON ignores core).
       const reach = gain * (1.15 + this.p('drive') * band * 1.1); // wide, audio-breathing extent
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
       const spread = this._effSpread();
-      // Same figure+spread at any scale/lag — core and outer share it.
-      const drawFig = (scale, lg, intensity) => {
-        const pts = [];
-        for (let i = 0; i + 2 * lg < N; i += step) {
-          const p = this._spreadPoint(wave, i, lg, scale, flip, N, spread);
-          pts.push(project(p[0], p[1], p[2]));
+      if (spread === 4) {
+        // RIBBON — the self-correlation centreline given a twisting foil body: a
+        // flat band offset ± a width vector that rotates along the strand, so it
+        // shows its face (bright) then its edge (thin/dim). Width breathes with
+        // the drive band. Mono throughout — only brightness sells the 3D.
+        const colorCss = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
+        // z of a direction along the view/depth axis (same rotation as project),
+        // |.| = how face-on a ribbon segment is to the viewer.
+        const dirDepth = (nx, ny, nz) => { const rz = -nx * sinA + nz * cosA; return ny * st + rz * ct; };
+        const count = Math.max(1, Math.round(this.p('count')));
+        this._drawRibbon(ctx, wave, step, N, reach, lag, flip, alpha, project, dirDepth, band, colorCss, count);
+      } else {
+        // Same figure+spread at any scale/lag — core and outer share it.
+        const drawFig = (scale, lg, intensity) => {
+          const pts = [];
+          for (let i = 0; i + 2 * lg < N; i += step) {
+            const p = this._spreadPoint(wave, i, lg, scale, flip, N, spread);
+            pts.push(project(p[0], p[1], p[2]));
+          }
+          strokeSegs(pts, intensity);
+        };
+        const coreR = this.p('core');
+        if (coreR > 0.005) {
+          const coreScale = coreR * (1 + this.p('drive') * band * 0.6); // breathe in sync with outer
+          const coreLag = Math.max(1, Math.round(lag * 0.4)); // tighter knot = a dense heart
+          drawFig(coreScale, coreLag, 0.95);
         }
-        strokeSegs(pts, intensity);
-      };
-      const coreR = this.p('core');
-      if (coreR > 0.005) {
-        const coreScale = coreR * (1 + this.p('drive') * band * 0.6); // breathe in sync with outer
-        const coreLag = Math.max(1, Math.round(lag * 0.4)); // tighter knot = a dense heart
-        drawFig(coreScale, coreLag, 0.95);
+        drawFig(reach, lag, 1);
       }
-      drawFig(reach, lag, 1);
     }
     ctx.globalAlpha = alpha; // restore for anything drawn after
+  }
+
+  // RIBBON spread (Sphere/LISSA form, spread index 4). Draws `count` on-screen
+  // COPIES of the whole figure (Count slider, 1..10) laid out in an adaptive
+  // grid — like putting more dancers on the stage. The centreline is the QUAD
+  // self-correlation (spread mode 3) — its large decorrelating lag opens the
+  // bass diagonal-collapse, so the band stays an OPEN loop at any Phase (raw
+  // mode-0 collapses to a smear at small lag). Each copy gets a small twist +
+  // lag offset so the troupe feels alive rather than photocopied. Each segment
+  // is a flat quad offset ± a unit width vector Wv that twists along the strand;
+  // the ribbon normal cross(T,Wv) rotated into view space gives a face-on-ness
+  // 0..1 whose SQUARE drives brightness — white only on truly face-on facets,
+  // killing the edge-on wash that blows out under additive blending. Overall
+  // brightness fades with waveform amplitude (vis) so a quiet, collapsed figure
+  // doesn't pile into a white blob. Width swells with the drive band (Thickness
+  // sets the rest width); depth dims the back. Deterministic (clock time only).
+  _drawRibbon(ctx, wave, step, N, reach, lag, flip, alpha, project, dirDepth, band, colorCss, count) {
+    const ntw = 5.0;                       // twist turns over the whole strand
+    const stepR = step * 2;                // coarse sample → smooth foil (less tangent jitter)
+    const halfW = reach * (0.012 * this.p('thickness') + 0.05 * this.p('drive') * band);
+    // The figure extent ∝ waveform amplitude, so a quiet mic collapses it to a
+    // few pixels where additive blending piles every segment into a white blob.
+    // Fade the whole figure with the signal: quiet → dim & small, loud → open
+    // & bright (honest — louder still grows AND brightens it).
+    let pk = 0;
+    for (let i = 0; i < N; i += stepR * 3) { const dv = wave[i] - 128, ad = dv < 0 ? -dv : dv; if (ad > pk) pk = ad; }
+    const vis = Math.min(1, 0.06 + 1.3 * (pk / 128));
+    // COUNT = on-screen copies of the whole figure (like more dancers), laid out
+    // in an adaptive grid; the last partial row is centred. cx0/cy0 is the shared
+    // projection centre — each copy remaps its projected screen coords into a cell.
+    const cols = Math.ceil(Math.sqrt(count));
+    const rows = Math.ceil(count / cols);
+    const cx0 = this.w / 2, cy0 = this.h / 2;
+    const sf = count === 1 ? 1 : 0.85 / Math.max(cols, rows);
+    ctx.fillStyle = colorCss;
+    ctx.strokeStyle = colorCss;
+    ctx.lineWidth = 1.1;
+    for (let cIdx = 0; cIdx < count; cIdx++) {
+      const gy = (cIdx / cols) | 0, gx = cIdx % cols;
+      const itemsInRow = gy === rows - 1 ? count - gy * cols : cols;
+      const icx = this.w * (gx + 0.5 + (cols - itemsInRow) * 0.5) / cols;
+      const icy = this.h * (gy + 0.5) / rows;
+      const twPhase = this.t * 0.8 + cIdx * 0.7;        // per-copy facet offset
+      // small per-copy lag offset (centred on lag) = a slightly different pose
+      const lagC = Math.max(1, Math.round(lag * (1 + 0.12 * (cIdx - (count - 1) * 0.5))));
+      if (2 * lagC >= N) continue;
+      const C = [];
+      for (let i = 0; i + 2 * lagC < N; i += stepR) {
+        C.push(this._spreadPoint(wave, i, lagC, reach, flip, N, 3));
+      }
+      const M = C.length;
+      if (M < 2) continue;
+      for (let k = 0; k < M - 1; k++) {
+        const a = C[k], b = C[k + 1];
+        let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2];
+        const tl = Math.hypot(tx, ty, tz);
+        if (tl < 1e-6) continue;
+        tx /= tl; ty /= tl; tz /= tl;
+        // reference axis (swap near-parallel) → an in-plane basis (n0, b0) ⟂ T
+        let rfx = 0, rfy = 0, rfz = 1;
+        if (Math.abs(tz) > 0.9) { rfy = 1; rfz = 0; }
+        let n0x = ty * rfz - tz * rfy, n0y = tz * rfx - tx * rfz, n0z = tx * rfy - ty * rfx;
+        const nl = Math.hypot(n0x, n0y, n0z) || 1;
+        n0x /= nl; n0y /= nl; n0z /= nl;
+        const b0x = ty * n0z - tz * n0y, b0y = tz * n0x - tx * n0z, b0z = tx * n0y - ty * n0x;
+        // width vector twists around the tangent along the strand
+        const phi = (k / (M - 1)) * TWO_PI * ntw + twPhase;
+        const cph = Math.cos(phi), sph = Math.sin(phi);
+        const wvx = cph * n0x + sph * b0x, wvy = cph * n0y + sph * b0y, wvz = cph * n0z + sph * b0z;
+        // ribbon normal = T × Wv; its view-axis component = face-on-ness
+        const rnx = ty * wvz - tz * wvy, rny = tz * wvx - tx * wvz, rnz = tx * wvy - ty * wvx;
+        const fc = dirDepth(rnx, rny, rnz);
+        const face = fc * fc;              // square → white only on truly face-on facets
+        const P0 = project(a[0] + wvx * halfW, a[1] + wvy * halfW, a[2] + wvz * halfW);
+        const P1 = project(a[0] - wvx * halfW, a[1] - wvy * halfW, a[2] - wvz * halfW);
+        const P2 = project(b[0] - wvx * halfW, b[1] - wvy * halfW, b[2] - wvz * halfW);
+        const P3 = project(b[0] + wvx * halfW, b[1] + wvy * halfW, b[2] + wvz * halfW);
+        // remap each projected point into this copy's grid cell
+        const x0 = icx + (P0.sx - cx0) * sf, y0 = icy + (P0.sy - cy0) * sf;
+        const x1 = icx + (P1.sx - cx0) * sf, y1 = icy + (P1.sy - cy0) * sf;
+        const x2 = icx + (P2.sx - cx0) * sf, y2 = icy + (P2.sy - cy0) * sf;
+        const x3 = icx + (P3.sx - cx0) * sf, y3 = icy + (P3.sy - cy0) * sf;
+        const d = (P0.depth + P2.depth) * 0.5;
+        const depthFac = 0.4 + 0.6 * (d * 0.5 + 0.5); // back of the figure recedes
+        // filled foil — faint baseline so overlaps don't wash to white; the body
+        // only brightens as its face turns to the viewer
+        ctx.globalAlpha = alpha * vis * (0.015 + 0.26 * face) * depthFac;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3);
+        ctx.closePath(); ctx.fill();
+        // bright edges trace the two rails of the band
+        ctx.globalAlpha = alpha * vis * (0.04 + 0.36 * face) * depthFac;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x3, y3); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      }
+    }
   }
 }
