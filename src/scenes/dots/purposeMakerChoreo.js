@@ -1,8 +1,10 @@
 // Pure, deterministic choreography for PurposeMaker. No Date/random.
 // One station = gather -> hold -> disperse -> gap. Sequence R -> L -> Both, looping.
 // Seamless: cohesion is 0 with zero slope at every station boundary (gap before next gather).
-export const DURATIONS = { gather: 2.6, hold: 2.4, disperse: 2.2, gap: 0.5 };
-export const STATION = DURATIONS.gather + DURATIONS.hold + DURATIONS.disperse + DURATIONS.gap; // 7.7
+// Slow, contemplative timing (ユーザー確定): the hand takes ~10s to emerge, holds, then a slow
+// 逆展開. One station = 19s; the scene's R,L,R,L,Both sequence loops every ~95s.
+export const DURATIONS = { gather: 10, hold: 3, disperse: 5, gap: 1 };
+export const STATION = DURATIONS.gather + DURATIONS.hold + DURATIONS.disperse + DURATIONS.gap; // 19
 export const STATION_SEQ = ['R', 'L', 'Both']; // module default (unchanged)
 export const CYCLE = STATION * STATION_SEQ.length; // 23.1 (unchanged)
 // Loop length for an arbitrary station sequence (the scene uses ['R','L','R','L','Both'] => 38.5s).

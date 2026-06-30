@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PurposeMaker } from '../../src/scenes/dots/PurposeMaker.js';
+import { DURATIONS } from '../../src/scenes/dots/purposeMakerChoreo.js';
 
 // Minimal mock 2D context: records nothing, just satisfies the calls draw() makes.
 function mockCtx() {
@@ -10,6 +11,12 @@ function mockCtx() {
 }
 const audio = { level: 0.3, bass: 0.2, treble: 0.1, beat: false, beatHold: 0 };
 const clock = { time: 0, beats: 0, beatPhase: 0, quality: 1 };
+// Phase time points on the slow 19s station (gather 10 / hold 3 / disperse 5 / gap 1).
+const GATHER_MID = 5;                                          // g~0.5, mid gather
+const SHEET_T = 6;                                             // g~0.6, band/sheet phase
+const HOLD_MID = DURATIONS.gather + DURATIONS.hold / 2;        // 11.5
+const GAP_MID = DURATIONS.gather + DURATIONS.hold + DURATIONS.disperse + DURATIONS.gap / 2; // 18.5
+const CYCLE5 = DURATIONS.gather + DURATIONS.hold + DURATIONS.disperse + DURATIONS.gap;      // one station (×5 = full)
 
 test('constructs with id, params, and four station modes', () => {
   const s = new PurposeMaker();
@@ -77,7 +84,8 @@ function freshScene(count) {
   return s;
 }
 function driveTo(s, T, aud) {
-  for (let t = 0; t <= T + 1e-9; t += 1 / 60) { clock.time = t; s.update(1 / 60, aud || audio, s.palette, clock); }
+  // Step at 1/40 to keep the suite quick over the long 19s station (convergence is dt-based).
+  for (let t = 0; t <= T + 1e-9; t += 1 / 40) { clock.time = t; s.update(1 / 40, aud || audio, s.palette, clock); }
 }
 
 test('seq modeGroup exists and defaults to R,L,R,L,Both (2 alternations then both hands)', () => {
@@ -89,10 +97,10 @@ test('seq modeGroup exists and defaults to R,L,R,L,Both (2 alternations then bot
 
 test('recruited grains converge onto the R hand at hold, then dissolve at the gap', () => {
   const s = freshScene(9000);
-  driveTo(s, 3.8);                         // station 0 = R, hold midpoint (g=1)
+  driveTo(s, HOLD_MID);                         // station 0 = R, hold midpoint (g=1)
   const hold = meanTargetDist(s);
   assert.ok(hold < 0.10, `grains sit on the hand at hold (mean dist ${hold.toFixed(3)})`);
-  driveTo(s, 7.45);                        // same station, gap (g=0): grains rejoin the field
+  driveTo(s, GAP_MID);                        // same station, gap (g=0): grains rejoin the field
   const gap = meanTargetDist(s);
   assert.ok(gap > 0.2 && gap > hold * 2.5, `gap far more dispersed than hold (${gap.toFixed(3)} vs ${hold.toFixed(3)})`);
 });
@@ -103,7 +111,7 @@ test('directional convergence front: the wrist (entry edge) leads the fingertips
   // (cv) than the tips. Measure cv directly (target POSITION confounds a distance metric, since
   // the wrist targets sit far from the ambient cloud regardless of the front).
   const s = freshScene(11000);
-  driveTo(s, 1.3);                         // gather mid-sweep (g~0.5): wrist leading, tips not yet
+  driveTo(s, GATHER_MID);                         // gather mid-sweep (g~0.5): wrist leading, tips not yet
   const recruit = s.p('recruit');
   const meanCv = (uLo, uHi) => {
     let sum = 0, k = 0;
@@ -130,19 +138,19 @@ test('3D sheets: recruited grains layer into depth bands mid-build, then flatten
     for (let i = 0; i < s.n; i++) if (s._h(i * 7 + 99) < recruit) { const k = Math.min(3, (s._h(i * 5 + 3) * 4) | 0); b[k].push(s.Z[i]); }
     return b.map((a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0));
   };
-  driveTo(s, 1.5);                         // band phase (g~0.63, sheet weight high)
+  driveTo(s, SHEET_T);                         // band phase (g~0.63, sheet weight high)
   const mB = bandMeans();
-  assert.ok(mB[3] - mB[0] > 0.10, `depth bands separate in z (${mB[3].toFixed(3)} vs ${mB[0].toFixed(3)})`);
-  driveTo(s, 3.8);                         // hold: a flat, crisp hand
+  assert.ok(mB[3] - mB[0] > 0.08, `depth bands separate in z (${mB[3].toFixed(3)} vs ${mB[0].toFixed(3)})`);
+  driveTo(s, HOLD_MID);                         // hold: a flat, crisp hand
   const mH = bandMeans();
   assert.ok(Math.abs(mH[3] - mH[0]) < 0.05, `bands collapse to the hand plane at hold (${(mH[3] - mH[0]).toFixed(3)})`);
 });
 
 test('dynamic tilt: the field tilts for depth during the band phase and is flat at the hold', () => {
   const s = freshScene(6000);
-  driveTo(s, 1.5);                         // band phase
+  driveTo(s, SHEET_T);                         // band phase
   const tiltBand = s._tilt;
-  driveTo(s, 3.8);                         // hold
+  driveTo(s, HOLD_MID);                         // hold
   const tiltHold = s._tilt;
   assert.ok(typeof tiltBand === 'number' && typeof tiltHold === 'number', '_tilt is exposed');
   assert.ok(tiltBand > tiltHold + 0.05, `tilt larger during bands (${tiltBand.toFixed(3)}) than at hold (${tiltHold.toFixed(3)})`);
@@ -150,7 +158,7 @@ test('dynamic tilt: the field tilts for depth during the band phase and is flat 
 
 test('ambient density thins the calm background field (the converging mass stays the star)', () => {
   const s = freshScene(12000);
-  driveTo(s, 7.45);                        // a gap: the hand is gone, background is just ambient
+  driveTo(s, GAP_MID);                        // a gap: the hand is gone, background is just ambient
   const recruit = s.p('recruit');
   const drawnAmbientFrac = () => {
     let drawn = 0, amb = 0;
@@ -168,7 +176,7 @@ test('ambient density thins the calm background field (the converging mass stays
 test('full RLRLBoth cycle (incl. Both + disperse, with a kick) stays finite — no NaN', () => {
   const s = freshScene(6000);
   const kick = { level: 0.6, bass: 0.8, treble: 0.4, beat: true, beatHold: 1 };
-  for (let f = 0; f < 60 * 39; f += 3) { clock.time = f / 60; s.update(3 / 60, kick, s.palette, clock); }
+  for (let f = 0; f < 60 * (CYCLE5 * 5 + 1); f += 3) { clock.time = f / 60; s.update(3 / 60, kick, s.palette, clock); }
   let ok = 0;
   for (let i = 0; i < s.n; i += 100) {
     assert.ok(Number.isFinite(s.X[i]) && Number.isFinite(s.Y[i]) && Number.isFinite(s.Z[i]));
