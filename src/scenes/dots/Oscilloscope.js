@@ -26,6 +26,49 @@ const SPHERE_TILT = 0.42; // fixed X-axis tilt, rad — keeps the pole off dead-
 const SPHERE_COS_TILT = Math.cos(SPHERE_TILT);
 const SPHERE_SIN_TILT = Math.sin(SPHERE_TILT);
 
+// ── TERRAIN = "Noise Blob" ──────────────────────────────────────────────────
+// A glowing off-white organic blob: a dense Fibonacci point cloud on a sphere
+// whose surface is pushed out by FBM (the big organic shape) + a Worley cell
+// network. F2-F1 is ~0 exactly on the Voronoi boundaries → THIN bright cell
+// walls with dark cell craters (the signature). Soft additive sprites,
+// brightness-culled so the walls concentrate, slow rotation + breathing morph +
+// treble grain-shimmer, an offscreen bloom halo. Mono, additive, deterministic
+// (seeded simplex + sin-hash worley, clock-driven; no Math.random/Date).
+// Ported 1:1 from the user-approved shots/blob-proto.html look.
+const BLOB_COUNT = 70000;   // Fibonacci points (perf-tuned for the live app)
+const BLOB_EDGEW = 0.17;    // Voronoi wall thickness (F2-F1 band)
+const BLOB_CULL = 0.04;     // drop dots dimmer than this → dark craters, solid walls, fewer draws
+const BLOB_SCALE = 0.5;     // render the cloud to a half-res offscreen (4× cheaper bloom; the upscale softens the grain)
+let _wF1 = 0, _wF2 = 0;
+function _fract(v) { return v - Math.floor(v); }
+function _smoothstep(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+function _clampv(v, a, b) { return v < a ? a : v > b ? b : v; }
+// fast integer hash → a 0..1 feature-point offset (no Math.sin: the sin-hash the
+// proto used costs ~3M sin/frame at this point count, far too slow live). The
+// cell pattern is statistical, so swapping the hash keeps the approved foam look.
+function _hash01(x, y, z, c) {
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(z | 0, 1274126177) + Math.imul(c | 0, 2147483647)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+// two nearest feature-point distances (3×3×3). F2-F1 ≈ 0 on the Voronoi
+// boundaries → the thin bright cell-wall network; large inside cells → craters.
+function _worley2(px, py, pz) {
+  const ipx = Math.floor(px), ipy = Math.floor(py), ipz = Math.floor(pz);
+  const fpx = px - ipx, fpy = py - ipy, fpz = pz - ipz;
+  let f1 = 1e9, f2 = 1e9;
+  for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
+    const hx = ipx + x, hy = ipy + y, hz = ipz + z;
+    const rx = x + _hash01(hx, hy, hz, 0) - fpx;
+    const ry = y + _hash01(hx, hy, hz, 1) - fpy;
+    const rz = z + _hash01(hx, hy, hz, 2) - fpz;
+    const dd = rx * rx + ry * ry + rz * rz;
+    if (dd < f1) { f2 = f1; f1 = dd; } else if (dd < f2) { f2 = dd; }
+  }
+  _wF1 = Math.sqrt(f1); _wF2 = Math.sqrt(f2);
+}
+
 // Rare HELIX-ONLY accents (never on other spreads): a SHELL bloom — a waveform
 // sphere swelling out past the coil, then fading — and a coil XY-VIBRATION — the
 // whole coil swaying in a 3:2 Lissajous (the XY scope pattern), the figure
@@ -75,6 +118,11 @@ export class Oscilloscope extends Scene {
     this._vibeFireT = -100;  // clock time the coil vibration last fired (far past = not playing)
     this._prevBass = 0;      // previous-frame bass, for rising-edge (hit) detection
     this._noise = new SimplexNoise(7); // TERRAIN surface texture (deterministic, seeded)
+    // TERRAIN "Noise Blob" lazy caches (built on first draw): Fibonacci point
+    // directions + per-point seed, a soft sprite stamp, and an offscreen buffer
+    // for the bloom composite (resized with the canvas).
+    this._blobDir = null; this._blobSeed = null;
+    this._blobOC = null; this._blobOCtx = null; this._blobW = 0; this._blobH = 0;
   }
 
   update(dt, audio, palette, clock) {
@@ -85,6 +133,10 @@ export class Oscilloscope extends Scene {
     this.treble = audio.treble;
     this.t = clock.time;
     this.beats = clock.beats;
+    // TERRAIN (Sphere → Form TERRAIN) renders a fresh point-cloud blob with its
+    // own bloom each frame, so it wants a full clear (no smear); every other form
+    // keeps the filament motion-trails. SceneManager reads this.trail after update.
+    this.trail = (this.modeIndex === 3 && this.mg('sphere') === 3) ? 1 : 0.3;
 
     // Rotation: manual slider, OR a slow bold wander when Auto is on. Band is
     // intentionally NOT mixed into spin — Drive drives the scale, Rotate the
@@ -588,99 +640,148 @@ export class Oscilloscope extends Scene {
   // latitude ring + an energy-gated bloom nucleus give the glow. Density = relief
   // detail / ring count; Gain = relief depth; Core = nucleus (0 = off). Mono,
   // additive, deterministic.
+  // Lazily build the Fibonacci point directions + per-point seed, the soft
+  // sprite stamp, and the offscreen bloom buffer (rebuilt when the canvas
+  // resizes). Deterministic — the seed uses a fixed sin hash, not Math.random.
+  _ensureBlob() {
+    if (!this._blobDir) {
+      const NB = BLOB_COUNT;
+      this._blobDir = new Float32Array(NB * 3);
+      this._blobSeed = new Float32Array(NB);
+      this._blobRad = new Float32Array(NB);   // cached structural radius (amortised noise)
+      this._blobBri = new Float32Array(NB);   // cached structural brightness (pre fade/expo/audio)
+      this._blobCursor = 0;                   // round-robin recompute cursor
+      this._blobPrimed = false;               // false → first frame recomputes ALL points
+      const golden = Math.PI * (3 - Math.sqrt(5));
+      const JIT = 0.5 * Math.sqrt(4 * Math.PI / NB); // ~½ point spacing → breaks the spiral lattice but keeps walls tight
+      for (let i = 0; i < NB; i++) {
+        const y = 1 - (i / (NB - 1)) * 2, r = Math.sqrt(Math.max(0, 1 - y * y)), th = golden * i;
+        // jitter each Fibonacci point off the regular spiral so the cloud reads
+        // as organic dust, not a visible mesh (deterministic hash, fixed once).
+        let vx = Math.cos(th) * r + (_hash01(i, 0, 0, 7) - 0.5) * JIT;
+        let vy = y + (_hash01(i, 0, 0, 8) - 0.5) * JIT;
+        let vz = Math.sin(th) * r + (_hash01(i, 0, 0, 9) - 0.5) * JIT;
+        const inv = 1 / Math.sqrt(vx * vx + vy * vy + vz * vz);
+        this._blobDir[i * 3] = vx * inv;
+        this._blobDir[i * 3 + 1] = vy * inv;
+        this._blobDir[i * 3 + 2] = vz * inv;
+        this._blobSeed[i] = _hash01(i, 0, 0, 5);
+      }
+    }
+    if (!this._blobOC || this._blobW !== this.w || this._blobH !== this.h) {
+      this._blobOC = document.createElement('canvas');
+      this._blobOC.width = Math.max(1, Math.round(this.w * BLOB_SCALE));
+      this._blobOC.height = Math.max(1, Math.round(this.h * BLOB_SCALE));
+      this._blobOCtx = this._blobOC.getContext('2d');
+      this._blobW = this.w; this._blobH = this.h;
+    }
+  }
+
+  // TERRAIN — the "Noise Blob". A Fibonacci point cloud whose surface is pushed
+  // out by FBM + a Worley cell-wall network (F2-F1 → thin bright Voronoi walls,
+  // dark craters). Each band is visibly distinct: BASS swells the whole blob,
+  // MID flares the cell walls, TREBLE adds a fast grain shimmer. Rendered to an
+  // offscreen then composited with a soft additive bloom. Mono, deterministic.
+  // (wave/N/band unused — the blob is driven by the honest FFT bands + clock.)
   _drawSphereTerrain(ctx, wave, N, R, band, alpha, project) {
-    const LAT = 36, LON = 72;
-    // Each frequency band drives its OWN distinct surface motion, so you can SEE
-    // which band is loud: BASS = a few big, slow heaving lobes (low spatial freq);
-    // MID = ridges marching pole→pole (medium freq, travelling); TREBLE = fine
-    // fast crackling spikes (high freq simplex chop). The honest live waveform is
-    // a quiet floor that keeps the globe alive at silence; loud moments erupt into
-    // far deeper terrain than a gentle relief. Deterministic (seeded noise, clock).
-    const driveAmt = this.p('drive');
-    const gain = this.p('gain');
+    this._ensureBlob();
+    const oc = this._blobOC, octx = this._blobOCtx;
+    const S = BLOB_SCALE;                        // offscreen render scale (half-res)
+    octx.clearRect(0, 0, oc.width, oc.height);
+    octx.globalCompositeOperation = 'lighter';
+    octx.fillStyle = '#fff';                     // points drawn white, tinted to palette after
+
+    const driveAmt = this.p('drive'), gain = this.p('gain'), thick = this.p('thickness');
+    const dens = Math.max(3, Math.round(this.p('density'))), coreP = this.p('core');
     const eBass = this.bass, eMid = this.mid, eTre = this.treble;
     const loud = Math.max(this.level, eBass, eMid, eTre);
-    const energy = 0.30 + driveAmt * loud * 1.15;          // overall breathing (brightness)
-    const dens = Math.max(3, Math.round(this.p('density')));
-    const nScale = 1.3 + 0.10 * dens;                      // Density → mid/coarse grain
-    const nFine = nScale * 2.4;                            // treble: finer grain
-    const rFreq = Math.max(2, Math.round(dens * 0.5));     // Density → mid ring count
-    const fast = this.t * 1.25;                            // fast flow → treble chop
-    const AMP = 0.34 * (0.6 + 0.7 * gain);                 // Gain → terrain depth (deeper than before)
-    const bandGain = 0.5 + driveAmt * 0.85;                // Drive cranks the band-driven 凹凸 hard
-    const noise = this._noise;
-    // 1) build the displaced, projected globe grid + per-vertex height
-    const G = [];
-    for (let i = 0; i <= LAT; i++) {
-      const th = -Math.PI / 2 + Math.PI * (i / LAT);
-      const ct = Math.cos(th), st2 = Math.sin(th);
-      const latu = th + Math.PI / 2;                       // 0..π pole→pole
-      const midBase = latu * rFreq * 2 - this.t * 2.4;     // MID ridge phase (marching)
-      const bassLat = 0.55 + 0.45 * Math.sin(th * 2 + this.t * 0.4);
-      const row = [];
-      for (let j = 0; j <= LON; j++) {
-        const ph = (j / LON) * TWO_PI;
-        const bx = ct * Math.cos(ph), by = st2, bz = ct * Math.sin(ph);
-        const wi = Math.floor((j / LON) * (N - 1));
-        const relief = (wave[wi] - 128) / 128;             // HONEST live-signal floor
-        // BASS — a few big, slow heaving lobes (low spatial freq) pumping radially
-        const bassPat = Math.cos(2 * ph - this.t * 0.6) * bassLat;
-        // MID — travelling latitudinal ridge with a slight longitudinal spiral
-        const midPat = Math.sin(midBase + ph * 0.5);
-        // TREBLE — fine, fast crackling spikes (high-freq simplex chop)
-        const treTex = noise.noise3D(bx * nFine + fast, by * nFine - fast, bz * nFine + fast * 0.7);
-        // each band adds its OWN motion, independently, cranked by Drive
-        const bandDisp = (bassPat * eBass * 0.80 + midPat * eMid * 0.62 + treTex * eTre * 0.50) * bandGain;
-        const disp = (relief * 0.30 + bandDisp) * AMP;
-        const r = 1 + disp;
-        row.push({ pr: project(bx * r, by * r, bz * r), h: disp });
-      }
-      G.push(row);
+    // Reference params, mapped onto the existing levers so the panel stays usable:
+    const noiseScale = 1.2 + dens * 0.10;        // Density → cell count   (≈2.1 @ default 9)
+    const displace = 0.26 + gain * 0.15;         // Gain → lumpiness depth (≈0.41 @ default 1)
+    const cellEdge = 0.7 * (1 + eMid * 0.7);     // MID → cell-wall flare
+    const audioGain = driveAmt * 1.8;            // Drive → audio depth    (≈1.08 @ default 0.6)
+    const audioPush = eBass * audioGain;         // BASS → radial swell
+    const bloomStr = 0.7 + coreP * 2.2;          // Core → bloom strength  (≈0.96 @ default 0.12)
+    const exposure = 1.35 * (1 + 0.25 * loud);   // overall brightness breath
+    const pointSize = (1.4 + thick * 0.22) * 0.95; // Thickness → grain size
+    const t = this.t * 0.45;                     // continuous breathing-morph flow
+    const fast = this.t * 4.0;                   // treble fine-crackle flow
+    const tre = eTre;
+    const wob = Math.sin(this.t * 0.08) * 0.18;  // gentle anti-turntable nod (around X)
+    const cosW = Math.cos(wob), sinW = Math.sin(wob);
+    const noise = this._noise, dir = this._blobDir, seedA = this._blobSeed;
+    const NB = BLOB_COUNT, szK = R / 300;
+
+    // ── amortised recompute: the FBM + Worley field is the slow "breathing", so
+    // refresh only 1/REFRESH of the cloud per frame (all of it on the first
+    // frame) and cache structural radius + brightness. The draw below just
+    // re-projects (cheap) so spin stays smooth while the surface still evolves.
+    // The bass swell is applied live in the draw, so beats still punch instantly.
+    const REFRESH = 4;
+    const rad = this._blobRad, bri = this._blobBri;
+    const chunk = this._blobPrimed ? Math.ceil(NB / REFRESH) : NB;
+    let cur = this._blobCursor;
+    for (let c = 0; c < chunk; c++) {
+      const i = cur; cur = cur + 1 >= NB ? 0 : cur + 1;
+      const dx = dir[i * 3], dy = dir[i * 3 + 1], dz = dir[i * 3 + 2];
+      const spx = dx * noiseScale, spy = dy * noiseScale, spz = dz * noiseScale;
+      // FBM (3 octaves) — the big organic shape, flowing over time
+      let f = 0, a = 0.5, nx = spx, ny = spy, nz = spz + t;
+      for (let o = 0; o < 3; o++) { f += a * noise.noise3D(nx, ny, nz); nx *= 2; ny *= 2; nz *= 2; a *= 0.5; }
+      // Worley cell walls (F2-F1 ≈ 0 on boundaries) → thin bright Voronoi network
+      _worley2(spx * 1.45 + t * 0.6, spy * 1.45 + t * 0.6, spz * 1.45 + t * 0.6);
+      const wall = 1 - _smoothstep(0, BLOB_EDGEW, _wF2 - _wF1);
+      const disp = f * 0.45 + wall * cellEdge * 0.7;          // gentler big-shape → rounder silhouette
+      let radius = 1 + displace * disp;
+      // TREBLE — fine, fast radial crackle (high-freq), read as a shimmer
+      if (tre > 0.001) radius += tre * 0.05 * noise.noise3D(dx * 9 + fast, dy * 9 - fast, dz * 9 + fast * 0.7);
+      rad[i] = radius;
+      const seed = seedA[i];
+      let bb = (0.05 + 1.7 * wall * cellEdge + 0.28 * Math.max(disp, 0)) * (0.8 + 0.6 * seed);
+      if (tre > 0.001) { const sp = noise.noise3D(dx * 7 - fast, dy * 7 + fast, dz * 7); bb *= 1 + tre * 0.7 * sp; }
+      bri[i] = bb;
     }
-    // 2) brightness from height (higher = brighter), scaled by energy + depth
-    const eb = 0.45 + 0.55 * Math.min(1.3, energy);
-    const segA = (ha, hb, d) => {
-      const inten = Math.max(0, (ha + hb) * 0.5 * 1.5 + 0.18);
-      const depthFac = 0.26 + 0.74 * (d * 0.5 + 0.5);      // strong back-dim → reads as a globe
-      return Math.min(1, (0.07 + 0.95 * inten) * eb * depthFac);
-    };
+    this._blobCursor = cur;
+    this._blobPrimed = true;
+
+    // ── per-frame draw: cheap re-projection of every cached point + live swell ──
+    const swell = audioPush * 0.28, briBoost = (1 + audioPush * 0.8) * exposure;
+    const preCull = BLOB_CULL / (1.2 * briBoost);             // max fade factor ≈1.2 → skip definite craters before projecting
+    for (let i = 0; i < NB; i++) {
+      if (bri[i] < preCull) continue;                          // pre-cull dark craters (skip projection entirely)
+      const dx = dir[i * 3], dy = dir[i * 3 + 1], dz = dir[i * 3 + 2];
+      const radius = rad[i] + swell;
+      const px0 = dx * radius, py0 = dy * radius, pz0 = dz * radius;
+      // gentle wobble (around X) before the shared spin/tilt projection
+      const pr = project(px0, py0 * cosW - pz0 * sinW, py0 * sinW + pz0 * cosW);
+      const depthFade = _clampv(0.55 + 0.45 * (radius - 0.8), 0.3, 1.2);
+      const viewFade = 0.5 + 0.5 * (pr.depth * 0.5 + 0.5);   // back dims → reads as a globe
+      const bright = bri[i] * depthFade * viewFade * briBoost;
+      if (bright < BLOB_CULL) continue;                       // cull dim cell interiors
+      const szs = pointSize * (0.7 + 0.6 * seedA[i]) * szK * S; // point half-size in half-res space
+      octx.globalAlpha = bright < 2 ? bright * 0.20 : 0.40;    // faint solid squares; overlap builds the glow
+      // fillRect (not drawImage) — ~2× the throughput; the half-res upscale + the
+      // bloom blur soften the squares back into soft dusty grains.
+      octx.fillRect(pr.sx * S - szs, pr.sy * S - szs, szs * 2, szs * 2);
+    }
+    octx.globalAlpha = 1;
+    // tint the white blob to the palette's brightest colour (ramp[0]: white in
+    // MONO). A FIXED phase, not the cycling colorAt the line forms use — that
+    // ramp dips through mid-greys and would dim/flicker the whole volume.
+    octx.globalCompositeOperation = 'source-atop';
+    octx.fillStyle = rgbCss(this.palette.colorAt(0));
+    octx.fillRect(0, 0, oc.width, oc.height);
+    octx.globalCompositeOperation = 'source-over';
+    // composite the half-res buffer onto the main canvas, upscaled (the upscale
+    // softens the grain), with two blurred copies under a crisp one = bloom halo.
+    const bBig = Math.max(1, Math.round(R * 0.052 * bloomStr));
+    const bMid = Math.max(1, Math.round(R * 0.018 * bloomStr));
+    const W = this.w, H = this.h;
     ctx.save();
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
-    const baseW = Math.max(0.75, this.p('thickness') * 0.45);
-    // 2a) wide faint HALO — one polyline per (other) latitude ring (cheap bloom)
-    ctx.lineWidth = baseW + 2.4;
-    for (let i = 0; i <= LAT; i += 2) {
-      ctx.globalAlpha = alpha * 0.10 * eb;
-      ctx.beginPath();
-      for (let j = 0; j <= LON; j++) { const p = G[i][j].pr; if (j) ctx.lineTo(p.sx, p.sy); else ctx.moveTo(p.sx, p.sy); }
-      ctx.stroke();
-    }
-    // 2b) crisp latitude rings (per-segment, so height drives brightness)
-    ctx.lineWidth = baseW;
-    for (let i = 0; i <= LAT; i++) for (let j = 0; j < LON; j++) {
-      const a = G[i][j], b = G[i][j + 1];
-      ctx.globalAlpha = segA(a.h, b.h, (a.pr.depth + b.pr.depth) * 0.5);
-      ctx.beginPath(); ctx.moveTo(a.pr.sx, a.pr.sy); ctx.lineTo(b.pr.sx, b.pr.sy); ctx.stroke();
-    }
-    // 2c) crisp longitude lines (sparser; ties the grid together)
-    for (let j = 0; j <= LON; j += 3) for (let i = 0; i < LAT; i++) {
-      const a = G[i][j], b = G[i + 1][j];
-      ctx.globalAlpha = segA(a.h, b.h, (a.pr.depth + b.pr.depth) * 0.5) * 0.82;
-      ctx.beginPath(); ctx.moveTo(a.pr.sx, a.pr.sy); ctx.lineTo(b.pr.sx, b.pr.sy); ctx.stroke();
-    }
-    // 3) energy-gated bloom NUCLEUS at the globe centre (Core slider; 0 = off)
-    const coreR = this.p('core');
-    if (coreR > 0.005) {
-      const cx = this.w / 2, cy = this.h / 2, cr = R * (0.30 + 0.5 * coreR);
-      const col = this.palette.colorAt((this.t * 0.1) % 1);
-      const ci = Math.min(0.5, 0.45 * coreR + 0.4 * driveAmt * loud);
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
-      g.addColorStop(0, `rgba(${col[0] | 0},${col[1] | 0},${col[2] | 0},${ci})`);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.globalAlpha = alpha; ctx.fillStyle = g;
-      ctx.fillRect(cx - cr, cy - cr, 2 * cr, 2 * cr);
-    }
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = alpha * 0.50; ctx.filter = `blur(${bBig}px)`; ctx.drawImage(oc, 0, 0, W, H);
+    ctx.globalAlpha = alpha * 0.65; ctx.filter = `blur(${bMid}px)`; ctx.drawImage(oc, 0, 0, W, H);
+    ctx.filter = 'none'; ctx.globalAlpha = alpha; ctx.drawImage(oc, 0, 0, W, H);
     ctx.restore();
   }
 }
