@@ -24,6 +24,7 @@ const SPANX = 1.64, SPANY = 0.92, OFFA = -0.30, OFFB = -1.34;
 // just off-centre with a small vertical offset so the two hands read distinctly, not as a knot.
 const BSPANX = 1.20, BSPANY = 0.67, BOFFA = -0.224, BOFFB = -0.976, BDY = 0.13;
 const ACT_SPAN = 0.45;          // convergence-front width: the fraction of g the edge->locus sweep spans
+const NSHEET = 4, SHEET_Z = 0.55, SHEET_K = 4.0; // depth slabs / half-depth / plane stiffness (面/帯)
 const SEQS = [['R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'Both'], ['R', 'L', 'R', 'L', 'R', 'L', 'Both']];
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -129,6 +130,9 @@ export class PurposeMaker extends Scene {
     const rev = st.phase === 'disperse';
     const F = formAt(g, { beatHold: audio.beatHold, bass: audio.bass }, { react, audioOn });
     this._F = F;
+    // depth cue: the band phase tilts the field for parallax (the slabs read as stacked planes),
+    // easing back to a near-flat tilt at hold so the resolved hand is crisp. +a tiny sway for life.
+    this._tilt = TILT + 0.22 * this.p('depth') * F.sheet + 0.02 * Math.sin(this.t * 0.3);
     // persistence breathes too: lines linger (low trail = more persistence), dust is crisper.
     this.trail = 0.16 + 0.13 * (1 - B.K);
 
@@ -184,14 +188,20 @@ export class PurposeMaker extends Scene {
         const waver = Math.sin(this.t * 0.7 + hi * TWO_PI) * 0.10 * (1 - conv);
         const adv = 0.9 * F.advance * (1 - conv);            // net streaming carry along entry axis
         const dir = rev ? 1 : -1;                            // edge->locus (gather) / locus->edge (disperse)
+        // 3D "面/帯": each grain belongs to one depth slab (independent hash salt, so every band
+        // samples the whole silhouette -> stacked planes, not vertical slices). The slab lifts
+        // during the band phase and collapses to z=0 as the hand resolves into a flat plane.
+        const sIdx = (this._h(i * 5 + 3) * NSHEET) | 0;
+        const sheetZ = (sIdx / (NSHEET - 1) - 0.5) * SHEET_Z;
+        const zTarget = sheetZ * F.sheet * (1 - conv);
         const lc = (F.line * (1 + 0.6 * F.snapLine)) * comb; // filament-comb, punched by the beat
         vx += dirx * lc + dir * entrySign * adv + entrySign * waver;
         vy += diry * lc;
-        vz += 0.5 * waver;
+        vz += (zTarget - z) * SHEET_K * F.sheet + 0.5 * waver; // gather onto the band plane
         const qv = conv > 0.5 ? 0.010 * Math.sin(this.t * 16 + hi * TWO_PI) : 0;
         vx = vx * sp * (1 - conv) + ((tx - x) * cohK + qv) * conv * dt;
         vy = vy * sp * (1 - conv) + ((ty - y) * cohK + qv * 0.5) * conv * dt;
-        vz = vz * sp * (1 - conv) + ((0 - z) * cohK) * conv * dt;
+        vz = vz * sp * (1 - conv) + ((zTarget - z) * cohK) * conv * dt;
         this.X[i] = x + vx; this.Y[i] = y + vy; this.Z[i] = z + vz;
         continue;
       }
@@ -215,7 +225,8 @@ export class PurposeMaker extends Scene {
     const n = this.n || 0; if (!n) return;
     const W = this.w, H = this.h, cx = W / 2, cy = H / 2;
     const R = Math.min(W, H) * 0.5; // world ±1 maps to half-min-dimension (sim ±1.6 bleeds off)
-    const cX = Math.cos(TILT), sX = Math.sin(TILT);
+    const tilt = this._tilt != null ? this._tilt : TILT;
+    const cX = Math.cos(tilt), sX = Math.sin(tilt);
     const B = this._B;
     const elong = B ? B.elong : 0.5, flash = B ? B.flash : 0, ambB = B ? B.bright : 0.7;
     const recruit = this.p('recruit');

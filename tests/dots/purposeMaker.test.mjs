@@ -108,6 +108,35 @@ test('directional convergence front: the wrist (entry edge) resolves before the 
   assert.ok(tips > wrist * 1.8, `fingertips still arriving (${tips.toFixed(3)} >> ${wrist.toFixed(3)})`);
 });
 
+test('3D sheets: recruited grains layer into depth bands mid-build, then flatten at the hand plane', () => {
+  const s = freshScene(12000);
+  const recruit = s.p('recruit');
+  // group recruited grains by their sheet-band hash (mirrors _h(i*5+3) in PurposeMaker.js) and
+  // take the mean Z per band. With z-sheets the outer bands separate in depth; without, Z is
+  // independent of the band hash so the means coincide.
+  const bandMeans = () => {
+    const b = [[], [], [], []];
+    for (let i = 0; i < s.n; i++) if (s._h(i * 7 + 99) < recruit) { const k = Math.min(3, (s._h(i * 5 + 3) * 4) | 0); b[k].push(s.Z[i]); }
+    return b.map((a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0));
+  };
+  driveTo(s, 1.5);                         // band phase (g~0.63, sheet weight high)
+  const mB = bandMeans();
+  assert.ok(mB[3] - mB[0] > 0.10, `depth bands separate in z (${mB[3].toFixed(3)} vs ${mB[0].toFixed(3)})`);
+  driveTo(s, 3.8);                         // hold: a flat, crisp hand
+  const mH = bandMeans();
+  assert.ok(Math.abs(mH[3] - mH[0]) < 0.05, `bands collapse to the hand plane at hold (${(mH[3] - mH[0]).toFixed(3)})`);
+});
+
+test('dynamic tilt: the field tilts for depth during the band phase and is flat at the hold', () => {
+  const s = freshScene(6000);
+  driveTo(s, 1.5);                         // band phase
+  const tiltBand = s._tilt;
+  driveTo(s, 3.8);                         // hold
+  const tiltHold = s._tilt;
+  assert.ok(typeof tiltBand === 'number' && typeof tiltHold === 'number', '_tilt is exposed');
+  assert.ok(tiltBand > tiltHold + 0.05, `tilt larger during bands (${tiltBand.toFixed(3)}) than at hold (${tiltHold.toFixed(3)})`);
+});
+
 test('full RLRLBoth cycle (incl. Both + disperse, with a kick) stays finite — no NaN', () => {
   const s = freshScene(6000);
   const kick = { level: 0.6, bass: 0.8, treble: 0.4, beat: true, beatHold: 1 };
