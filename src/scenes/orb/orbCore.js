@@ -97,7 +97,8 @@ const FRAG = /* glsl */`
 export function createOrbCore({ THREE, renderer }) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-  camera.position.set(0, 0, 4.4);
+  const BASE_Z = 4.4;                    // camera distance at size=1.0
+  camera.position.set(0, 0, BASE_Z);
 
   const { positions, seeds } = buildOrbGeometry(ORB.COUNT);
   const geo = new THREE.BufferGeometry();
@@ -151,11 +152,12 @@ export function createOrbCore({ THREE, renderer }) {
     geo.setDrawRange(0, Math.max(1, Math.floor(ORB.COUNT * f)));
   }
   function rotate(rx, ry) { points.rotation.x = rx; points.rotation.y = ry; }
+  function setSize(s) { camera.position.z = BASE_Z / Math.max(0.2, s); } // overall on-screen size via camera dolly; apparent radius ∝ s, density/brightness preserved
   function render() { composer.render(); }
   function dispose() {
     geo.dispose(); material.dispose();
     if (bloom.dispose) bloom.dispose();
     if (composer.dispose) composer.dispose();
   }
-  return { scene, camera, points, uniforms, resize, setUniforms, setTint, setBloom, setDrawFraction, rotate, render, dispose };
+  return { scene, camera, points, uniforms, resize, setUniforms, setTint, setBloom, setDrawFraction, rotate, setSize, render, dispose };
 }

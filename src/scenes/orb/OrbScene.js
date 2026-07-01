@@ -20,6 +20,7 @@ export class OrbScene extends Scene {
         .defineParam('noiseScale', 1.70, 0.6, 4.0, 0.01, 'ノイズ密度')
         .defineParam('displace', 0.42, 0, 0.9, 0.005, '変位')
         .defineParam('cellEdge', 0.55, 0, 1.0, 0.01, 'フィラメント')
+        .defineParam('size', 1.0, 0.5, 1.8, 0.01, 'サイズ')
         .defineParam('pointSize', 1.70, 0.5, 4.0, 0.05, 'グレイン')
         .defineParam('exposure', 1.15, 0.2, 2.5, 0.01, '露光')
         .defineParam('bloom', 1.05, 0, 2.0, 0.01, 'ブルーム')
@@ -44,6 +45,7 @@ export class OrbScene extends Scene {
     const t = clock ? clock.time : 0;
     this._rotY += dt * this.p('rotSpeed');
     this._core.rotate(Math.sin(t * 0.08) * 0.18, this._rotY); // gentle deterministic wobble + spin
+    this._core.setSize(this.p('size'));                        // overall orb size (live slider; camera dolly)
 
     const a = audio || {};
     const gain = this.p('audioGain');
