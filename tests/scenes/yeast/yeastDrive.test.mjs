@@ -40,3 +40,49 @@ test('buildCells: different seeds give different layouts', () => {
   for (let i = 0; i < a.baseX.length; i++) if (a.baseX[i] !== b.baseX[i]) diff++;
   assert.ok(diff > a.baseX.length * 0.5, `seeds diverge: ${diff}`);
 });
+
+import { cellFrame } from '../../../src/scenes/yeast/yeastDrive.js';
+
+test('cellFrame: deterministic for same (state,time,audio); cells stay within FOV+margin', () => {
+  const s1 = buildCells(100, 3), s2 = buildCells(100, 3);
+  const audio = { bass: 0.6, mid: 0.4, beat: 0, level: 0.5 };
+  cellFrame(s1, 12.34, audio); cellFrame(s2, 12.34, audio);
+  assert.deepStrictEqual(s1.px, s2.px);
+  assert.deepStrictEqual(s1.pr, s2.pr);
+  for (let i = 0; i < s1.n; i++) {
+    const rr = Math.hypot(s1.px[i], s1.py[i]);
+    assert.ok(rr <= YEAST.FOV * 1.12, `slot ${i} within FOV+margin: ${rr}`);
+  }
+});
+
+test('cellFrame: main-cell radii positive; bud lobe grows 0->1 monotonically over time', () => {
+  const s = buildCells(60, 9);
+  // find a cell that actually buds (kind of its lobe slot is 1 or 2 AND it is selected to bud)
+  let k = -1;
+  for (let c = 0; c < s.count; c++) if (hash01(c, 9, 5, 23) < YEAST.BUD_PROB) { k = c; break; }
+  assert.ok(k >= 0, 'found a budding cell');
+  const bi = 2 * k + 1;
+  let prev = -1;
+  for (let t = 0; t <= 8; t += 1) {
+    cellFrame(s, t, null);
+    assert.ok(s.pr[2 * k] > 0, 'main radius stays positive');
+    assert.ok(s.pbud[bi] >= prev - 1e-6, `budAmount monotonic at t=${t}: ${s.pbud[bi]} < ${prev}`);
+    assert.ok(s.pbud[bi] >= 0 && s.pbud[bi] <= 1, 'budAmount in [0,1]');
+    prev = s.pbud[bi];
+  }
+});
+
+test('cellFrame: louder bass agitates motion more than quiet', () => {
+  const quiet = buildCells(80, 4), loud = buildCells(80, 4);
+  const base = buildCells(80, 4);
+  cellFrame(base, 0, null);
+  const bx = Float32Array.from(base.px), by = Float32Array.from(base.py);
+  cellFrame(quiet, 0.5, { bass: 0.0, mid: 0, beat: 0, level: 0 });
+  cellFrame(loud, 0.5, { bass: 1.0, mid: 0, beat: 0, level: 1 });
+  let dq = 0, dl = 0;
+  for (let i = 0; i < base.n; i++) {
+    dq += Math.hypot(quiet.px[i] - bx[i], quiet.py[i] - by[i]);
+    dl += Math.hypot(loud.px[i] - bx[i], loud.py[i] - by[i]);
+  }
+  assert.ok(dl > dq, `loud agitates more than quiet: ${dl} vs ${dq}`);
+});

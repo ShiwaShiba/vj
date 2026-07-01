@@ -77,3 +77,55 @@ export function buildCells(count, seed) {
     pd: new Float32Array(n), pbud: new Float32Array(n),
   };
 }
+
+// Smooth deterministic 2D flow (curl-ish): two orthogonal sine fields of position+time.
+// No noise texture needed; low frequencies read as slow roaming with no loop point.
+function flowAt(x, y, time, ph) {
+  const fx = Math.sin(x * 1.7 + time * 0.23 + ph) + Math.cos(y * 1.3 - time * 0.17 + ph * 0.5);
+  const fy = Math.cos(x * 1.1 - time * 0.19 - ph) + Math.sin(y * 1.9 + time * 0.13 + ph * 0.7);
+  return [fx * 0.5, fy * 0.5];
+}
+
+// Advance every slot: main cells roam (flow + brownian, agitation scaled by bass/level),
+// bud lobes sit beside their mother and grow (budAmount 0->1, faster on beat), dividers
+// drift outward as they mature. Writes px,py,pr,pd,pbud. Deterministic in (state,time,audio).
+export function cellFrame(state, time, audio) {
+  const a = audio || {};
+  const bass = clamp01(a.bass), mid = clamp01(a.mid), lvl = clamp01(a.level), beat = clamp01(a.beat);
+  const brown = YEAST.BROWNIAN + (YEAST.BROWNIAN_HOT - YEAST.BROWNIAN) * Math.max(bass, lvl);
+  const flowMag = YEAST.FLOW * (0.6 + 0.9 * mid);
+  const budRate = YEAST.BUD_GROW * (1 + 1.5 * beat);
+  for (let k = 0; k < state.count; k++) {
+    const mi = 2 * k, bi = 2 * k + 1;
+    const ph = state.phase[mi];
+    // main cell: base + slow flow + brownian wobble (brownian uses sin of time*hash => deterministic)
+    const fl = flowAt(state.baseX[mi], state.baseY[mi], time, ph);
+    const bwx = Math.sin(time * (0.7 + state.seedArr[mi]) + ph) * brown;
+    const bwy = Math.cos(time * (0.9 + state.seedArr[mi] * 0.8) + ph * 1.3) * brown;
+    let x = state.baseX[mi] + fl[0] * flowMag + bwx;
+    let y = state.baseY[mi] + fl[1] * flowMag + bwy;
+    const rr = Math.hypot(x, y);
+    if (rr > YEAST.FOV) { const f = YEAST.FOV / rr; x *= f; y *= f; }   // soft FOV containment
+    state.px[mi] = x; state.py[mi] = y; state.pd[mi] = state.depth[mi];
+    state.pr[mi] = state.radius0[mi]; state.pbud[mi] = 0;
+    // bud lobe: only if this cell was selected to bud
+    const buds = hash01(k, 0, 5, 23) < YEAST.BUD_PROB;   // NOTE: uses seed-independent selection by design (stable per index)
+    if (buds) {
+      // budAmount ramps with a per-cell phase so cells are asynchronous; saw-like 0->1 then hold near 1
+      const grown = Math.min(1, budRate * time * (0.5 + state.seedArr[bi]));
+      const dividing = state.kind[bi] === 2;
+      const ba = state.phase[bi];
+      const dist = state.radius0[mi] * (dividing ? (1.15 + 0.4 * grown) : (0.72 + 0.3 * grown));
+      state.px[bi] = x + Math.cos(ba) * dist;
+      state.py[bi] = y + Math.sin(ba) * dist;
+      state.pd[bi] = state.depth[bi];
+      const target = state.radius0[mi] * (dividing ? (0.82 + 0.15 * grown) : (0.48 + 0.28 * grown));
+      state.pr[bi] = target * grown;         // grows 0 -> target
+      state.pbud[bi] = grown;
+    } else {
+      state.pr[bi] = 0; state.pbud[bi] = 0;  // no lobe: zero radius => no splat
+      state.px[bi] = x; state.py[bi] = y; state.pd[bi] = state.depth[bi];
+    }
+  }
+  return state;
+}
