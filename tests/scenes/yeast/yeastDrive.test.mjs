@@ -59,7 +59,7 @@ test('cellFrame: main-cell radii positive; bud lobe grows 0->1 monotonically ove
   const s = buildCells(60, 9);
   // find a cell that actually buds (kind of its lobe slot is 1 or 2 AND it is selected to bud)
   let k = -1;
-  for (let c = 0; c < s.count; c++) if (hash01(c, 9, 5, 23) < YEAST.BUD_PROB) { k = c; break; }
+  for (let c = 0; c < s.count; c++) if (hash01(c, 0, 5, 23) < YEAST.BUD_PROB) { k = c; break; }   // MUST match cellFrame's bud gate exactly
   assert.ok(k >= 0, 'found a budding cell');
   const bi = 2 * k + 1;
   let prev = -1;
@@ -70,6 +70,7 @@ test('cellFrame: main-cell radii positive; bud lobe grows 0->1 monotonically ove
     assert.ok(s.pbud[bi] >= 0 && s.pbud[bi] <= 1, 'budAmount in [0,1]');
     prev = s.pbud[bi];
   }
+  assert.ok(s.pbud[bi] > 0, 'the found cell actually budded (test is non-vacuous, not the else-branch pbud=0)');
 });
 
 test('cellFrame: louder bass agitates motion more than quiet', () => {
