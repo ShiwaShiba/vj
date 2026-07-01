@@ -107,3 +107,21 @@ test('autoDrives = auto AND arm', () => {
   assert.strictEqual(autoDrives('phase', st({ auto: false })), false);
   assert.strictEqual(autoDrives('flip', st({ auto: true })), false); // flip unarmed by default
 });
+
+test('React dim in TERRAIN and RIBBON (lineWidth unused/overwritten), lit elsewhere', () => {
+  assert.strictEqual(isControlActive('p:react', st({ mode: 3, form: 3 })), false);            // TERRAIN
+  assert.strictEqual(isControlActive('p:react', st({ mode: 3, form: 2, spread: 4 })), false); // RIBBON
+  assert.strictEqual(isControlActive('p:react', st({ mode: 3, form: 2, spread: 0 })), true);  // LISSA plain
+  assert.strictEqual(isControlActive('p:react', st({ mode: 3, form: 0 })), true);             // GLOBE
+  assert.strictEqual(isControlActive('p:react', st({ mode: 2 })), true);                      // XY
+});
+
+test('WRAP mirrors GLOBE relevance', () => {
+  const s = st({ mode: 3, form: 1, auto: false });
+  assert.strictEqual(isControlActive('p:density', s), true);
+  assert.strictEqual(isControlActive('g:sphere', s), true);
+  assert.strictEqual(isControlActive('g:spread', s), false);
+  assert.strictEqual(isControlActive('p:core', s), false);
+  assert.strictEqual(isControlActive('p:count', s), false);
+  assert.strictEqual(isControlActive('g:drive', s), true); // Band lit (form <= 2)
+});

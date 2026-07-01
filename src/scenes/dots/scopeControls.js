@@ -45,7 +45,7 @@ export function isControlActive(id, state) {
   const form = state.form, spread = state.spread;
   switch (id) {
     case 'p:thickness': return true;
-    case 'p:react':     return !(sphere && form === 3);
+    case 'p:react':     return !(sphere && (form === 3 || (form === 2 && spread === 4))); // dead in TERRAIN (no stroke) + RIBBON (_drawRibbon overwrites lineWidth)
     case 'p:gain':      return true;
     case 'p:range':     return true;
     case 'p:phase':     return (state.mode === 2 || (sphere && form === 2)) && !autoDrives('phase', state);

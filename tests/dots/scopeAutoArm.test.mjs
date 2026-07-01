@@ -57,3 +57,14 @@ test('rotation: auto+arm.rot spins even with Spin OFF; unarmed frozen', () => {
   s.update(0.1, stubAudio(), null, clock);
   assert.ok(s._spin > 0);                     // armed → auto wander advances
 });
+
+test('Auto ON but rot unarmed → manual Spin/Rotate still drive (lit)', () => {
+  const s = new Oscilloscope();
+  s.setMode(2); s.setModeGroup('auto', 1); s.setModeGroup('spin', 1); // Spin ON
+  s.autoArm.rot = false;                    // rotation NOT handed to Auto
+  s.params.rotate.value = 0.2;              // manual spin past the dead-zone
+  s._spin = 0;
+  s.update(0.1, stubAudio(), null, { time: 0, beats: 0 });
+  assert.ok(s._spin > 0);                   // manual rotate drives spin (Auto didn't hijack it)
+  assert.strictEqual(s.isControlActive('p', 'rotate'), true); // and rotate stays lit
+});
