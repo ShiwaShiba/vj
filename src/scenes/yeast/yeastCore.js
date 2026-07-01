@@ -161,7 +161,8 @@ export function createYeastCore({ THREE, renderer }) {
     fragmentShader: SHADE_FRAG, depthTest: false, depthWrite: false,
   });
   const shadeScene = new THREE.Scene();
-  shadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), shadeMat));
+  const shadePlane = new THREE.PlaneGeometry(2, 2);
+  shadeScene.add(new THREE.Mesh(shadePlane, shadeMat));
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(shadeScene, shadeCam));
@@ -211,7 +212,7 @@ export function createYeastCore({ THREE, renderer }) {
     composer.render();
   }
   function dispose() {
-    base.dispose(); splatMat.dispose(); shadeMat.dispose(); fieldRT.dispose();
+    base.dispose(); splatMat.dispose(); shadeMat.dispose(); shadePlane.dispose(); fieldRT.dispose();
     if (bloom.dispose) bloom.dispose(); if (composer.dispose) composer.dispose();
   }
   return { resize, setInstances, setUniforms, setDrift, setTint, setMono, setBloom, render, dispose };
