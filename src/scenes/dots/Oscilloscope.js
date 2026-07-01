@@ -1,6 +1,7 @@
 import { Scene } from '../Scene.js';
 import { rgbCss, TWO_PI } from '../../lib/math.js';
 import { SimplexNoise } from '../../lib/noise.js';
+import { CONTROL_GROUPS, DEFAULT_AUTO_ARM, isControlActive as ctrlActive, isGroupActive as groupActive, canArm as axisCanArm, autoDrives } from './scopeControls.js';
 
 // Time-domain waveform. Modes: horizontal scope, circular scope, XY (the
 // waveform plotted against a delayed copy of itself for Lissajous-like loops).
@@ -119,13 +120,15 @@ export class Oscilloscope extends Scene {
     // Button groups (rendered by ControlPanel; mainly meaningful in XY/Sphere).
     // Spin OFF freezes the figure/sphere instantly regardless of the Rotate slider.
     this.modeGroups = [
-      { key: 'drive', label: 'Drive', options: ['BASS', 'TREBLE', 'LEVEL'], index: 0 },
+      { key: 'drive', label: 'Band', options: ['BASS', 'TREBLE', 'LEVEL'], index: 0 },
       { key: 'flip', label: 'Flip', options: ['OFF', 'ON'], index: 0 },
       { key: 'spin', label: 'Spin', options: ['OFF', 'ON'], index: 1 },
       { key: 'sphere', label: 'Form', options: ['GLOBE', 'WRAP', 'LISSA', 'TERRAIN'], index: 0 },
       { key: 'spread', label: 'Spread', options: ['LISSA', 'SPHERE', 'TOROID', 'QUAD', 'RIBBON', 'HELIX'], index: 0 },
       { key: 'auto', label: 'Auto', options: ['OFF', 'ON'], index: 0 },
     ];
+    this.controlGroups = CONTROL_GROUPS;      // accordion structure consumed by ControlPanel
+    this.autoArm = { ...DEFAULT_AUTO_ARM };    // which axes Auto animates (per-axis opt-in)
     this._spin = 0; // accumulated rotation, radians
     this._accentT = -1;      // scheduler clock for HELIX rare accents (<0 = re-arm on entering HELIX)
     this._accentKind = 1;    // alternates 0/1 → shell vs vibration, so each stays a distinct rare event
@@ -139,6 +142,22 @@ export class Oscilloscope extends Scene {
     this._blobDir = null; this._blobSeed = null;
     this._blobOC = null; this._blobOCtx = null; this._blobW = 0; this._blobH = 0;
   }
+
+  // Manual selections → the pure control-model state (no time term → no jitter).
+  _ctrlState() {
+    return {
+      mode: this.modeIndex,
+      form: this.mg('sphere'),
+      spread: this.mg('spread'),
+      auto: this.mg('auto') === 1,
+      spinOn: this.mg('spin') === 1,
+      arm: this.autoArm,
+    };
+  }
+  isControlActive(t, k) { return ctrlActive(t + ':' + k, this._ctrlState()); }
+  isGroupActive(key) { return groupActive(key, this._ctrlState()); }
+  canArm(axis) { return axisCanArm(axis, this._ctrlState()); }
+  toggleArm(axis) { if (axis in this.autoArm) this.autoArm[axis] = !this.autoArm[axis]; }
 
   update(dt, audio, palette, clock) {
     this.wave = audio.waveform;
