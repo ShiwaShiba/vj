@@ -152,8 +152,14 @@ export function cellFrame(state, time, audio) {
     // bud lobe: only if this cell was selected to bud
     const buds = hash01(k, 0, 5, 23) < YEAST.BUD_PROB;   // NOTE: uses seed-independent selection by design (stable per index)
     if (buds) {
-      // budAmount ramps with a per-cell phase so cells are asynchronous; saw-like 0->1 then hold near 1
-      const grown = Math.min(1, budRate * time * (0.5 + state.seedArr[bi]));
+      // Living budding CYCLE: a per-cell WRAPPING phase (grow -> mature -> detach -> regrow). Wrapping
+      // means it never saturates/freezes however large `time` is — the scene shares the global clock,
+      // already large by the time YEAST is selected, so a monotonic ramp would arrive pre-grown/frozen.
+      // Per-cell speed(seed)+offset(phase) => asynchronous; smoothstep of a triangle => seamless recurrence.
+      const bspeed = budRate * (0.30 + 0.28 * state.seedArr[bi]);          // cycles/sec (beat quickens via budRate)
+      const f = ((time * bspeed + state.phase[bi] * 0.159) % 1 + 1) % 1;   // 0..1, wraps
+      const tri = f < 0.72 ? f / 0.72 : (1 - f) / 0.28;                    // 0->1 grow, then 1->0 detach/regrow
+      const grown = tri * tri * (3 - 2 * tri);                             // smoothstep ease => seamless
       const dividing = state.kind[bi] === 2;
       const ba = state.phase[bi];
       const dist = state.radius0[mi] * (dividing ? (1.15 + 0.4 * grown) : (0.72 + 0.3 * grown));

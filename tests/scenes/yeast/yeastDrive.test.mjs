@@ -55,22 +55,31 @@ test('cellFrame: deterministic for same (state,time,audio); cells stay within FO
   }
 });
 
-test('cellFrame: main-cell radii positive; bud lobe grows 0->1 monotonically over time', () => {
+test('cellFrame: budding is a living cycle — animates over time (incl. large t), stays [0,1], async', () => {
   const s = buildCells(60, 9);
-  // find a cell that actually buds (kind of its lobe slot is 1 or 2 AND it is selected to bud)
+  // find a cell that actually buds (bud gate must match cellFrame's exactly)
   let k = -1;
-  for (let c = 0; c < s.count; c++) if (hash01(c, 0, 5, 23) < YEAST.BUD_PROB) { k = c; break; }   // MUST match cellFrame's bud gate exactly
+  for (let c = 0; c < s.count; c++) if (hash01(c, 0, 5, 23) < YEAST.BUD_PROB) { k = c; break; }
   assert.ok(k >= 0, 'found a budding cell');
   const bi = 2 * k + 1;
-  let prev = -1;
-  for (let t = 0; t <= 8; t += 1) {
+  // Sample budAmount across time INCLUDING large t. Budding is a WRAPPING cycle, so it must keep
+  // varying even when the global clock is huge — the old monotonic ramp froze at 1 after ~10s, so the
+  // growth animation never played once YEAST was selected (clock already large). This guards the fix.
+  const vals = [];
+  for (const t of [0.3, 1.5, 3, 4.5, 6, 7.5, 400, 404, 409, 413]) {
     cellFrame(s, t, null);
-    assert.ok(s.pr[2 * k] > 0, 'main radius stays positive');
-    assert.ok(s.pbud[bi] >= prev - 1e-6, `budAmount monotonic at t=${t}: ${s.pbud[bi]} < ${prev}`);
-    assert.ok(s.pbud[bi] >= 0 && s.pbud[bi] <= 1, 'budAmount in [0,1]');
-    prev = s.pbud[bi];
+    assert.ok(s.pr[2 * k] > 0, `main radius positive @${t}`);
+    assert.ok(s.pbud[bi] >= 0 && s.pbud[bi] <= 1, `budAmount in [0,1] @${t}: ${s.pbud[bi]}`);
+    vals.push(s.pbud[bi]);
   }
-  assert.ok(s.pbud[bi] > 0, 'the found cell actually budded (test is non-vacuous, not the else-branch pbud=0)');
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  assert.ok(mx - mn > 0.15, `budding animates across time incl. large t (never frozen): min ${mn.toFixed(3)} max ${mx.toFixed(3)}`);
+  assert.ok(mx > 0.5, `bud reaches a healthy grown state within its cycle: ${mx.toFixed(3)}`);
+  // asynchronous: at one instant, budding cells occupy many different cycle phases
+  cellFrame(s, 300, null);
+  const buckets = new Set();
+  for (let c = 0; c < s.count; c++) if (hash01(c, 0, 5, 23) < YEAST.BUD_PROB) buckets.add(Math.round(s.pbud[2 * c + 1] * 12));
+  assert.ok(buckets.size > 3, `buds are asynchronous (varied phases at one instant): ${buckets.size} distinct`);
 });
 
 test('cellFrame: louder bass agitates motion more than quiet', () => {
