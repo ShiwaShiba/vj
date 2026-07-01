@@ -73,8 +73,12 @@ test('cellFrame: budding is a living cycle — animates over time (incl. large t
     vals.push(s.pbud[bi]);
   }
   const mn = Math.min(...vals), mx = Math.max(...vals);
-  assert.ok(mx - mn > 0.15, `budding animates across time incl. large t (never frozen): min ${mn.toFixed(3)} max ${mx.toFixed(3)}`);
+  assert.ok(mx - mn > 0.15, `budding varies across its cycle: min ${mn.toFixed(3)} max ${mx.toFixed(3)}`);
   assert.ok(mx > 0.5, `bud reaches a healthy grown state within its cycle: ${mx.toFixed(3)}`);
+  // the actual freeze guard: at LARGE clock time the wrapping cycle must STILL animate. The old
+  // monotonic ramp gave grown=1 for EVERY one of these large-t samples → zero variation → this fails.
+  const big = [400, 402.5, 405, 407.5, 410, 412.5].map((t) => { cellFrame(s, t, null); return s.pbud[bi]; });
+  assert.ok(Math.max(...big) - Math.min(...big) > 0.15, `budding still animates at large clock time (not frozen): ${Math.min(...big).toFixed(3)}..${Math.max(...big).toFixed(3)}`);
   // asynchronous: at one instant, budding cells occupy many different cycle phases
   cellFrame(s, 300, null);
   const buckets = new Set();
