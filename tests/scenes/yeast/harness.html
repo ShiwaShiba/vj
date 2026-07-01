@@ -1,0 +1,55 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>yeast harness</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}#yeast-gl{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "../../../src/vendor/three.module.js", "three/addons/": "../../../src/vendor/three-addons/" } }
+</script>
+</head><body>
+<canvas id="yeast-gl"></canvas>
+<script type="module">
+import * as THREE from '../../../src/vendor/three.module.js';
+import { YEAST, buildCells, cellFrame, driftFrame, bandUniforms } from '../../../src/scenes/yeast/yeastDrive.js';
+import { createYeastCore } from '../../../src/scenes/yeast/yeastCore.js';
+
+const Q = new URLSearchParams(location.search);
+const size = parseInt(Q.get('size') || '760', 10);
+const tintMode = Q.get('tint') || 'auto';           // auto|mono|slate
+const scene = Q.get('scene') || 'idle';             // idle|bass|beat
+const fixedT = Q.get('t') != null ? parseFloat(Q.get('t')) : null;  // pin drift clock (a "mood")
+const cvs = document.getElementById('yeast-gl');
+cvs.width = size; cvs.height = size; cvs.style.width = size + 'px'; cvs.style.height = size + 'px';
+
+const renderer = new THREE.WebGLRenderer({ canvas: cvs, antialias: true });
+renderer.setPixelRatio(1);
+renderer.setClearColor(0x000000, 1);
+const core = createYeastCore({ THREE, renderer });
+core.resize(size, size);
+
+const state = buildCells(YEAST.COUNT, 7);
+const band = { swell: 0, flow: 0, shimmer: 0, loud: 0 };
+const AUDIO = {
+  idle: { bass: 0, mid: 0.05, treble: 0.03, beat: 0, level: 0.04 },
+  bass: { bass: 0.95, mid: 0.4, treble: 0.2, beat: 0, level: 0.9 },
+  beat: { bass: 0.8, mid: 0.5, treble: 0.6, beat: 1, level: 0.85 },
+}[scene];
+
+let frame = 0;
+function loop() {
+  const t = fixedT != null ? fixedT : frame * 0.016;
+  cellFrame(state, frame * 0.016, AUDIO);
+  const dr = driftFrame(fixedT != null ? fixedT : frame * 0.016, AUDIO, tintMode);
+  bandUniforms(AUDIO, band, 1);
+  state.activeSlots = 2 * Math.round(YEAST.COUNT * (0.55 + 0.45 * dr.density));
+  core.setInstances(state);
+  core.setUniforms({ uFusion: dr.fusion, uFocusPlane: dr.focusPlane, uDof: 0.6 });
+  // Task 5+ will also drive shading/tint/bloom via core.setDrift/setTint/setBloom here.
+  if (core.setDrift) core.setDrift({ fusion: dr.fusion, fill: dr.fill, focusPlane: dr.focusPlane, rim: dr.rim, halo: dr.halo });
+  if (core.setTint) core.setTint(dr.tint);
+  if (core.setUniforms) core.setUniforms({ uSwell: band.swell, uShimmer: band.shimmer, uExposure: 1.0 });
+  if (core.setBloom) core.setBloom(0.6 + 0.8 * band.loud);
+  core.render();
+  frame++;
+  if (frame < 120) requestAnimationFrame(loop); else window.__ready = true;
+}
+requestAnimationFrame(loop);
+</script></body></html>
