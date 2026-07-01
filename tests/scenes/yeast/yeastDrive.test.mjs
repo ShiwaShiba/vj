@@ -87,3 +87,52 @@ test('cellFrame: louder bass agitates motion more than quiet', () => {
   }
   assert.ok(dl > dq, `loud agitates more than quiet: ${dl} vs ${dq}`);
 });
+
+import { driftFrame, bandUniforms } from '../../../src/scenes/yeast/yeastDrive.js';
+
+test('driftFrame: deterministic, all fields in [0,1]', () => {
+  for (let i = 0; i < 200; i++) {
+    const t = i * 0.37;
+    const d1 = driftFrame(t, null, 'auto'), d2 = driftFrame(t, null, 'auto');
+    for (const key of ['density', 'fusion', 'fill', 'focusPlane', 'rim', 'halo', 'tint']) {
+      assert.strictEqual(d1[key], d2[key], `${key} deterministic at t=${t}`);
+      assert.ok(d1[key] >= 0 && d1[key] <= 1, `${key} in [0,1] at t=${t}: ${d1[key]}`);
+    }
+  }
+});
+
+test('driftFrame: tint fixed unless auto', () => {
+  for (let i = 0; i < 50; i++) {
+    const t = i * 1.7;
+    assert.strictEqual(driftFrame(t, null, 'mono').tint, 0, 'mono tint = 0');
+    assert.strictEqual(driftFrame(t, null, 'slate').tint, 1, 'slate tint = 1');
+  }
+  // auto tint actually varies over time
+  const vals = new Set();
+  for (let i = 0; i < 200; i++) vals.add(Math.round(driftFrame(i * 2.3, null, 'auto').tint * 100));
+  assert.ok(vals.size > 5, `auto tint varies: ${vals.size} distinct`);
+});
+
+test('driftFrame: aperiodic — no short repeat period on density/fusion', () => {
+  // For each candidate period, SOME sample differs beyond tolerance => not periodic with that period.
+  for (const P of [1, 2, 4, 8, 16]) {
+    let maxDiff = 0;
+    for (let i = 0; i < 400; i++) {
+      const t = i * 0.19;
+      const d = Math.abs(driftFrame(t, null, 'auto').density - driftFrame(t + P, null, 'auto').density);
+      const f = Math.abs(driftFrame(t, null, 'auto').fusion - driftFrame(t + P, null, 'auto').fusion);
+      maxDiff = Math.max(maxDiff, d, f);
+    }
+    assert.ok(maxDiff > 1e-3, `not periodic with P=${P}: maxDiff=${maxDiff}`);
+  }
+});
+
+test('bandUniforms: approaches gained targets and decays, bounded [0,1]', () => {
+  const prev = { swell: 0, flow: 0, shimmer: 0, loud: 0 };
+  const hi = { bass: 1, mid: 1, treble: 1, level: 1 };
+  for (let i = 0; i < 300; i++) bandUniforms(hi, prev, 1);
+  for (const k of ['swell', 'flow', 'shimmer', 'loud']) assert.ok(prev[k] > 0.95 && prev[k] <= 1, `${k} approached: ${prev[k]}`);
+  const p2 = { swell: 0.5, flow: 0.5, shimmer: 0.5, loud: 0.5 };
+  for (let i = 0; i < 300; i++) bandUniforms({ bass: 0, mid: 0, treble: 0, level: 0 }, p2, 1);
+  for (const k of ['swell', 'flow', 'shimmer', 'loud']) assert.ok(p2[k] >= 0 && p2[k] < 0.05, `${k} decays: ${p2[k]}`);
+});

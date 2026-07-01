@@ -86,6 +86,47 @@ function flowAt(x, y, time, ph) {
   return [fx * 0.5, fy * 0.5];
 }
 
+// Weighted sum of sines with non-integer frequency ratios, normalized to [0,1].
+// Distinct frequency sets per field => the "mood" never realigns to a short loop.
+function lfo(t, fs) {
+  let s = 0, tot = 0;
+  for (let i = 0; i < fs.length; i++) { s += fs[i][2] * Math.sin(t * fs[i][0] + fs[i][1]); tot += fs[i][2]; }
+  return 0.5 + 0.5 * (s / tot);
+}
+
+// The global "look mood": each aesthetic axis wanders aperiodically in [0,1]. The scene
+// maps these onto sliders (slider = center, drift = bounded offset). `time` is the
+// audio-advanced drift clock kept by the scene, so beats nudge the whole mood forward.
+export function driftFrame(time, audio, tintMode) {
+  const t = time;
+  const lvl = clamp01(audio && audio.level);
+  const density = clamp01(lfo(t, [[0.053, 0.0, 1], [0.017, 2.1, 0.6], [0.007, 4.0, 0.4]]) + 0.10 * lvl);
+  const fusion = lfo(t, [[0.041, 1.3, 1], [0.019, 3.7, 0.7], [0.011, 5.5, 0.4]]);
+  const fill = lfo(t, [[0.037, 0.6, 1], [0.023, 4.4, 0.6]]);
+  const focusPlane = lfo(t, [[0.029, 2.7, 1], [0.013, 1.1, 0.5]]);
+  const rim = lfo(t, [[0.047, 3.2, 1], [0.021, 0.4, 0.5]]);
+  const halo = lfo(t, [[0.031, 5.0, 1], [0.015, 2.9, 0.6]]);
+  let tint = 0;
+  if (tintMode === 'auto') {
+    // black-weighted: bias toward 0 (mono), occasionally rise toward slate
+    const raw = lfo(t, [[0.009, 1.7, 1], [0.019, 4.2, 0.5]]);
+    tint = clamp01(Math.pow(raw, 2.2));   // pow biases the distribution toward black
+  } else if (tintMode === 'slate') tint = 1;
+  return { density, fusion, fill, focusPlane, rim, halo, tint };
+}
+
+// One-pole smooth the bands toward gained targets (audio strong by default). Mutates + returns prev.
+export function bandUniforms(audio, prev, coef) {
+  const a = audio || {};
+  const gain = coef == null ? 1 : coef;
+  const s = YEAST.SMOOTH;
+  prev.swell   += (clamp01(clamp01(a.bass) * gain)   - prev.swell) * s;
+  prev.flow    += (clamp01(clamp01(a.mid) * gain)    - prev.flow) * s;
+  prev.shimmer += (clamp01(clamp01(a.treble) * gain) - prev.shimmer) * s;
+  prev.loud    += (clamp01(clamp01(a.level) * gain)  - prev.loud) * s;
+  return prev;
+}
+
 // Advance every slot: main cells roam (flow + brownian, agitation scaled by bass/level),
 // bud lobes sit beside their mother and grow (budAmount 0->1, faster on beat), dividers
 // drift outward as they mature. Writes px,py,pr,pd,pbud. Deterministic in (state,time,audio).
