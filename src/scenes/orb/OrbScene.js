@@ -6,6 +6,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { Scene } from '../Scene.js';
 import { createOrbCore } from './orbCore.js';
+import { ORB, bandUniforms, updateBurst, burstFrame, sweepFrame } from './orbDrive.js';
 
 export class OrbScene extends Scene {
   constructor() {
@@ -44,12 +45,22 @@ export class OrbScene extends Scene {
     this._rotY += dt * this.p('rotSpeed');
     this._core.rotate(Math.sin(t * 0.08) * 0.18, this._rotY); // gentle deterministic wobble + spin
 
-    // --- T5 seam: audio -> uniforms goes here (bandUniforms / updateBurst / burstFrame / sweepFrame). ---
+    const a = audio || {};
+    const gain = this.p('audioGain');
+    const band = bandUniforms(a, this._band, gain);              // smoothed BASS/MID/TREBLE/level
+    updateBurst(this._burst, a.bass, t);                        // ignite ring burst on bass rising-edge
+    const bf = burstFrame(this._burst, t);
+    const sf = sweepFrame(t, a.mid);                            // traveling MID light-front
     this._core.setUniforms({
       uTime: t,
       uMorphSpeed: this.p('morphSpeed'), uNoiseScale: this.p('noiseScale'),
       uDisplace: this.p('displace'), uCellEdge: this.p('cellEdge'),
-      uPointSize: this.p('pointSize'), uExposure: this.p('exposure'),
+      uPointSize: this.p('pointSize'),
+      uExposure: this.p('exposure') * (1 + 0.5 * band.exposureLoud), // loudness lifts exposure
+      uBassSwell: band.bassSwell, uTravelAmt: band.travelAmt, uTreble: band.treble,
+      uFastFlow: t * ORB.FAST_FLOW_RATE,
+      uSweepAxis: sf.axis, uSweepK: sf.k, uSweepFlow: sf.flow,
+      uBurstAxis: bf.axis, uBurstCos: bf.cos, uBurstEnv: bf.env * ORB.BURST_GAIN * gain,
     });
 
     if (palette && palette.fg) this._core.setTint(palette.fg);
