@@ -178,7 +178,7 @@ export class Oscilloscope extends Scene {
     // it, Spin OFF freezes the figure and the Rotate slider has a centre
     // dead-zone so its middle reliably means "stopped" on a touchscreen.
     let spinRate;
-    if (this.mg('auto') === 1) {
+    if (autoDrives('rot', this._ctrlState())) {
       spinRate = 0.05 + 0.035 * Math.sin(this.t * 0.045 * TWO_PI); // ~0.015..0.085 rev/s
     } else if (this.mg('spin') === 1) {
       let r = this.p('rotate'); // rev/s
@@ -211,18 +211,18 @@ export class Oscilloscope extends Scene {
   // Effective XY controls. Auto overrides the manual values with deterministic
   // time/beat functions so the figure evolves on its own.
   _effPhase() {
-    if (this.mg('auto') === 1) {
+    if (autoDrives('phase', this._ctrlState())) {
       // sweep 4..60 over ~12.5s — bold range, slow period
       return 4 + (Math.sin(this.t * 0.08 * TWO_PI) * 0.5 + 0.5) * 56;
     }
     return this.p('phase');
   }
   _effFlip() {
-    if (this.mg('auto') === 1) return Math.floor(this.beats / 16) % 2 === 1; // flip every 4 bars
+    if (autoDrives('flip', this._ctrlState())) return Math.floor(this.beats / 16) % 2 === 1; // flip every 4 bars
     return this.mg('flip') === 1;
   }
   _effBandIndex() {
-    if (this.mg('auto') === 1) return Math.floor(this.beats / 32) % 3; // cycle every 8 bars
+    if (autoDrives('band', this._ctrlState())) return Math.floor(this.beats / 32) % 3; // cycle every 8 bars
     return this.mg('drive');
   }
   _driveEnergy() {
@@ -237,7 +237,7 @@ export class Oscilloscope extends Scene {
   // phase-portrait extruded along a time axis into a coil).
   // Auto walks through them irregularly (deterministic — varied order + dwell).
   _effSpread() {
-    if (this.mg('auto') === 1) {
+    if (autoDrives('spread', this._ctrlState())) {
       const order = [1, 2, 4, 0, 3, 5, 2, 4, 1, 5, 3, 0];
       const k = (((Math.floor(this.beats / 11 + 0.6 * Math.sin(this.beats * 0.17))) % order.length) + order.length) % order.length;
       return order[k];
