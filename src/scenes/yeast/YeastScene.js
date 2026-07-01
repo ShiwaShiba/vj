@@ -23,7 +23,7 @@ export class YeastScene extends Scene {
     ];
     this.defineParam('density', 0.6, 0, 1, 0.02, '密度')
         .defineParam('size', 1.0, 0.6, 1.6, 0.01, 'サイズ')
-        .defineParam('fusion', 0.6, 0, 1, 0.02, '融合')
+        .defineParam('fusion', 0.5, 0, 1, 0.02, '融合')
         .defineParam('fill', 0.5, 0, 1, 0.02, '塗り')
         .defineParam('rim', 0.6, 0, 1, 0.02, 'リム')
         .defineParam('halo', 0.6, 0, 1, 0.02, 'ハロー')
@@ -32,7 +32,7 @@ export class YeastScene extends Scene {
         .defineParam('budRate', 1.0, 0, 2, 0.02, '出芽率')
         .defineParam('flow', 1.0, 0, 2, 0.02, '回遊')
         .defineParam('audioGain', 1.1, 0, 2.5, 0.02, '音の深さ')
-        .defineParam('bloom', 0.6, 0, 2, 0.02, 'ブルーム')
+        .defineParam('bloom', 0.2, 0, 2, 0.02, 'ブルーム')
         .defineParam('exposure', 1.0, 0.4, 2.0, 0.02, '露光');
   }
 

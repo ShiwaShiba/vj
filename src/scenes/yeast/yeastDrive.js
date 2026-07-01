@@ -7,15 +7,15 @@
 // body, slot 2k+1 = cell k's bud lobe (radius 0 until it buds).
 
 export const YEAST = {
-  COUNT: 220,          // number of cells (main); total instance slots = 2*COUNT
+  COUNT: 150,          // number of cells (main); total instance slots = 2*COUNT
   FOV: 0.9,            // normalized microscope field-of-view radius
   SCATTER_R: 0.86,     // cluster centers scattered within FOV*this
-  CLUSTER_SPREAD: 0.16,// gaussian spread of cells around their cluster center
+  CLUSTER_SPREAD: 0.20,// gaussian spread of cells around their cluster center
   BASE_R: 0.055,       // base cell radius (normalized)
   R_JITTER: 0.6,       // per-cell radius jitter factor (0..this added to 0.72 base)
   DEPTH_DIM: 0.34,     // far cells shrink by up to this (radius0 *= 1 - DEPTH_DIM*depth)
   ISO_T: 0.165,        // iso threshold (body edge) — shared with yeastCore uT default
-  SUP_A: 1.32, SUP_B: 0.78,   // support factor = SUP_A + SUP_B*fusion
+  SUP_A: 1.14, SUP_B: 0.44,   // support factor = SUP_A + SUP_B*fusion
   DOF_R: 0.34, DOF_AMP: 0.52, // DoF: far/off-focus cells broaden R / dim amp
   BUD_PROB: 0.55,      // fraction of cells that carry a bud lobe
   DIV_PROB: 0.22,      // of budding cells, fraction that become near-equal divisions

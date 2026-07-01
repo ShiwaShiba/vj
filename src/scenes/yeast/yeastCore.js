@@ -77,7 +77,7 @@ const SHADE_FRAG = /* glsl */`
       float u = texture2D(uField, vUv - vec2(0.0, uTexel.y)).r;
       float d = texture2D(uField, vUv + vec2(0.0, uTexel.y)).r;
       float gmag = length(vec2(r - l, d - u));
-      float rimW = T * (0.40 + 0.35 / max(0.2, uRim));
+      float rimW = T * (0.30 + 0.26 / max(0.2, uRim));
       float body = sm(T * 0.86, T * 1.16, F);
       float e = (F - T) / rimW;
       float rim = exp(-e * e) * (0.45 + 1.5 * min(1.0, gmag * 7.0));
@@ -92,7 +92,7 @@ const SHADE_FRAG = /* glsl */`
         halo *= 1.0 + uShimmer * 0.6;              // TREBLE: halo flicker
       }
       float nuc = sm(T * 2.1, T * 3.9, F);
-      val = body * uFill + rim * uRim * 0.5 + halo * uHalo * 0.42 - nuc * 0.20;
+      val = body * uFill + rim * uRim * 0.34 + halo * uHalo * 0.42 - nuc * 0.26;
       val = max(val, 0.0);
       val = pow(val, 0.88) * uExposure * (1.0 + uSwell * 0.5);   // BASS: swell brightens
     }
@@ -168,7 +168,7 @@ export function createYeastCore({ THREE, renderer }) {
 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(shadeScene, shadeCam));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.6, 0.5, 0.2);   // strength/radius/threshold
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.25, 0.6, 0.35);   // strength/radius/threshold
   composer.addPass(bloom);
 
   function resize(w, h) {
@@ -199,8 +199,8 @@ export function createYeastCore({ THREE, renderer }) {
   function setDrift(d) {
     if (d.fusion != null) splatUniforms.uFusion.value = d.fusion;
     if (d.focusPlane != null) splatUniforms.uFocusPlane.value = d.focusPlane;
-    if (d.fill != null) shadeUniforms.uFill.value = 0.20 + 0.42 * d.fill;   // hollow<->filled band
-    if (d.rim != null) shadeUniforms.uRim.value = 0.55 + 0.95 * d.rim;
+    if (d.fill != null) shadeUniforms.uFill.value = 0.05 + 0.40 * d.fill;   // hollow<->filled band
+    if (d.rim != null) shadeUniforms.uRim.value = 0.45 + 0.75 * d.rim;
     if (d.halo != null) shadeUniforms.uHalo.value = 0.30 + 0.85 * d.halo;
   }
   function setTint(v) { shadeUniforms.uTint.value = v < 0 ? 0 : v > 1 ? 1 : v; }

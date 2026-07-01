@@ -46,7 +46,7 @@ function loop() {
   if (core.setDrift) core.setDrift({ fusion: dr.fusion, fill: dr.fill, focusPlane: dr.focusPlane, rim: dr.rim, halo: dr.halo });
   if (core.setTint) core.setTint(dr.tint);
   if (core.setUniforms) core.setUniforms({ uSwell: band.swell, uShimmer: band.shimmer, uExposure: 1.0 });
-  if (core.setBloom) core.setBloom(0.6 + 0.8 * band.loud);
+  if (core.setBloom) core.setBloom(0.12 + 0.4 * band.loud);
   core.render();
   frame++;
   if (frame < 120) requestAnimationFrame(loop); else window.__ready = true;
