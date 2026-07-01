@@ -39,6 +39,12 @@ const BLOB_COUNT = 70000;   // Fibonacci points (perf-tuned for the live app)
 const BLOB_EDGEW = 0.17;    // Voronoi wall thickness (F2-F1 band)
 const BLOB_CULL = 0.055;    // drop dots dimmer than this → dark craters, solid walls, tighter rim (less dust), fewer draws
 const BLOB_SCALE = 0.5;     // render the cloud to a half-res offscreen (4× cheaper bloom; the upscale softens the grain)
+// Traveling wall-light (signal flow): a bright front sweeps the Voronoi network.
+const WALL_BASE = 0.6;      // resting wall brightness (the always-visible network substrate)
+const WALL_TRAVEL = 1.15;   // extra brightness carried inside the moving light-front
+const WAVE_K = 9.0;         // bright fronts wrapping the sphere (proj∈[-1,1] → ~WAVE_K/π bands)
+const WAVE_SPEED = 0.8;     // base sweep speed (×clock)
+const WAVE_SPEED_MID = 2.4; // MID accelerates the running light
 let _wF1 = 0, _wF2 = 0;
 function _fract(v) { return v - Math.floor(v); }
 function _smoothstep(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
@@ -390,7 +396,7 @@ export class Oscilloscope extends Scene {
     } else if (form === 3) {
       // TERRAIN — the "Noise Blob": a glowing point-cloud globe whose surface is a
       // Worley cell-wall network (bright walls, dark craters) over an FBM shape.
-      // BASS swells it, MID flares the walls, TREBLE shimmers. See _drawSphereTerrain.
+      // BASS swells it, MID runs light along the wall network, TREBLE shimmers. See _drawSphereTerrain.
       this._drawSphereTerrain(ctx, wave, N, R, band, alpha, project);
     } else {
       // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
@@ -641,6 +647,7 @@ export class Oscilloscope extends Scene {
       this._blobSeed = new Float32Array(NB);
       this._blobRad = new Float32Array(NB);   // cached structural radius (amortised noise)
       this._blobBri = new Float32Array(NB);   // cached structural brightness (pre fade/expo/audio)
+      this._blobWall = new Float32Array(NB);  // cached raw wall factor (drives the live traveling light)
       this._blobCursor = 0;                   // round-robin recompute cursor
       this._blobPrimed = false;               // false → first frame recomputes ALL points
       const golden = Math.PI * (3 - Math.sqrt(5));
@@ -671,7 +678,8 @@ export class Oscilloscope extends Scene {
   // TERRAIN — the "Noise Blob". A Fibonacci point cloud whose surface is pushed
   // out by FBM + a Worley cell-wall network (F2-F1 → thin bright Voronoi walls,
   // dark craters). Each band is visibly distinct: BASS swells the whole blob,
-  // MID flares the cell walls, TREBLE adds a fast grain shimmer. Rendered to an
+  // MID drives a bright light-front running along the wall network (energy flow)
+  // + an overall wall flare, TREBLE adds a fast grain shimmer. Rendered to an
   // offscreen then composited with a soft additive bloom. Mono, deterministic.
   // (wave/N/band unused — the blob is driven by the honest FFT bands + clock.)
   _drawSphereTerrain(ctx, wave, N, R, band, alpha, project) {
@@ -709,7 +717,7 @@ export class Oscilloscope extends Scene {
     // re-projects (cheap) so spin stays smooth while the surface still evolves.
     // The bass swell is applied live in the draw, so beats still punch instantly.
     const REFRESH = 4;
-    const rad = this._blobRad, bri = this._blobBri;
+    const rad = this._blobRad, bri = this._blobBri, wcache = this._blobWall;
     const chunk = this._blobPrimed ? Math.ceil(NB / REFRESH) : NB;
     let cur = this._blobCursor;
     for (let c = 0; c < chunk; c++) {
@@ -728,9 +736,11 @@ export class Oscilloscope extends Scene {
       if (tre > 0.001) radius += tre * 0.05 * noise.noise3D(dx * 9 + fast, dy * 9 - fast, dz * 9 + fast * 0.7);
       rad[i] = radius;
       const seed = seedA[i];
-      let bb = (0.05 + 1.7 * wall * cellEdge + 0.28 * Math.max(disp, 0)) * (0.8 + 0.6 * seed);
+      // resting wall at WALL_BASE — the travelling front (live, in the draw loop) adds the rest.
+      let bb = (0.05 + 1.7 * wall * cellEdge * WALL_BASE + 0.28 * Math.max(disp, 0)) * (0.8 + 0.6 * seed);
       if (tre > 0.001) { const sp = noise.noise3D(dx * 7 - fast, dy * 7 + fast, dz * 7); bb *= 1 + tre * 0.7 * sp; }
       bri[i] = bb;
+      wcache[i] = wall;                                       // raw wall → live light-front modulation
     }
     this._blobCursor = cur;
     this._blobPrimed = true;
@@ -738,6 +748,11 @@ export class Oscilloscope extends Scene {
     // ── per-frame draw: cheap re-projection of every cached point + live swell ──
     const swell = audioPush * 0.14, briBoost = (1 + audioPush * 0.8) * exposure; // swell = bass spatial push (range halved); briBoost keeps the beat-brightness punch
     const preCull = BLOB_CULL / (1.2 * briBoost);             // max fade factor ≈1.2 → skip definite craters before projecting
+    // ── traveling light-front along the network (signal flow). MID energises +
+    // accelerates it; the sweep axis slowly turns so the run stays organic. ──
+    const travelAmt = WALL_TRAVEL * (0.4 + 0.6 * eMid);
+    const tFlow = this.t * (WAVE_SPEED + eMid * WAVE_SPEED_MID);
+    const wdx = Math.cos(this.t * 0.05), wdy = 0.32, wdz = Math.sin(this.t * 0.05);
     for (let i = 0; i < NB; i++) {
       if (bri[i] < preCull) continue;                          // pre-cull dark craters (skip projection entirely)
       const dx = dir[i * 3], dy = dir[i * 3 + 1], dz = dir[i * 3 + 2];
@@ -747,9 +762,16 @@ export class Oscilloscope extends Scene {
       const pr = project(px0, py0 * cosW - pz0 * sinW, py0 * sinW + pz0 * cosW);
       const depthFade = _clampv(0.55 + 0.45 * (radius - 0.8), 0.3, 1.2);
       const viewFade = 0.5 + 0.5 * (pr.depth * 0.5 + 0.5);   // back dims → reads as a globe
-      const bright = bri[i] * depthFade * viewFade * briBoost;
-      if (bright < BLOB_CULL) continue;                       // cull dim cell interiors
-      const szs = pointSize * (0.7 + 0.6 * seedA[i]) * szK * S; // point half-size in half-res space
+      const fade = depthFade * viewFade * briBoost;
+      const baseBright = bri[i] * fade;
+      if (baseBright < BLOB_CULL) continue;                   // cull on RESTING brightness → draw set stays bounded (fps-safe)
+      const sd = seedA[i];
+      // traveling light: a sharpened sine crest sweeps the wall network (+seed
+      // jitter = organic trickle, not a clean plane). It only lifts the brightness
+      // of points already being drawn, so the running light adds no fillRect calls.
+      const cr = 0.5 + 0.5 * Math.sin((dx * wdx + dy * wdy + dz * wdz) * WAVE_K - tFlow + sd * 1.1);
+      const bright = baseBright + 1.7 * wcache[i] * cellEdge * (0.8 + 0.6 * sd) * travelAmt * (cr * cr * cr) * fade;
+      const szs = pointSize * (0.7 + 0.6 * sd) * szK * S; // point half-size in half-res space
       octx.globalAlpha = bright < 2 ? bright * 0.20 : 0.40;    // faint solid squares; overlap builds the glow
       // fillRect (not drawImage) — ~2× the throughput; the half-res upscale + the
       // bloom blur soften the squares back into soft dusty grains.
