@@ -69,3 +69,18 @@ export function isGroupActive(groupKey, state) {
   const g = CONTROL_GROUPS.find((x) => x.key === groupKey);
   return g ? g.items.some((it) => isControlActive(it.t + ':' + it.k, state)) : false;
 }
+
+// Per-Spread *initial* GAIN for the LISSA family (mode Sphere, form LISSA). Each
+// Lissajous variant fills the frame at a different natural amplitude, so its good
+// starting gain differs. These are only the first-visit defaults: the scene then
+// remembers wherever you last left GAIN for each Spread (sticky per-Spread), so
+// returning to a Spread restores your position rather than resetting it.
+// Index order = Spread modeGroup: LISSA SPHERE TOROID QUAD RIBBON HELIX.
+// GAIN slider is 0.3..3.0 (visual centre 1.65), stepping by 0.1.
+export const SPREAD_GAIN = [1.6, 1.3, 1.0, 2.0, 2.0, 0.5];
+
+// True when Spread is meaningful — Sphere mode, form LISSA. GAIN is remembered
+// per Spread only within this family; elsewhere GAIN is a single shared value.
+export function isLissaFamily(state) {
+  return state.mode === 3 && state.form === 2;
+}

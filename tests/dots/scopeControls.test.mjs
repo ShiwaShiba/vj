@@ -1,8 +1,8 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
 import {
-  isControlActive, isGroupActive, canArm, autoDrives,
-  CONTROL_GROUPS, AUTO_AXES, DEFAULT_AUTO_ARM,
+  isControlActive, isGroupActive, canArm, autoDrives, isLissaFamily,
+  CONTROL_GROUPS, AUTO_AXES, DEFAULT_AUTO_ARM, SPREAD_GAIN,
 } from '../../src/scenes/dots/scopeControls.js';
 
 const base = { mode: 0, form: 0, spread: 0, auto: false, spinOn: true, arm: { ...DEFAULT_AUTO_ARM } };
@@ -114,6 +114,27 @@ test('React dim in TERRAIN and RIBBON (lineWidth unused/overwritten), lit elsewh
   assert.strictEqual(isControlActive('p:react', st({ mode: 3, form: 2, spread: 0 })), true);  // LISSA plain
   assert.strictEqual(isControlActive('p:react', st({ mode: 3, form: 0 })), true);             // GLOBE
   assert.strictEqual(isControlActive('p:react', st({ mode: 2 })), true);                      // XY
+});
+
+test('isLissaFamily: only Sphere + form LISSA', () => {
+  assert.strictEqual(isLissaFamily(st({ mode: 3, form: 2, spread: 0 })), true);
+  assert.strictEqual(isLissaFamily(st({ mode: 3, form: 2, spread: 5 })), true);
+  assert.strictEqual(isLissaFamily(st({ mode: 3, form: 0 })), false); // GLOBE
+  assert.strictEqual(isLissaFamily(st({ mode: 3, form: 1 })), false); // WRAP
+  assert.strictEqual(isLissaFamily(st({ mode: 3, form: 3 })), false); // TERRAIN
+  assert.strictEqual(isLissaFamily(st({ mode: 2, form: 2 })), false); // XY
+  assert.strictEqual(isLissaFamily(st({ mode: 0 })), false);          // Line
+});
+
+test('SPREAD_GAIN initial defaults match the described slider positions', () => {
+  assert.strictEqual(SPREAD_GAIN.length, 6);
+  // TOROID < SPHERE < LISSA < QUAD == RIBBON, and HELIX is the lowest.
+  assert.ok(SPREAD_GAIN[2] < SPREAD_GAIN[1] && SPREAD_GAIN[1] < SPREAD_GAIN[0]);
+  assert.ok(SPREAD_GAIN[0] < SPREAD_GAIN[3]);
+  assert.strictEqual(SPREAD_GAIN[3], SPREAD_GAIN[4]);
+  assert.strictEqual(SPREAD_GAIN[5], Math.min(...SPREAD_GAIN));
+  // Every default is within the GAIN slider range (0.3..3.0).
+  for (const g of SPREAD_GAIN) assert.ok(g >= 0.3 && g <= 3.0);
 });
 
 test('WRAP mirrors GLOBE relevance', () => {

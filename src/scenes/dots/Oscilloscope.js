@@ -1,7 +1,8 @@
 import { Scene } from '../Scene.js';
 import { rgbCss, TWO_PI } from '../../lib/math.js';
 import { SimplexNoise } from '../../lib/noise.js';
-import { CONTROL_GROUPS, DEFAULT_AUTO_ARM, isControlActive as ctrlActive, isGroupActive as groupActive, canArm as axisCanArm, autoDrives } from './scopeControls.js';
+import { CONTROL_GROUPS, DEFAULT_AUTO_ARM, SPREAD_GAIN, isControlActive as ctrlActive, isGroupActive as groupActive, canArm as axisCanArm, autoDrives, isLissaFamily } from './scopeControls.js';
+import { fitScale } from './scopeScale.js';
 
 // Time-domain waveform. Modes: horizontal scope, circular scope, XY (the
 // waveform plotted against a delayed copy of itself for Lissajous-like loops).
@@ -100,13 +101,28 @@ const VIBE_LIFE = 1.6;       // s — coil-sway envelope (fast swell, slow fade)
 const VIBE_FREQ = 3.2;       // rad/s — base rate of the Lissajous sway (×3 / ×2 on the two axes)
 const VIBE_WAVES = 2.5;      // Lissajous-phase wavelengths along the coil (the undulation count)
 const VIBE_AMP = 0.32;       // peak sway as a fraction of the figure scale
+// Figure fit-clamp: the figure's on-screen half-extent is soft-capped to
+// FIT_CAP × min(w,h) so no gain/range/loud-transient can push it past the frame
+// (worst case is a switch on a drop). FIT_KNEE keeps growth linear until 90% of
+// the cap, so normal-level motion — and the audio breathing — is untouched.
+const FIT_CAP = 0.48;        // half-extent ceiling as a fraction of min(w,h) (≈4% margin)
+const FIT_KNEE = 0.9;        // compression starts at 90% of the cap; below it, no change
+// Per-form px-extent factors for Sphere mode (× reach·R or × R), used to size the
+// soft-cap. LISSA-family points are ~unit×reach (HELIX reaches further on its axis);
+// GLOBE/WRAP/TERRAIN are ~(1+displacement)×R. Slightly generous = fit, never clip.
+const SPHERE_EXTENT = { globe: 1.0, lissa: 1.15, ribbon: 1.3, helix: 1.55, terrain: 1.35 };
+// Pattern-switch ease: a Mode/Form/Spread change crossfades instead of hard-cutting
+// — the outgoing figure lingers (trail dipped) while the incoming eases its opacity
+// in over SWITCH_DUR, so a size/shape jump reads as an organic morph, not a pop.
+const SWITCH_DUR = 0.42;     // s — pattern-switch crossfade length
+const SWITCH_TRAIL = 0.10;   // bg-clear alpha held at the switch instant (low = old lingers)
 
 export class Oscilloscope extends Scene {
   constructor() {
     super('scope', 'Oscilloscope');
     this.trail = 0.3;
     this.modes = [{ name: 'Line' }, { name: 'Circle' }, { name: 'XY' }, { name: 'Sphere' }];
-    this.defineParam('thickness', 3, 0.25, 8, 0.25, 'Thickness'); // base width; min low enough for hairline strokes
+    this.defineParam('thickness', 0.25, 0.25, 8, 0.25, 'Thickness'); // base width; starts at the hairline minimum
     this.defineParam('react', 3, 0, 10, 0.5, 'React'); // px the line grows at full level — audio→width balance
     this.defineParam('gain', 1, 0.3, 3, 0.1, 'Gain');
     this.defineParam('range', 1, 0.4, 2.2, 0.1, 'Range');
@@ -129,6 +145,8 @@ export class Oscilloscope extends Scene {
     ];
     this.controlGroups = CONTROL_GROUPS;      // accordion structure consumed by ControlPanel
     this.autoArm = { ...DEFAULT_AUTO_ARM };    // which axes Auto animates (per-axis opt-in)
+    this._gainBySpread = [...SPREAD_GAIN];     // sticky GAIN remembered per LISSA Spread (seeded from the defaults)
+    this._switchT = 0;                         // pattern-switch crossfade timer (s remaining; 0 = settled)
     this._spin = 0; // accumulated rotation, radians
     this._accentT = -1;      // scheduler clock for HELIX rare accents (<0 = re-arm on entering HELIX)
     this._accentKind = 1;    // alternates 0/1 → shell vs vibration, so each stays a distinct rare event
@@ -159,6 +177,34 @@ export class Oscilloscope extends Scene {
   canArm(axis) { return axisCanArm(axis, this._ctrlState()); }
   toggleArm(axis) { if (axis in this.autoArm) this.autoArm[axis] = !this.autoArm[axis]; }
 
+  // Sticky per-Spread GAIN. On leaving a LISSA-family selection, remember where
+  // GAIN was left for the outgoing Spread; on entering (or moving within) the
+  // family, restore that Spread's remembered GAIN. First visit uses the
+  // SPREAD_GAIN defaults. Outside the family GAIN is a single shared value and is
+  // never clobbered by a Spread switch.
+  setModeGroup(key, i) {
+    const before = this._ctrlState();
+    const prevIdx = this.mg(key);
+    if (isLissaFamily(before) && this.params.gain) {
+      this._gainBySpread[before.spread] = this.params.gain.value;
+    }
+    super.setModeGroup(key, i);
+    if (key === 'spread' || key === 'sphere') {
+      if (this.mg(key) !== prevIdx) this._switchT = SWITCH_DUR; // Form/Spread change → crossfade
+      const after = this._ctrlState();
+      if (isLissaFamily(after) && this.params.gain) {
+        this.params.gain.value = this._gainBySpread[after.spread];
+      }
+    }
+  }
+
+  // A Mode change (Line/Circle/XY/Sphere) crossfades like a Form/Spread change.
+  setMode(i) {
+    const prev = this.modeIndex;
+    super.setMode(i);
+    if (this.modeIndex !== prev) this._switchT = SWITCH_DUR;
+  }
+
   update(dt, audio, palette, clock) {
     this.wave = audio.waveform;
     this.level = audio.level;
@@ -170,7 +216,16 @@ export class Oscilloscope extends Scene {
     // TERRAIN (Sphere → Form TERRAIN) renders a fresh point-cloud blob with its
     // own bloom each frame, so it wants a full clear (no smear); every other form
     // keeps the filament motion-trails. SceneManager reads this.trail after update.
-    this.trail = (this.modeIndex === 3 && this.mg('sphere') === 3) ? 1 : 0.3;
+    const baseTrail = (this.modeIndex === 3 && this.mg('sphere') === 3) ? 1 : 0.3;
+    // During a pattern-switch crossfade, dip the clear so the outgoing figure
+    // lingers under the incoming one, then ease back to the form's normal trail.
+    if (this._switchT > 0) {
+      const prog = _smoothstep(0, 1, 1 - this._switchT / SWITCH_DUR); // 0 at switch → 1 settled
+      this.trail = SWITCH_TRAIL + (baseTrail - SWITCH_TRAIL) * prog;
+      this._switchT = Math.max(0, this._switchT - dt);
+    } else {
+      this.trail = baseTrail;
+    }
 
     // Rotation: manual slider, OR a slow bold wander when Auto is on. Band is
     // intentionally NOT mixed into spin — Drive drives the scale, Rotate the
@@ -291,6 +346,11 @@ export class Oscilloscope extends Scene {
     const wave = this.wave;
     if (!wave || !wave.length) return;
     const mode = this.modeIndex;
+    // Pattern-switch crossfade: ease the incoming figure's opacity in while the
+    // outgoing one lingers via the dipped trail. The compositor presets globalAlpha
+    // to `alpha`, so set it here too — Line/Circle/XY never touch globalAlpha.
+    if (this._switchT > 0) alpha *= _smoothstep(0, 1, 1 - this._switchT / SWITCH_DUR);
+    ctx.globalAlpha = alpha;
     const gain = this.p('gain');
     const range = this.p('range');
     // Width = fixed base + audio-driven growth. React sets how many px full
@@ -306,15 +366,20 @@ export class Oscilloscope extends Scene {
       ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
       ctx.beginPath();
       const cy = this.h / 2;
+      const ampRaw = this.h * 0.4 * gain * range;
+      const amp = ampRaw * fitScale(ampRaw, FIT_CAP * this.h, FIT_KNEE); // soft-capped so loud/high-gain can't run off top/bottom
       for (let i = 0, k = 0; i < wave.length; i += step, k++) {
         const x = (i / (wave.length - 1)) * this.w;
-        const y = cy + ((wave[i] - 128) / 128) * this.h * 0.4 * gain * range;
+        const y = cy + ((wave[i] - 128) / 128) * amp;
         if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
     } else if (mode === 1) {
       const cx = this.w / 2, cy = this.h / 2;
-      const r0 = Math.min(this.w, this.h) * 0.25 * range;
+      const mn = Math.min(this.w, this.h);
+      const r0raw = mn * 0.25 * range;
+      const rPeak = r0raw * (1 + 0.9 * gain);                        // radius at a full-scale sample
+      const r0 = r0raw * fitScale(rPeak, FIT_CAP * mn, FIT_KNEE);    // soft-cap the peak so it can't cross the frame
       ctx.strokeStyle = rgbCss(this.palette.colorAt((this.t * 0.1) % 1));
       ctx.beginPath();
       let first = true;
@@ -332,7 +397,9 @@ export class Oscilloscope extends Scene {
       const cx = this.w / 2, cy = this.h / 2;
       // Band breathes the figure; Drive sets how strongly.
       const band = this._driveEnergy();
-      const s = Math.min(this.w, this.h) * 0.42 * gain * range * (1 + this.p('drive') * band * 0.9);
+      const mn = Math.min(this.w, this.h);
+      const sRaw = mn * 0.42 * gain * range * (1 + this.p('drive') * band * 0.9);
+      const s = sRaw * fitScale(sRaw, FIT_CAP * mn, FIT_KNEE);       // soft-cap so band swells / high gain stay in-frame
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
       const cosA = Math.cos(this._spin), sinA = Math.sin(this._spin);
@@ -357,9 +424,23 @@ export class Oscilloscope extends Scene {
   // Form sub-toggle picks GLOBE / WRAP / LISSA. Deterministic (no Math.random/Date).
   _drawSphere(ctx, wave, step, gain, range, alpha) {
     const cx = this.w / 2, cy = this.h / 2;
-    const R = Math.min(this.w, this.h) * 0.34 * range; // sphere radius, px
+    const mn = Math.min(this.w, this.h);
+    const baseR = mn * 0.34 * range;
     const band = this._driveEnergy();
     const amp = 0.2 * gain * (1 + this.p('drive') * band * 0.9); // radial waveform displacement
+    const reach = gain * (1.15 + this.p('drive') * band * 1.1);  // LISSA-family extent (hoisted: sizes the fit-clamp and the draw)
+    const form = this.mg('sphere');
+    // Estimate the figure's raw px half-extent for this form, then soft-cap the
+    // projection radius R so no form/gain/loud-transient pushes it past the frame.
+    let rawExtent;
+    if (form === 0 || form === 1) rawExtent = (1 + amp) * baseR;    // GLOBE / WRAP: unit sphere + radial displacement
+    else if (form === 3) rawExtent = SPHERE_EXTENT.terrain * baseR; // TERRAIN blob
+    else {                                                          // LISSA family
+      const sp = this._effSpread();
+      const f = sp === 5 ? SPHERE_EXTENT.helix : sp === 4 ? SPHERE_EXTENT.ribbon : SPHERE_EXTENT.lissa;
+      rawExtent = f * reach * baseR;
+    }
+    const R = baseR * fitScale(rawExtent, FIT_CAP * mn, FIT_KNEE); // sphere radius, px (soft-capped to fit)
     const cosA = Math.cos(this._spin), sinA = Math.sin(this._spin);
     const ct = SPHERE_COS_TILT, st = SPHERE_SIN_TILT;
     const N = wave.length;
@@ -388,7 +469,6 @@ export class Oscilloscope extends Scene {
         ctx.stroke();
       }
     };
-    const form = this.mg('sphere');
     if (form === 0) {
       // GLOBE — stacked latitude rings, each a circular waveform scope.
       const rings = Math.round(this.p('density'));
@@ -436,8 +516,8 @@ export class Oscilloscope extends Scene {
       // walks through them irregularly. The CORE is the SAME figure+spread scaled down to the centre
       // with a tighter lag: a concentrated nucleus sharing the live waveform,
       // rotation, depth and spread — so core + outer read as ONE object. Core
-      // slider sets the nucleus scale (0 = off; RIBBON ignores core).
-      const reach = gain * (1.15 + this.p('drive') * band * 1.1); // wide, audio-breathing extent
+      // slider sets the nucleus scale (0 = off; RIBBON ignores core). `reach` is
+      // computed once at the top of _drawSphere (it also sizes the fit-clamp).
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
       const spread = this._effSpread();
