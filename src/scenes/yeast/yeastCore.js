@@ -22,12 +22,13 @@ const SPLAT_VERT = /* glsl */`
   uniform vec2 uHalf;                 // uViewport*0.5
   uniform float uScale;               // 0.5*min(uViewport) — normalized->px, scalar => round FOV
   uniform float uFusion, uFocusPlane, uDof;
+  uniform float uSizeR;
   varying vec2 vLocal;
   varying float vAmp;
   void main() {
     float blur = abs(aDepth - uFocusPlane);
     float sup = ${YEAST.SUP_A.toFixed(3)} + ${YEAST.SUP_B.toFixed(3)} * uFusion;
-    float Rn = aRadius * sup * (1.0 + ${YEAST.DOF_R.toFixed(3)} * blur * 2.0 * uDof);
+    float Rn = aRadius * sup * (1.0 + ${YEAST.DOF_R.toFixed(3)} * blur * 2.0 * uDof) * uSizeR;
     float amp = (1.0 - ${YEAST.DOF_AMP.toFixed(3)} * blur * 2.0 * uDof) * (aBud > 0.001 ? 0.9 : 1.0);
     vLocal = position.xy;
     vAmp = aRadius > 0.0 ? max(amp, 0.0) : 0.0;     // radius 0 => contributes nothing
@@ -131,6 +132,7 @@ export function createYeastCore({ THREE, renderer }) {
   const splatUniforms = {
     uViewport: { value: new THREE.Vector2(1, 1) }, uHalf: { value: new THREE.Vector2(0.5, 0.5) },
     uScale: { value: 1 }, uFusion: { value: 0.6 }, uFocusPlane: { value: 0.5 }, uDof: { value: 0.6 },
+    uSizeR: { value: 1 },
   };
   const splatMat = new THREE.RawShaderMaterial({
     uniforms: splatUniforms, vertexShader: SPLAT_VERT, fragmentShader: SPLAT_FRAG,
