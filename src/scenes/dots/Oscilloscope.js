@@ -39,12 +39,21 @@ const BLOB_COUNT = 70000;   // Fibonacci points (perf-tuned for the live app)
 const BLOB_EDGEW = 0.17;    // Voronoi wall thickness (F2-F1 band)
 const BLOB_CULL = 0.055;    // drop dots dimmer than this → dark craters, solid walls, tighter rim (less dust), fewer draws
 const BLOB_SCALE = 0.5;     // render the cloud to a half-res offscreen (4× cheaper bloom; the upscale softens the grain)
-// Traveling wall-light (signal flow): a bright front sweeps the Voronoi network.
+// Traveling wall-light (signal flow): a MORPHING bright front sweeps the Voronoi
+// network, and a bass onset launches an expanding light-ring (kick burst).
 const WALL_BASE = 0.6;      // resting wall brightness (the always-visible network substrate)
 const WALL_TRAVEL = 1.15;   // extra brightness carried inside the moving light-front
-const WAVE_K = 9.0;         // bright fronts wrapping the sphere (proj∈[-1,1] → ~WAVE_K/π bands)
+const WAVE_K = 9.0;         // base band count wrapping the sphere (proj∈[-1,1] → ~WAVE_K/π bands)
 const WAVE_SPEED = 0.8;     // base sweep speed (×clock)
 const WAVE_SPEED_MID = 2.4; // MID accelerates the running light
+// Beat-burst — a bass onset (kick) fires an expanding, fading light-ring.
+const BURST_BASS_HI = 0.55; // bass level whose rising edge launches a burst
+const BURST_MIN_GAP = 0.22; // refractory (s) — no machine-gun bursts
+const BURST_LIFE = 1.1;     // seconds a burst stays alive
+const BURST_SPEED = 3.3;    // ring expansion (rad/s) — crosses the globe in ~1s
+const BURST_DECAY = 2.1;    // ring brightness fade rate
+const BURST_W = 4.0;        // ring thinness (larger = thinner) in cos-space
+const BURST_GAIN = 1.3;     // burst punch above the resting sweep
 let _wF1 = 0, _wF2 = 0;
 function _fract(v) { return v - Math.floor(v); }
 function _smoothstep(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
@@ -396,7 +405,7 @@ export class Oscilloscope extends Scene {
     } else if (form === 3) {
       // TERRAIN — the "Noise Blob": a glowing point-cloud globe whose surface is a
       // Worley cell-wall network (bright walls, dark craters) over an FBM shape.
-      // BASS swells it, MID runs light along the wall network, TREBLE shimmers. See _drawSphereTerrain.
+      // BASS swells it + kicks fire a ring-burst, MID runs a morphing light-front, TREBLE shimmers. See _drawSphereTerrain.
       this._drawSphereTerrain(ctx, wave, N, R, band, alpha, project);
     } else {
       // LISSA — XY's self-correlation in 3D, expanding wide and breathing with
@@ -650,6 +659,10 @@ export class Oscilloscope extends Scene {
       this._blobWall = new Float32Array(NB);  // cached raw wall factor (drives the live traveling light)
       this._blobCursor = 0;                   // round-robin recompute cursor
       this._blobPrimed = false;               // false → first frame recomputes ALL points
+      this._burstT0 = -99;                    // time of last beat-burst (none yet)
+      this._burstN = 0;                       // burst counter → seeds each burst's origin
+      this._burstAmp = 0;                     // current burst amplitude (from bass at trigger)
+      this._blobPrevBass = 0;                 // prev-frame bass for onset (rising-edge) detection
       const golden = Math.PI * (3 - Math.sqrt(5));
       const JIT = 0.5 * Math.sqrt(4 * Math.PI / NB); // ~½ point spacing → breaks the spiral lattice but keeps walls tight
       for (let i = 0; i < NB; i++) {
@@ -677,10 +690,11 @@ export class Oscilloscope extends Scene {
 
   // TERRAIN — the "Noise Blob". A Fibonacci point cloud whose surface is pushed
   // out by FBM + a Worley cell-wall network (F2-F1 → thin bright Voronoi walls,
-  // dark craters). Each band is visibly distinct: BASS swells the whole blob,
-  // MID drives a bright light-front running along the wall network (energy flow)
-  // + an overall wall flare, TREBLE adds a fast grain shimmer. Rendered to an
-  // offscreen then composited with a soft additive bloom. Mono, deterministic.
+  // dark craters). Each band is visibly distinct: BASS swells the whole blob AND
+  // its onset (a kick) fires an expanding light-ring burst; MID drives + accelerates
+  // a MORPHING light-front running the wall network (its axis + band count evolve so
+  // it never repeats); TREBLE adds a fast grain shimmer. Rendered to an offscreen
+  // then composited with a soft additive bloom. Mono, deterministic.
   // (wave/N/band unused — the blob is driven by the honest FFT bands + clock.)
   _drawSphereTerrain(ctx, wave, N, R, band, alpha, project) {
     this._ensureBlob();
@@ -749,10 +763,37 @@ export class Oscilloscope extends Scene {
     const swell = audioPush * 0.14, briBoost = (1 + audioPush * 0.8) * exposure; // swell = bass spatial push (range halved); briBoost keeps the beat-brightness punch
     const preCull = BLOB_CULL / (1.2 * briBoost);             // max fade factor ≈1.2 → skip definite craters before projecting
     // ── traveling light-front along the network (signal flow). MID energises +
-    // accelerates it; the sweep axis slowly turns so the run stays organic. ──
+    // accelerates it; the sweep morphs so the run never repeats. ──
     const travelAmt = WALL_TRAVEL * (0.4 + 0.6 * eMid);
     const tFlow = this.t * (WAVE_SPEED + eMid * WAVE_SPEED_MID);
-    const wdx = Math.cos(this.t * 0.05), wdy = 0.32, wdz = Math.sin(this.t * 0.05);
+    // MORPHING sweep: the axis direction wobbles (normalised → bands never collapse)
+    // and the band count breathes, so the pattern keeps reorganising over time.
+    const mx = Math.cos(this.t * 0.05) * (0.7 + 0.5 * Math.sin(this.t * 0.13));
+    const my = 0.32 + 0.5 * Math.sin(this.t * 0.11);
+    const mz = Math.sin(this.t * 0.05) * (0.7 + 0.5 * Math.cos(this.t * 0.17));
+    const minv = 1 / Math.sqrt(mx * mx + my * my + mz * mz);
+    const wsx = mx * minv, wsy = my * minv, wsz = mz * minv;   // unit sweep axis
+    const kMod = WAVE_K * (0.9 + 0.35 * Math.sin(this.t * 0.19)); // band count breathes ~5..11
+    // BEAT-BURST: a bass onset (kick) launches an expanding light-ring from a fresh
+    // seed direction; it grows across the globe and fades over ~1s. Drawn in cos-space
+    // (no acos/exp in the hot loop) so it adds no fillRect calls — stays fps-neutral.
+    const bassOnset = eBass > BURST_BASS_HI && this._blobPrevBass <= BURST_BASS_HI;
+    if (bassOnset && this.t - this._burstT0 > BURST_MIN_GAP) {
+      this._burstT0 = this.t;
+      this._burstN = (this._burstN + 1) | 0;
+      this._burstAmp = _clampv(0.45 + (eBass - BURST_BASS_HI) * 1.2, 0.45, 1);
+    }
+    this._blobPrevBass = eBass;
+    const bAge = this.t - this._burstT0;
+    const bActive = bAge < BURST_LIFE && this._burstAmp > 0.001;
+    let burstCos = 1, burstEnv = 0, bsx = 0, bsy = 1, bsz = 0;
+    if (bActive) {
+      burstCos = Math.cos(bAge * BURST_SPEED);                  // ring at angular radius bAge·SPEED
+      burstEnv = this._burstAmp * Math.exp(-bAge * BURST_DECAY) * BURST_GAIN;
+      const yy = ((this._burstN * 0.6180339) % 1) * 2 - 1, rr = Math.sqrt(Math.max(0, 1 - yy * yy));
+      const aa = this._burstN * 2.3999632;                     // golden-angle hop → bursts spread over the globe
+      bsx = Math.cos(aa) * rr; bsy = yy; bsz = Math.sin(aa) * rr;
+    }
     for (let i = 0; i < NB; i++) {
       if (bri[i] < preCull) continue;                          // pre-cull dark craters (skip projection entirely)
       const dx = dir[i * 3], dy = dir[i * 3 + 1], dz = dir[i * 3 + 2];
@@ -766,10 +807,16 @@ export class Oscilloscope extends Scene {
       const baseBright = bri[i] * fade;
       if (baseBright < BLOB_CULL) continue;                   // cull on RESTING brightness → draw set stays bounded (fps-safe)
       const sd = seedA[i];
-      // traveling light: a sharpened sine crest sweeps the wall network (+seed
-      // jitter = organic trickle, not a clean plane). It only lifts the brightness
-      // of points already being drawn, so the running light adds no fillRect calls.
-      const cr = 0.5 + 0.5 * Math.sin((dx * wdx + dy * wdy + dz * wdz) * WAVE_K - tFlow + sd * 1.1);
+      // MORPHING sweep: a sharpened sine crest runs the wall network (+seed jitter =
+      // organic trickle, not a clean plane). It only lifts the brightness of points
+      // already being drawn, so the running light adds no fillRect calls.
+      let cr = 0.5 + 0.5 * Math.sin((dx * wsx + dy * wsy + dz * wsz) * kMod - tFlow + sd * 1.1);
+      // BEAT-BURST ring flares over the sweep — cheap cos-space quartic bump (no acos/exp).
+      if (bActive) {
+        let q = (dx * bsx + dy * bsy + dz * bsz - burstCos) * BURST_W;
+        q = 1 - q * q;
+        if (q > 0) { const ring = q * q * burstEnv; if (ring > cr) cr = ring; }
+      }
       const bright = baseBright + 1.7 * wcache[i] * cellEdge * (0.8 + 0.6 * sd) * travelAmt * (cr * cr * cr) * fade;
       const szs = pointSize * (0.7 + 0.6 * sd) * szK * S; // point half-size in half-res space
       octx.globalAlpha = bright < 2 ? bright * 0.20 : 0.40;    // faint solid squares; overlap builds the glow
