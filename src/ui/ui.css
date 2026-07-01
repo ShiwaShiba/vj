@@ -47,7 +47,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  max-height: 60vh;
+  max-height: 30vh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 16px 18px calc(18px + env(safe-area-inset-bottom));
@@ -163,6 +163,16 @@
   background: transparent;
   accent-color: var(--vj-fg);
 }
+/* Live numeric readout — right-aligned, tabular so digits don't jitter while
+   dragging. Lets a param be calibrated to an exact value, not a slider guess. */
+.vj-slider-value {
+  flex: 0 0 42px;
+  text-align: right;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--vj-dim);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Start overlay — stark calibration screen */
 #start {
@@ -239,10 +249,16 @@
   text-align: left;
 }
 .vj-acc-header.dormant { opacity: 0.4; }
+/* Two sliders per row so tracks are shorter (easier to nudge) and more fits the
+   shorter panel. Button/mode rows and the arm selector span the full width. */
 .vj-acc-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
   padding: 12px 2px 4px;
 }
+.vj-acc-body > .vj-row { grid-column: 1 / -1; }
+.vj-acc-body .vj-slider { gap: 10px; }
+.vj-acc-body .vj-slider-label { flex-basis: 82px; }
+.vj-acc-body .vj-slider-value { flex-basis: 34px; }
 .vj-acc-body .inactive { opacity: 0.35; }
