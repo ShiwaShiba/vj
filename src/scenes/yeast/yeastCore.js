@@ -1,10 +1,13 @@
 // src/scenes/yeast/yeastCore.js
 // Owns all THREE state for YEAST. Screen-space metaball splat:
 //   pass 1 — instanced quads additively splat a Wyvill field into a HalfFloat RT
-//   pass 2 — (Task 5) fullscreen iso-threshold shading turns the field into cells
-//   pass 3 — (Task 5) UnrealBloom
+//   pass 2 — fullscreen iso-threshold shading turns the field into cells
+//   pass 3 — UnrealBloom
 // This file has NO randomness; all geometry/time/audio arrive via setInstances/setUniforms.
 import { YEAST } from './yeastDrive.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 // --- pass 1: splat. Base quad in [-1,1]^2; instance places it at aCenter with support R.
 // gl_Position computed directly in clip space from uViewport (no camera matrices).
@@ -46,16 +49,61 @@ const SPLAT_FRAG = /* glsl */`
   }
 `;
 
-// --- pass-through (Task 4 only; replaced by shading in Task 5): show the raw field grayscale.
-const FS_VERT = /* glsl */`
+// --- pass 2: fullscreen iso-threshold shading. Reads the field, turns it into translucent
+// cell bodies with bright rims, phase-contrast halos, cored nuclei, hollow<->filled interpolation,
+// a circular microscope vignette, and a mono<->slate tint. (Ported from the validated mockup.)
+const SHADE_FRAG = /* glsl */`
   precision highp float;
-  attribute vec3 position; attribute vec2 uv; varying vec2 vUv;
-  void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
-`;
-const PASSTHRU_FRAG = /* glsl */`
-  precision highp float;
-  uniform sampler2D uField; varying vec2 vUv;
-  void main() { float F = texture2D(uField, vUv).r; float v = clamp(F * 0.6, 0.0, 1.0); gl_FragColor = vec4(v, v, v, 1.0); }
+  uniform sampler2D uField;
+  uniform vec2 uTexel;          // 1/bufW, 1/bufH
+  uniform vec2 uHalf;           // bufW/2, bufH/2
+  uniform float uScale;         // 0.5*min(buf)
+  uniform float uT;             // iso threshold
+  uniform float uFill, uRim, uHalo;
+  uniform float uSwell, uShimmer, uExposure;
+  uniform float uTint;          // 0=mono, 1=slate
+  uniform vec3 uMono;           // mono cell color (palette.fg/255)
+  uniform float uFov;           // FOV radius (normalized)
+  varying vec2 vUv;
+  float sm(float a, float b, float x){ x = clamp((x - a) / (b - a), 0.0, 1.0); return x * x * (3.0 - 2.0 * x); }
+  void main() {
+    float F = texture2D(uField, vUv).r;
+    float T = uT;
+    float val = 0.0;
+    if (F > 0.004) {
+      float l = texture2D(uField, vUv - vec2(uTexel.x, 0.0)).r;
+      float r = texture2D(uField, vUv + vec2(uTexel.x, 0.0)).r;
+      float u = texture2D(uField, vUv - vec2(0.0, uTexel.y)).r;
+      float d = texture2D(uField, vUv + vec2(0.0, uTexel.y)).r;
+      float gmag = length(vec2(r - l, d - u));
+      float rimW = T * (0.40 + 0.35 / max(0.2, uRim));
+      float body = sm(T * 0.86, T * 1.16, F);
+      float e = (F - T) / rimW;
+      float rim = exp(-e * e) * (0.45 + 1.5 * min(1.0, gmag * 7.0));
+      rim *= 1.0 + uShimmer * 0.8;                 // TREBLE: rim shimmer
+      float o = T - F;
+      float halo = 0.0;
+      if (o > 0.0) {
+        float h1 = (o - T * 0.55) / (T * 0.42);
+        float h2 = (o - T * 1.5) / (T * 0.7);
+        halo = exp(-h1 * h1) + 0.55 * exp(-h2 * h2);
+        halo *= exp(-o * 3.4);
+        halo *= 1.0 + uShimmer * 0.6;              // TREBLE: halo flicker
+      }
+      float nuc = sm(T * 2.1, T * 3.9, F);
+      val = body * uFill + rim * uRim * 0.5 + halo * uHalo * 0.42 - nuc * 0.20;
+      val = max(val, 0.0);
+      val = pow(val, 0.88) * uExposure * (1.0 + uSwell * 0.5);   // BASS: swell brightens
+    }
+    vec2 pc = (gl_FragCoord.xy - uHalf) / uScale;
+    float dist = length(pc);
+    float vig = sm(uFov * 1.02, uFov * 0.80, dist);
+    vec3 slateBg = vec3(18.0, 27.0, 38.0) / 255.0;
+    vec3 slateLt = vec3(205.0, 219.0, 232.0) / 255.0;
+    vec3 bg = mix(vec3(0.0), slateBg * (0.28 + 0.72 * vig), uTint);
+    vec3 cell = mix(uMono * val * vig, slateLt * val, uTint);
+    gl_FragColor = vec4(bg + cell, 1.0);
+  }
 `;
 
 export function createYeastCore({ THREE, renderer }) {
@@ -98,20 +146,37 @@ export function createYeastCore({ THREE, renderer }) {
     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
   });
 
-  // --- fullscreen pass-through (Task 4). Replaced by shading composer in Task 5.
-  const fsQuad = new THREE.BufferGeometry();
-  fsQuad.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
-  fsQuad.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 2, 0, 0, 2]), 2));
-  const showUniforms = { uField: { value: fieldRT.texture } };
-  const showMat = new THREE.RawShaderMaterial({ uniforms: showUniforms, vertexShader: FS_VERT, fragmentShader: PASSTHRU_FRAG });
-  const showScene = new THREE.Scene();
-  showScene.add(new THREE.Mesh(fsQuad, showMat));
+  // --- pass 2: fullscreen shading scene (PlaneGeometry(2,2) fills clip space; vUv from uv)
+  const shadeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const shadeUniforms = {
+    uField: { value: fieldRT.texture },
+    uTexel: { value: new THREE.Vector2(1, 1) }, uHalf: { value: new THREE.Vector2(0.5, 0.5) }, uScale: { value: 1 },
+    uT: { value: YEAST.ISO_T }, uFill: { value: 0.34 }, uRim: { value: 1.0 }, uHalo: { value: 0.7 },
+    uSwell: { value: 0 }, uShimmer: { value: 0 }, uExposure: { value: 1.0 },
+    uTint: { value: 0 }, uMono: { value: new THREE.Color(1, 1, 1) }, uFov: { value: YEAST.FOV },
+  };
+  const shadeMat = new THREE.ShaderMaterial({
+    uniforms: shadeUniforms,
+    vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+    fragmentShader: SHADE_FRAG, depthTest: false, depthWrite: false,
+  });
+  const shadeScene = new THREE.Scene();
+  shadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), shadeMat));
+
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(shadeScene, shadeCam));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.6, 0.5, 0.2);   // strength/radius/threshold
+  composer.addPass(bloom);
 
   function resize(w, h) {
     renderer.setSize(w, h);
     const v = new THREE.Vector2(); renderer.getDrawingBufferSize(v);
     fieldRT.setSize(v.x, v.y);
-    showUniforms.uField.value = fieldRT.texture;
+    shadeUniforms.uField.value = fieldRT.texture;
+    shadeUniforms.uTexel.value.set(1 / v.x, 1 / v.y);
+    shadeUniforms.uHalf.value.set(v.x * 0.5, v.y * 0.5);
+    shadeUniforms.uScale.value = 0.5 * Math.min(v.x, v.y);
+    composer.setSize(w, h);
     splatUniforms.uViewport.value.set(v.x, v.y);
     splatUniforms.uHalf.value.set(v.x * 0.5, v.y * 0.5);
     splatUniforms.uScale.value = 0.5 * Math.min(v.x, v.y);
@@ -123,19 +188,33 @@ export function createYeastCore({ THREE, renderer }) {
     if (state.activeSlots != null) base.instanceCount = Math.max(1, Math.min(N, state.activeSlots | 0));
   }
   function setUniforms(o) {
-    for (const k in o) { const u = splatUniforms[k]; if (u) u.value = o[k]; }
+    for (const k in o) {
+      if (splatUniforms[k]) splatUniforms[k].value = o[k];
+      if (shadeUniforms[k]) shadeUniforms[k].value = o[k];
+    }
   }
+  function setDrift(d) {
+    if (d.fusion != null) splatUniforms.uFusion.value = d.fusion;
+    if (d.focusPlane != null) splatUniforms.uFocusPlane.value = d.focusPlane;
+    if (d.fill != null) shadeUniforms.uFill.value = 0.20 + 0.42 * d.fill;   // hollow<->filled band
+    if (d.rim != null) shadeUniforms.uRim.value = 0.55 + 0.95 * d.rim;
+    if (d.halo != null) shadeUniforms.uHalo.value = 0.30 + 0.85 * d.halo;
+  }
+  function setTint(v) { shadeUniforms.uTint.value = v < 0 ? 0 : v > 1 ? 1 : v; }
+  function setMono(rgb) { const c = shadeUniforms.uMono.value; c.r = rgb[0] / 255; c.g = rgb[1] / 255; c.b = rgb[2] / 255; }
+  function setBloom(s) { bloom.strength = s; }
   function render() {
     renderer.setRenderTarget(fieldRT);
     renderer.setClearColor(0x000000, 1); renderer.clear();
     renderer.render(splatScene, dummyCam);
     renderer.setRenderTarget(null);
-    renderer.render(showScene, dummyCam);
+    composer.render();
   }
   function dispose() {
-    base.dispose(); splatMat.dispose(); fsQuad.dispose(); showMat.dispose(); fieldRT.dispose();
+    base.dispose(); splatMat.dispose(); shadeMat.dispose(); fieldRT.dispose();
+    if (bloom.dispose) bloom.dispose(); if (composer.dispose) composer.dispose();
   }
-  return { resize, setInstances, setUniforms, render, dispose, _splatUniforms: splatUniforms };
+  return { resize, setInstances, setUniforms, setDrift, setTint, setMono, setBloom, render, dispose };
 }
 
 // pack px[],py[] (length n) into a flat xy array of length 2n
