@@ -11,6 +11,7 @@ import { toggleFullscreen, isFullscreenSupported } from '../platform/fullscreen.
 export class ControlPanel {
   constructor(ctx) {
     this.ctx = ctx;
+    this._groupState = {}; // (sceneId:groupKey) -> 'open' | 'collapsed'; 手動開閉を rebuild を跨いで保持
     this._build();
     // Open on load; from here only the handle (≡) opens/closes it.
     this.show();
@@ -157,33 +158,106 @@ export class ControlPanel {
       c.appendChild(vrow);
     }
 
-    // Generic named mode-groups (e.g. 範囲 / カメラ / 高さ / スタイル).
-    if (scene.modeGroups && scene.setModeGroup) {
-      for (const g of scene.modeGroups) {
-        const grow = document.createElement('div');
-        grow.className = 'vj-row vj-modes';
-        const lab = document.createElement('span');
-        lab.className = 'vj-mg-label';
-        lab.textContent = g.label;
-        grow.appendChild(lab);
-        g.options.forEach((name, i) => {
-          const b = document.createElement('button');
-          b.className = 'vj-btn small' + (i === g.index ? ' active' : '');
-          b.textContent = name;
-          b.addEventListener('click', () => { scene.setModeGroup(g.key, i); this._rebuildSceneControls(); });
-          grow.appendChild(b);
-        });
-        c.appendChild(grow);
+    // Accordion for scenes that declare controlGroups (Oscilloscope); every other
+    // scene keeps the generic flat layout below (unchanged).
+    if (scene.controlGroups && scene.isGroupActive) {
+      this._renderAccordion(scene, c);
+    } else {
+      if (scene.modeGroups && scene.setModeGroup) {
+        for (const g of scene.modeGroups) c.appendChild(this._modeGroupRow(scene, g));
       }
+      const sliders = document.createElement('div');
+      sliders.className = 'vj-sliders';
+      for (const key in scene.params) {
+        const entry = scene.params[key];
+        sliders.appendChild(createSlider(entry.label, entry, (v) => { entry.value = v; if (entry.onChange) entry.onChange(v); }));
+      }
+      c.appendChild(sliders);
     }
+  }
 
-    const sliders = document.createElement('div');
-    sliders.className = 'vj-sliders';
-    for (const key in scene.params) {
-      const entry = scene.params[key];
-      sliders.appendChild(createSlider(entry.label, entry, (v) => { entry.value = v; if (entry.onChange) entry.onChange(v); }));
+  // A single-select modeGroup row (label + option buttons). Shared by the flat
+  // layout and the accordion so both render identically.
+  _modeGroupRow(scene, g) {
+    const grow = document.createElement('div');
+    grow.className = 'vj-row vj-modes';
+    const lab = document.createElement('span');
+    lab.className = 'vj-mg-label';
+    lab.textContent = g.label;
+    grow.appendChild(lab);
+    g.options.forEach((name, i) => {
+      const b = document.createElement('button');
+      b.className = 'vj-btn small' + (i === g.index ? ' active' : '');
+      b.textContent = name;
+      b.addEventListener('click', () => { scene.setModeGroup(g.key, i); this._rebuildSceneControls(); });
+      grow.appendChild(b);
+    });
+    return grow;
+  }
+
+  // Collapsible groups: headers always present (導線), dormant dimmed, inactive
+  // items dimmed but still interactive. Collapse state persists across rebuilds.
+  _renderAccordion(scene, c) {
+    for (const group of scene.controlGroups) {
+      const active = scene.isGroupActive(group.key);
+      const stKey = scene.id + ':' + group.key;
+      const stored = this._groupState[stKey];
+      const collapsed = stored === undefined ? !active : stored === 'collapsed';
+
+      const header = document.createElement('button');
+      header.className = 'vj-acc-header' + (active ? '' : ' dormant');
+      header.textContent = (collapsed ? '▸ ' : '▾ ') + group.label;
+      header.addEventListener('click', () => {
+        this._groupState[stKey] = collapsed ? 'open' : 'collapsed';
+        this._rebuildSceneControls();
+      });
+      c.appendChild(header);
+      if (collapsed) continue;
+
+      const body = document.createElement('div');
+      body.className = 'vj-acc-body';
+      for (const item of group.items) {
+        const el = this._renderItem(scene, item);
+        if (!el) continue;
+        if (!scene.isControlActive(item.t, item.k)) el.classList.add('inactive');
+        body.appendChild(el);
+      }
+      c.appendChild(body);
     }
-    c.appendChild(sliders);
+  }
+
+  _renderItem(scene, item) {
+    if (item.t === 'p') {
+      const entry = scene.params[item.k];
+      if (!entry) return null;
+      return createSlider(entry.label, entry, (v) => { entry.value = v; if (entry.onChange) entry.onChange(v); });
+    }
+    if (item.t === 'g') {
+      const g = scene.modeGroups && scene.modeGroups.find((x) => x.key === item.k);
+      return g ? this._modeGroupRow(scene, g) : null;
+    }
+    if (item.t === 'm' && item.k === 'autoArm') return this._autoArmRow(scene);
+    return null;
+  }
+
+  // The Auto "動かす軸" multi-select: one toggle per armable axis in this mode.
+  _autoArmRow(scene) {
+    const row = document.createElement('div');
+    row.className = 'vj-row vj-modes';
+    const lab = document.createElement('span');
+    lab.className = 'vj-mg-label';
+    lab.textContent = '動かす軸';
+    row.appendChild(lab);
+    const AXES = [['phase', 'Phase'], ['flip', 'Flip'], ['band', 'Band'], ['spread', 'Spread'], ['rot', '回転']];
+    for (const [k, label] of AXES) {
+      if (!scene.canArm(k)) continue;
+      const b = document.createElement('button');
+      b.className = 'vj-btn small' + (scene.autoArm[k] ? ' active' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => { scene.toggleArm(k); this._rebuildSceneControls(); });
+      row.appendChild(b);
+    }
+    return row;
   }
 
   markAudioUnavailable() {
