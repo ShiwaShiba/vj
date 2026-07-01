@@ -6,6 +6,7 @@ import { PurposeMaker } from './dots/PurposeMaker.js';
 import { Tunnel } from './dots/Tunnel.js';
 import { FallingCubes } from './dots/FallingCubes.js';
 import { CityScene } from './city/CityScene.js';
+import { OrbScene } from './orb/OrbScene.js';
 import { Kaleidoscope } from './dots/Kaleidoscope.js';
 import { Lissajous } from './dots/Lissajous.js';
 import { Moire } from './dots/Moire.js';
@@ -27,6 +28,7 @@ export function createScenes() {
     new Tunnel(),
     new FallingCubes(),
     new CityScene(),
+    new OrbScene(),
     new Kaleidoscope(),
     new Lissajous(),
     new Moire(),
