@@ -64,7 +64,11 @@ export class OrbScene extends Scene {
     });
 
     if (palette && palette.fg) this._core.setTint(palette.fg);
-    this._core.setBloom(this.p('bloom'));
+
+    // Adaptive: below full quality, dim bloom first (cheapest win), then thin the point cloud.
+    const q = clock && clock.quality != null ? clock.quality : 1;
+    this._core.setBloom(this.p('bloom') * (q < 1 ? Math.max(0.3, q) : 1));
+    this._core.setDrawFraction(q < 0.6 ? Math.max(0.4, q) : 1);
   }
 
   draw(ctx, alpha) {
