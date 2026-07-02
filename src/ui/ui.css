@@ -96,6 +96,17 @@
   background: var(--vj-fg);
   color: #000;
 }
+/* 改善予定グループの区切り（全幅・ラベル付き。上段=通常 / 下段=改善予定）。 */
+.vj-scenegrid-sep {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  padding-top: 9px;
+  border-top: 1px solid var(--vj-line);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--vj-dim);
+  font-weight: 600;
+}
 
 .vj-palettes { display: flex; flex-wrap: wrap; gap: 6px; }
 .vj-swatch {
