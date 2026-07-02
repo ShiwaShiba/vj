@@ -1,6 +1,6 @@
 import { Scene } from '../Scene.js';
 import { DancerRig } from './DancerRig.js';
-import { MODES, MODE_FAVORED, MODE_STYLE } from './moves.js';
+import { MODES, MODE_FAVORED, MODE_STYLE, MODE_RARE } from './moves.js';
 import { AudioMapper } from './audioMap.js';
 
 // Fixed camera presets (button-cycled): how the whole crowd is viewed. yaw about
@@ -24,6 +24,11 @@ export class DancersScene extends Scene {
     // Camera viewpoint as a button group (parallel to modes).
     this.views = VIEWS.map((v) => ({ name: v.name }));
     this.viewIndex = 0;
+    // Render style: pictogram (original Kraftwerk rods) vs graphic (brush-croquis
+    // dancer). Same rig/choreography — only the renderer + proportions differ.
+    this.modeGroups = [
+      { key: 'style', label: 'STYLE', options: ['PICTO', 'GRAPHIC'], index: 0 },
+    ];
     this._camYaw = VIEWS[0].yaw;
     this._camPitch = VIEWS[0].pitch;
     this.defineParam('count', 1, 1, 100, 1, 'Dancers');
@@ -108,11 +113,13 @@ export class DancersScene extends Scene {
     const mode = MODES[this.modeIndex] || MODES[0];
     const style = MODE_STYLE[mode.name] || MODE_STYLE.Auto;
     let modeFavored = MODE_FAVORED[mode.name] || null;
+    let modeRare = MODE_RARE[mode.name] || null;
     let poseAmp = gains.poseAmp * style.scale;
 
     // Quiet / mic-off: a deliberate low-amplitude living groove on the internal clock.
     if (!audio.ready && gains.energy < 0.06) {
       modeFavored = ['IDLE'];
+      modeRare = null;
       poseAmp = Math.max(poseAmp, 0.35);
     }
 
@@ -121,8 +128,10 @@ export class DancersScene extends Scene {
     const weightAmp = gains.weightAmp * style.grooveMul;
     const bounceImpulse = gains.bounceImpulse * style.grooveMul;
 
+    const styleIdx = this.mg('style');
     const spread = this.p('spread');
     for (let i = 0; i < this.rigs.length; i++) {
+      this.rigs[i].style = styleIdx;
       // Per-dancer phase offset (floor keeps neighbours desynced even at spread=0)
       // + a tiny seeded amplitude jitter so a crowd never moves in lock-step.
       const offset = i * 0.2 * spread + i * 0.07;
@@ -138,6 +147,7 @@ export class DancersScene extends Scene {
         bpmScale,
         drop: gains.drop,
         modeFavored,
+        modeRare,
         micro: gains.micro,
         // genre motion DNA (see MODE_STYLE)
         stepBeatsMul: style.stepBeatsMul,

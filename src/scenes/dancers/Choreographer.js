@@ -16,11 +16,18 @@ export class Choreographer {
     this._stepStart = 0;
     this._inited = false;
     this._tmp = {};
+    // Rare-phrase cooldown: accumulates real seconds; a rare showcase is injected only when
+    // it elapses, so each distinct rare pose surfaces ~once per minute. Seed-desynced start
+    // + per-pick jitter so a crowd doesn't fire rares in lock-step.
+    this._rareTimer = (seed * 7.3) % 25;
+    this._rarePeriod = 55;
+    this._rareIdx = seed | 0;
   }
 
   // ctrl = { dt, beatsF, poseAmp, band, bpmScale, drop, modeFavored }
   update(ctrl) {
     const beatsF = ctrl.beatsF;
+    this._rareTimer += ctrl.dt || 0;
 
     if (!this._inited) {
       this._inited = true;
@@ -62,6 +69,17 @@ export class Choreographer {
   _curStep() { return this._phrase[this._idx]; }
 
   _pickPhrase(ctrl) {
+    // Occasionally inject a RARE showcase phrase (round-robin through the mode's rare pool),
+    // gated by a cooldown so each distinct rare pose appears roughly once per minute. A mode
+    // with N rares shares the minute (period = ~1min / N) and rounds through them in turn.
+    const rare = ctrl.modeRare;
+    if (rare && rare.length && this._rareTimer >= this._rarePeriod) {
+      this._rareTimer = 0;
+      this._rarePeriod = (54 + Math.random() * 12) / rare.length;   // ~1 min per distinct rare
+      const id = rare[((this._rareIdx % rare.length) + rare.length) % rare.length];
+      this._rareIdx = (this._rareIdx + 1) | 0;
+      if (PHRASES[id]) { this._phraseId = id; this._phrase = PHRASES[id]; return; }
+    }
     const pool = phrasesForBand(ctrl.band, ctrl.modeFavored);
     this._rot = (this._rot + 1) | 0;
     const n = pool.length;

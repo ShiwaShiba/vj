@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Dancers — standalone (graphic-airborne)</title>
+<script>
+  // Capture any load-time/runtime error so a headless probe can read window.__err.
+  window.__err = [];
+  addEventListener('error', (e) => window.__err.push((e.message || 'error') + ' @' + (e.filename || '') + ':' + e.lineno + ':' + e.colno));
+  addEventListener('unhandledrejection', (e) => window.__err.push('reject: ' + ((e.reason && e.reason.message) || e.reason)));
+</script>
+<style>
+  :root { --ink:#e8e8e8; --dim:#8a8a8a; --line:#2a2a2a; --bg:#0a0a0a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:#000; overflow:hidden;
+    font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--ink);
+    -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  #stage { position:fixed; inset:0; background:#000; }
+  #c { position:absolute; inset:0; width:100%; height:100%; display:block; }
+
+  /* Control panel — compact, top-left, out of the centered figure's way. */
+  #panel { position:fixed; top:10px; left:10px; width:238px; max-height:calc(100% - 20px);
+    overflow:auto; padding:12px; border:1px solid var(--line); border-radius:10px;
+    background:rgba(10,10,10,0.82); backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px); transition:opacity .2s, transform .2s; }
+  #panel.hidden { opacity:0; transform:translateX(-12px); pointer-events:none; }
+  #panel h1 { margin:0 0 2px; font-size:12px; letter-spacing:.14em; font-weight:600; }
+  #panel .sub { color:var(--dim); font-size:10px; letter-spacing:.06em; margin-bottom:10px; }
+  .row { display:flex; gap:6px; margin-bottom:8px; }
+  button { flex:1; appearance:none; cursor:pointer; color:var(--ink);
+    background:#151515; border:1px solid var(--line); border-radius:7px; padding:8px 6px;
+    font:inherit; font-size:11px; letter-spacing:.04em; white-space:nowrap; }
+  button:hover { background:#1e1e1e; }
+  button:active { background:#262626; }
+  label { display:block; margin:9px 0 2px; color:var(--dim); font-size:10px; letter-spacing:.08em;
+    display:flex; justify-content:space-between; }
+  label b { color:var(--ink); font-weight:600; }
+  input[type=range] { width:100%; margin:2px 0 4px; accent-color:#e8e8e8; height:16px; }
+  .div { height:1px; background:var(--line); margin:11px 0 4px; }
+
+  /* Collapsed-panel reopen button */
+  #toggle { position:fixed; top:10px; left:10px; width:34px; height:34px; padding:0;
+    display:none; align-items:center; justify-content:center; font-size:15px; }
+  #panel.hidden + #toggle { display:flex; }
+
+  #hud { position:fixed; right:10px; bottom:9px; text-align:right; color:var(--dim);
+    font-size:10px; letter-spacing:.06em; line-height:1.5; pointer-events:none; white-space:pre; }
+  .beat { color:var(--ink); }
+</style>
+</head>
+<body>
+  <div id="stage"><canvas id="c"></canvas></div>
+
+  <div id="panel">
+    <h1>DANCERS</h1>
+    <div class="sub">graphic-airborne · standalone</div>
+
+    <div class="row">
+      <button id="play">⏸ PAUSE</button>
+      <button id="idle">MIC: ON</button>
+    </div>
+    <div class="row">
+      <button id="style">STYLE: —</button>
+      <button id="view">VIEW: —</button>
+    </div>
+    <div class="row">
+      <button id="mode">MODE: —</button>
+    </div>
+
+    <div class="div"></div>
+
+    <label>DANCERS <b id="vcount">1</b></label>
+    <input id="count" type="range" min="1" max="100" step="1" value="1">
+    <label>SIZE <b id="vsize">0.40</b></label>
+    <input id="size" type="range" min="0.2" max="1" step="0.05" value="0.4">
+    <label>SPREAD <b id="vspread">1.0</b></label>
+    <input id="spread" type="range" min="0" max="2.5" step="0.1" value="1">
+    <label>TRAIL <b id="vtrail">0.20</b></label>
+    <input id="trail" type="range" min="0" max="0.55" step="0.05" value="0.2">
+
+    <div class="div"></div>
+
+    <label>BPM <b id="vbpm">120</b></label>
+    <input id="bpm" type="range" min="70" max="170" step="1" value="120">
+    <label>ENERGY <b id="venergy">0.70</b></label>
+    <input id="energy" type="range" min="0" max="1" step="0.02" value="0.7">
+  </div>
+  <button id="toggle">⚙</button>
+
+  <div id="hud"></div>
+
+<script type="module">
+/* ==== BUNDLED VJ MODULES (verbatim from the repo's src/) ==== */
+/*__BUNDLE__*/
+/* ==== STANDALONE HARNESS (replaces Engine/SceneManager/AudioEngine/Overlay) ==== */
+/*__HARNESS__*/
+</script>
+</body>
+</html>
