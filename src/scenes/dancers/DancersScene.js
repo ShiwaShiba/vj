@@ -74,8 +74,18 @@ export class DancersScene extends Scene {
     let left = count;
     for (let r = 0; r < rows; r++) { const n = Math.min(perRow, left); rowCounts.push(n); left -= n; }
 
-    let seed = 1;
-    for (let r = rows - 1; r >= 0; r--) {       // back (r large) first
+    // Pass 1: lay out each row's geometry (feet line + figure height). The raw feet
+    // line runs 0.34h (back) .. 0.80h (front), which parks the prominent front row
+    // near the BOTTOM of the frame — and a small crowd (1 row) sits entirely at
+    // 0.80h. So we measure the crowd's true vertical span (back-row heads to
+    // front-row feet) and, in pass 2, shift every row uniformly so that span's
+    // midpoint lands on CROWD_CENTER_Y. Feet at groundY, figure extends up ~H
+    // (see DancerRig: hip = groundY - legReach*H), and the hip anchor is placed in
+    // screen space untouched by camera pitch/yaw — so this recenters every view.
+    const CROWD_CENTER_Y = 0.47;
+    const layout = [];
+    let top = Infinity, bottom = -Infinity;
+    for (let r = 0; r < rows; r++) {
       const t = rows > 1 ? r / (rows - 1) : 0;   // 0 front .. 1 back
       const depth = 1 - 0.52 * t;                // size/alpha falloff
       const n = rowCounts[r];
@@ -83,10 +93,20 @@ export class DancersScene extends Scene {
       const cellW = this.w / (n + 1);
       const H = Math.min(this.h * 0.36, cellW * 1.7) * size * depth;
       const stagger = (r % 2 ? 0.22 : -0.22) * cellW;
-      for (let c = 0; c < n; c++) {
-        const x = cellW * (c + 1) + stagger;
-        const rig = new DancerRig(x, groundY, H, seed++);
-        rig._alpha = 0.45 + 0.55 * depth;        // back rows dimmer
+      layout.push({ depth, n, groundY, cellW, H, stagger });
+      if (groundY - H < top) top = groundY - H;   // highest head (back row)
+      if (groundY > bottom) bottom = groundY;      // lowest feet (front row)
+    }
+    const offsetY = this.h * CROWD_CENTER_Y - (top + bottom) * 0.5;
+
+    let seed = 1;
+    for (let r = rows - 1; r >= 0; r--) {          // back (r large) first
+      const L = layout[r];
+      const groundY = L.groundY + offsetY;
+      for (let c = 0; c < L.n; c++) {
+        const x = L.cellW * (c + 1) + L.stagger;
+        const rig = new DancerRig(x, groundY, L.H, seed++);
+        rig._alpha = 0.45 + 0.55 * L.depth;        // back rows dimmer
         this.rigs.push(rig);
       }
     }
