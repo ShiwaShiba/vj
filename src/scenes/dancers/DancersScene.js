@@ -1,6 +1,6 @@
 import { Scene } from '../Scene.js';
 import { DancerRig } from './DancerRig.js';
-import { MODES, MODE_FAVORED, MODE_STYLE } from './moves.js';
+import { MODES, MODE_FAVORED, MODE_STYLE, MODE_RARE } from './moves.js';
 import { AudioMapper } from './audioMap.js';
 
 // Fixed camera presets (button-cycled): how the whole crowd is viewed. yaw about
@@ -113,11 +113,13 @@ export class DancersScene extends Scene {
     const mode = MODES[this.modeIndex] || MODES[0];
     const style = MODE_STYLE[mode.name] || MODE_STYLE.Auto;
     let modeFavored = MODE_FAVORED[mode.name] || null;
+    let modeRare = MODE_RARE[mode.name] || null;
     let poseAmp = gains.poseAmp * style.scale;
 
     // Quiet / mic-off: a deliberate low-amplitude living groove on the internal clock.
     if (!audio.ready && gains.energy < 0.06) {
       modeFavored = ['IDLE'];
+      modeRare = null;
       poseAmp = Math.max(poseAmp, 0.35);
     }
 
@@ -145,6 +147,7 @@ export class DancersScene extends Scene {
         bpmScale,
         drop: gains.drop,
         modeFavored,
+        modeRare,
         micro: gains.micro,
         // genre motion DNA (see MODE_STYLE)
         stepBeatsMul: style.stepBeatsMul,

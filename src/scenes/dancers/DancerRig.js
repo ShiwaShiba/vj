@@ -95,6 +95,32 @@ function foldHinge(u, ang) {
   ];
 }
 
+// Rotate unit vector `u` about the (already-normalised) axis (kx,ky,kz) by `ang`.
+function rotAxis(u, kx, ky, kz, ang) {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const kdu = kx * u[0] + ky * u[1] + kz * u[2];
+  const cx = ky * u[2] - kz * u[1], cy = kz * u[0] - kx * u[2], cz = kx * u[1] - ky * u[0];
+  return [
+    u[0] * c + cx * s + kx * kdu * (1 - c),
+    u[1] * c + cy * s + ky * kdu * (1 - c),
+    u[2] * c + cz * s + kz * kdu * (1 - c),
+  ];
+}
+
+// Fold unit direction `u` by `ang` (>=0) TOWARD unit target `d`, about the hinge
+// axis cross(u,d). This is the generic hinge behind the KNEE: the shin rotates in
+// the plane spanned by the live thigh direction and the fold target, so the knee
+// always folds relative to the ACTUAL thigh (from any camera / abduction) instead
+// of the shin being pinned to a world angle. If u ∥ d the hinge is degenerate and
+// u is returned unchanged (caller picks a non-parallel target).
+function foldToward(u, d, ang) {
+  if (ang <= 0) return u;
+  let kx = u[1] * d[2] - u[2] * d[1], ky = u[2] * d[0] - u[0] * d[2], kz = u[0] * d[1] - u[1] * d[0];
+  const m = Math.hypot(kx, ky, kz);
+  if (m < 1e-4) return u;
+  return rotAxis(u, kx / m, ky / m, kz / m, ang);
+}
+
 export class DancerRig {
   constructor(x, groundY, H, seed = 1) {
     this.x = x; this.groundY = groundY; this.H = H; this.seed = seed;
@@ -287,7 +313,16 @@ export class DancerRig {
     // the whole girdle sliding up. Only positive (forward/up) lift hikes; a trailing
     // leg doesn't drop its hip. Lives in the SHARED skeleton so BOTH the pictogram
     // and the graphic articulate the pelvis as two parts. (-y = up.)
-    const roll = L.swayX * 0.6;
+    // Pelvic ROLL (obliquity) with the weight shift. CRITICAL SCALE FIX: the vertical
+    // offset below is applied as `roll * H` (a fraction of FULL body height), while every
+    // horizontal pelvis extent is `pelvisHalf * ... * H` (≈0.07 H). Live swayX reaches
+    // ±0.6–0.9 (pose + groove; worst in Krump = biggest groove), so the OLD roll = swayX*0.6
+    // drove the iliac/socket ±0.4–0.5 H vertically — 5–7× the pelvis half-width — stretching
+    // the compact pelvis into a long vertical bar and dragging the hip+leg out to an abnormal
+    // length (the eternal "股関節ごと脚が異常に伸びる" bug). Scaling roll by pelvisHalf ties the
+    // tilt to the pelvis's OWN size: the hip corner now rolls at most ~0.5 pelvisHalf — a
+    // natural obliquity, not a giraffe pelvis.
+    const roll = L.swayX * 0.6 * PROP.pelvisHalf;
     // ANATOMICAL HIP LIMIT. The hip SOCKET stays anchored at the pelvis (computed below from
     // root, not from the thigh); only the femur rotates about it, so a knee-up raises the KNEE
     // while the hip stays low — never the leg-root riding up to the chest. The forward limit is
@@ -298,7 +333,7 @@ export class DancerRig {
     const HIP_FLEX_MAX = this.hipFlexMax, HIP_EXT_MIN = this.hipExtMin;
     const clampHip = (h) => (h > HIP_FLEX_MAX ? HIP_FLEX_MAX : h < HIP_EXT_MIN ? HIP_EXT_MIN : h);
     const hipFR = clampHip(L.hipR), hipFL = clampHip(L.hipL);
-    const PEL_HIKE = 0.12;   // subtle pelvic tilt with leg lift; kept low so the pelvis does NOT ride up like an extension of the thigh
+    const PEL_HIKE = 0.04;   // subtle pelvic tilt with leg lift; kept very low so the pelvis does NOT ride up like an extension of the thigh (the "骨盤が伸びる" artifact)
     const hikeR = Math.max(0, hipFR) * PROP.pelvisHalf * PEL_HIKE * H;
     const hikeL = Math.max(0, hipFL) * PROP.pelvisHalf * PEL_HIKE * H;
     // ILIAC CRESTS: the wide top corners of the pelvis = its silhouette. FIXED pelvis
@@ -330,18 +365,36 @@ export class DancerRig {
     //     swung leg always shows an articulated knee from any camera angle instead of a rod.
     //     Couples from early in the swing (RAISE_KN low) and folds hard (COUPLE high) so the
     //     bend survives projection. The support leg (hf≈0) gets no fold and stays straight.
-    const KNEE_MIN = 0.12, KNEE_MAX = 2.6, KNEE_COUPLE = 0.95, RAISE_KN = 0.25;
-    const kneeFlex = (kn, hf) => {
-      const v = kn + Math.max(0, Math.abs(hf) - RAISE_KN) * KNEE_COUPLE;
-      return v < KNEE_MIN ? KNEE_MIN : v > KNEE_MAX ? KNEE_MAX : v;
-    };
-    const kneeFR = kneeFlex(L.kneeR, hipFR), kneeFL = kneeFlex(L.kneeL, hipFL);
-    const knR = A(hipR, splayR, hipFR, PROP.thigh * H);
-    const anR = A(knR, 0.08 + L.stance * 0.5, hipFR - kneeFR, PROP.shin * H);
-    const ftR = A(anR, 0.08, hipFR - kneeFR + 0.95, PROP.foot * H);
-    const knL = A(hipL, splayL, hipFL, PROP.thigh * H);
-    const anL = A(knL, -(0.08 + L.stance * 0.5), hipFL - kneeFL, PROP.shin * H);
-    const ftL = A(anL, -0.08, hipFL - kneeFL + 0.95, PROP.foot * H);
+    // KNEE fully DECOUPLED from the HIP. The old kneeFlex mixed the hip-flexion
+    // angle INTO the knee (kn + |hipF|*COUPLE) — the literal 腿関節と膝の混同: lifting
+    // the thigh auto-bent the knee, so a raised leg folded a phantom knee and the
+    // whole leg + pelvis read as stretched. The knee is now its OWN joint, bending
+    // only from its own pose DOF; the hip just swings the thigh.
+    const KNEE_MIN = 0.06, KNEE_MAX = 2.8, KNEE_GAIN = 1.25;
+    const kneeFR = Math.min(KNEE_MAX, Math.max(KNEE_MIN, L.kneeR * KNEE_GAIN));
+    const kneeFL = Math.min(KNEE_MAX, Math.max(KNEE_MIN, L.kneeL * KNEE_GAIN));
+    // THIGH: swings from the FIXED socket. Its unit direction is the abduction
+    // azimuth (splay) + flexion depth (hipF) — the same tuned hip behaviour as
+    // before, but built as an explicit unit vector so the knee can hinge off it.
+    const thR = dir(splayR, hipFR), thL = dir(splayL, hipFL);
+    const knR = vadd(hipR, thR, PROP.thigh * H);
+    const knL = vadd(hipL, thL, PROP.thigh * H);
+    // KNEE = a real HINGE (like the elbow). The shin folds by kneeF relative to the
+    // LIVE thigh direction toward a fold target that is BEHIND the thigh (−z) when
+    // the leg is upright and blends toward straight-DOWN (+y) as the thigh lifts
+    // toward horizontal — matching a real knee (shin swings back when standing,
+    // hangs down when the knee is up). Because it folds off the actual thigh, a
+    // splayed or raised thigh keeps a correctly-articulated knee from every camera;
+    // the shin can no longer snap toward centre (the old "knee breaks sideways"),
+    // and the raised leg never reads as one long straight spike.
+    const kneeTarget = (th) => { const ty = th[2] > 0 ? th[2] : 0; const im = 1 / Math.hypot(ty, 1); return [0, ty * im, -im]; };
+    const shinR = foldToward(thR, kneeTarget(thR), kneeFR);
+    const shinL = foldToward(thL, kneeTarget(thL), kneeFL);
+    const anR = vadd(knR, shinR, PROP.shin * H);
+    const anL = vadd(knL, shinL, PROP.shin * H);
+    // FOOT: continues the shin, tipped down-and-forward (relaxed pointe).
+    const ftR = vadd(anR, foldToward(shinR, [0, 1, 0.4], 0.5), PROP.foot * H);
+    const ftL = vadd(anL, foldToward(shinL, [0, 1, 0.4], 0.5), PROP.foot * H);
 
     // --- Twist winds up the spine: pelvis (pelYaw) -> chest (shYaw) ---
     const yaw = (p, ang) => { const c = Math.cos(ang), s = Math.sin(ang); return [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c]; };
