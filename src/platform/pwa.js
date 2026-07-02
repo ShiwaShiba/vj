@@ -2,16 +2,12 @@
 // under a GitHub Pages project subpath (https://user.github.io/<repo>/).
 export function registerSW() {
   if (!('serviceWorker' in navigator)) return;
-  // Auto-update: when a newer SW activates and takes control, reload ONCE so the freshly-deployed
-  // code actually runs — no manual cache clear. Guarded so it never loops and never fires on the
-  // first-ever install (no previous controller = nothing stale to replace).
-  const hadController = !!navigator.serviceWorker.controller;
-  let reloading = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController || reloading) return;
-    reloading = true;
-    location.reload();
-  });
+  // We deliberately do NOT auto-reload when a newer SW takes control. This is a LIVE
+  // VJ tool: a mid-session reload throws the operator back to the "TAP TO START" screen
+  // and drops the running scene/state (the reported bug). A fresh deploy still applies on
+  // the next natural relaunch, and because the fetch handler is network-FIRST
+  // ({cache:'reload'}), an online client already pulls the latest assets on that next
+  // load — so nothing forces (or needs) a reload out from under a running set.
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then((reg) => {
       reg.update();                                 // check for a newer SW on every load
