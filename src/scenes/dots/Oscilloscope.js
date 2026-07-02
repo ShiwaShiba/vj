@@ -2,7 +2,7 @@ import { Scene } from '../Scene.js';
 import { rgbCss, TWO_PI } from '../../lib/math.js';
 import { SimplexNoise } from '../../lib/noise.js';
 import { CONTROL_GROUPS, DEFAULT_AUTO_ARM, SPREAD_GAIN, isControlActive as ctrlActive, isGroupActive as groupActive, canArm as axisCanArm, autoDrives, isLissaFamily } from './scopeControls.js';
-import { fitScale } from './scopeScale.js';
+import { fitScale, lissaExtentFrac } from './scopeScale.js';
 
 // Time-domain waveform. Modes: horizontal scope, circular scope, XY (the
 // waveform plotted against a delayed copy of itself for Lissajous-like loops).
@@ -287,6 +287,20 @@ export class Oscilloscope extends Scene {
     return Math.pow(b, 0.6); // lift small bands so treble still reads
   }
 
+  // Peak |amplitude| (0..1) of the current waveform, strided like the draw. The
+  // fit-clamp otherwise reserves room for a FULL-SCALE wave that a quiet mic
+  // never sends, pinning the XY / LISSA figure small even at max gain/range.
+  // Sizing the clamp on the ACTUAL peak lets a quiet figure grow to fill the
+  // frame (≈2-3× further) while a loud one still clamps — no overflow.
+  _wavePeak(wave, step) {
+    let pk = 0;
+    for (let i = 0; i < wave.length; i += step) {
+      const d = wave[i] - 128, ad = d < 0 ? -d : d;
+      if (ad > pk) pk = ad;
+    }
+    return pk / 128;
+  }
+
   // Spread mode for LISSA: 0 raw self-correlation, 1 sphere, 2 toroid, 3 quad,
   // 4 ribbon (a twisting foil body on the centreline), 5 helix (QUAD's open
   // phase-portrait extruded along a time axis into a coil).
@@ -399,7 +413,10 @@ export class Oscilloscope extends Scene {
       const band = this._driveEnergy();
       const mn = Math.min(this.w, this.h);
       const sRaw = mn * 0.42 * gain * range * (1 + this.p('drive') * band * 0.9);
-      const s = sRaw * fitScale(sRaw, FIT_CAP * mn, FIT_KNEE);       // soft-cap so band swells / high gain stay in-frame
+      // Peak-aware soft-cap: size the clamp on the wave's ACTUAL peak (not a
+      // reserved full-scale), so a quiet XY figure grows to fill the frame at
+      // high gain/range (~2-3× further) while a loud one still stays in-frame.
+      const s = sRaw * fitScale(sRaw * this._wavePeak(wave, step), FIT_CAP * mn, FIT_KNEE);
       const lag = Math.max(1, Math.round(this._effPhase())) * step;
       const flip = this._effFlip() ? -1 : 1;
       const cosA = Math.cos(this._spin), sinA = Math.sin(this._spin);
@@ -437,7 +454,12 @@ export class Oscilloscope extends Scene {
     else if (form === 3) rawExtent = SPHERE_EXTENT.terrain * baseR; // TERRAIN blob
     else {                                                          // LISSA family
       const sp = this._effSpread();
-      const f = sp === 5 ? SPHERE_EXTENT.helix : sp === 4 ? SPHERE_EXTENT.ribbon : SPHERE_EXTENT.lissa;
+      // HELIX keeps full-scale sizing (its extent is the axial coil height, not
+      // waveform-driven, so peak-scaling would wrongly shrink it). Every other
+      // spread is sized on the wave's ACTUAL peak so a quiet figure grows to fill
+      // the frame at high gain/range (~2-3× further) instead of being pinned
+      // small by reserved full-scale headroom.
+      const f = sp === 5 ? SPHERE_EXTENT.helix : lissaExtentFrac(sp, this._wavePeak(wave, step));
       rawExtent = f * reach * baseR;
     }
     const R = baseR * fitScale(rawExtent, FIT_CAP * mn, FIT_KNEE); // sphere radius, px (soft-capped to fit)
